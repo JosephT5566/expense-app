@@ -1,5 +1,5 @@
 {
-	"name": "myapp",
+	"name": "expense-app",
 	"private": true,
 	"version": "0.0.1",
 	"type": "module",
@@ -38,5 +38,16 @@
 		"typescript-eslint": "^8.44.1",
 		"vite": "^7.1.7",
 		"vite-plugin-devtools-json": "^1.0.0"
+	},
+	"dependencies": {
+		"@iconify-json/logos": "^1.2.9",
+		"@iconify-json/solar": "^1.2.4",
+		"@iconify/svelte": "^5.0.2",
+		"@supabase/supabase-js": "^2.74.0",
+		"@types/google.accounts": "^0.0.18",
+		"@types/lodash": "^4.17.20",
+		"bits-ui": "^2.11.4",
+		"classnames": "^2.5.1",
+		"lodash": "^4.17.21"
 	}
 }
