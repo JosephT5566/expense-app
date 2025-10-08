@@ -1,0 +1,55 @@
+:root {
+	/* default theme (Sunset Clay) */
+	--c-primary: #d97d55;
+	--c-bg: #f4e9d7;
+	--c-muted: #b8c4a9;
+	--c-accent: #6fa4af;
+	--c-text: #1f2937;
+	--c-card: #ffffff;
+	--radius: 14px;
+}
+
+/* Theme hook: switch by <html data-theme="name"> */
+html[data-theme='sunset'] {
+	--c-primary: #d97d55;
+	--c-bg: #f4e9d7;
+	--c-muted: #b8c4a9;
+	--c-accent: #6fa4af;
+}
+
+/* Example alt theme (Moss Night) – just a placeholder for future */
+html[data-theme='moss'] {
+	--c-primary: #6fa4af;
+	--c-bg: #0b1215;
+	--c-muted: #334e3b;
+	--c-accent: #b8c4a9;
+	--c-text: #e5e7eb;
+	--c-card: #101b20;
+}
+
+/* Basic tokens to use in Tailwind via arbitrary values or in plain CSS */
+body {
+	background: var(--c-bg);
+	color: var(--c-text);
+}
+
+.card {
+	background: var(--c-card);
+	border-radius: var(--radius);
+	box-shadow: 0 8px 24px rgba(17, 24, 39, 0.08);
+}
+
+.btn {
+	border-radius: calc(var(--radius) - 4px);
+	padding: 0.75rem 1rem;
+}
+
+.btn-primary {
+	background: var(--c-primary);
+	color: white;
+}
+
+/* Bottom nav safe-area support */
+.safe-bottom {
+	padding-bottom: env(safe-area-inset-bottom);
+}
