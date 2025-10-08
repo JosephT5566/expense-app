@@ -17,7 +17,7 @@ export interface ExpenseRow {
 	title: string;
 	amount: number; // 總額（原始額）
 	currency: Currency;
-	occurred_at: string; // ISO date
+	ts: string; // ISO date
 	scope: ExpenseScope; // 'household' | 'personal'
 	split_mode: SplitMode; // 'equal' | 'custom'
 	shares_json: ShareEntry[]; // 僅能看到自己「有參與」的（RLS 篩）

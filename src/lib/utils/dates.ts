@@ -1,7 +1,7 @@
-export function encodeCursor(obj: { occurred_at: string; id: string }) {
+export function encodeCursor(obj: { ts: string; id: string }) {
 	return btoa(JSON.stringify(obj));
 }
-export function decodeCursor(cursor: string): { occurred_at: string; id: string } {
+export function decodeCursor(cursor: string): { ts: string; id: string } {
 	return JSON.parse(atob(cursor));
 }
 

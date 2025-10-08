@@ -3,5 +3,13 @@
     "prettier.tabWidth": 4,
     "prettier.useTabs": true,
     "prettier.singleQuote": true,
-    "prettier.printWidth": 100
+    "prettier.printWidth": 100,
+    // 讓 ESLint 在儲存時自動修正
+    "editor.codeActionsOnSave": [
+        "source.fixAll.eslint"
+    ],
+    // 讓 ESLint 也驗證 Svelte 檔案
+    "eslint.validate": ["javascript", "typescript", "svelte"],
+    // 使用 Flat Config
+    "eslint.useFlatConfig": true
 }

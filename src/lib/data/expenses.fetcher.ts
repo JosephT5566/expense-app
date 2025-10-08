@@ -7,40 +7,53 @@ const TABLE = 'expenses';
 export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseRow>> {
 	const limit = q.limit ?? 50;
 
-	// 基礎 query：僅回傳使用者可見（RLS）欄位
+	// 基礎 query：以 ts DESC, id DESC，並多抓 1 筆判斷是否有下一頁
 	let query = supabase
 		.from(TABLE)
-		.select('*')
-		.order('occurred_at', { ascending: false })
+		.select('*') // ← 不用 returns<T>()，之後在函式出口做型別斷言
+		.order('ts', { ascending: false })
 		.order('id', { ascending: false })
 		.limit(limit + 1);
 
-	if (q.from) query = query.gte('occurred_at', q.from);
-	if (q.to) query = query.lte('occurred_at', q.to);
-	if (q.scope && q.scope !== 'all') query = query.eq('scope', q.scope);
-	if (q.search) query = query.ilike('title', `%${q.search}%`);
-
-	if (q.settled === 'only_settled') query = query.eq('is_settled', true);
-	if (q.settled === 'only_unsettled') query = query.eq('is_settled', false);
-
-	// cursor-based pagination（以 occurred_at + id）
-	if (q.cursor) {
-		const c = decodeCursor(q.cursor); // { occurred_at, id }
-		// 小心順序與排序方向一致（descending）
-		// 若要兼容等值，採用 (occurred_at < c.occurred_at) OR (occurred_at = c.occurred_at AND id < c.id)
-		// Supabase 目前不支援複合 where OR 的 server-side index merge，簡化用 occurred_at < cursor.occurred_at，再補相等情況
-		query = query.lt('occurred_at', c.occurred_at);
+	if (q.from) {
+		query = query.gte('ts', q.from);
+	}
+	if (q.to) {
+		query = query.lte('ts', q.to);
+	}
+	if (q.scope && q.scope !== 'all') {
+		query = query.eq('scope', q.scope);
+	}
+	if (q.search) {
+		query = query.ilike('title', `%${q.search}%`);
 	}
 
-	const { data, error } = await query.returns<ExpenseRow[]>();
-	if (error) throw error;
+	if (q.settled === 'only_settled') {
+		query = query.eq('is_settled', true);
+	}
+	if (q.settled === 'only_unsettled') {
+		query = query.eq('is_settled', false);
+	}
 
+	// 遊標（以 ts + id 做穩定排序的 key，DESC）
+	if (q.cursor) {
+		const c = decodeCursor(q.cursor); // { ts, id }
+		// Supabase/PostgREST 尚不支援複合比較 (A < a) OR (A = a AND B < b) 的單一呼叫，
+		// 這裡用簡化策略：ts < cursor.ts（DESC 對應的下一頁）
+		query = query.lt('ts', c.ts);
+	}
+
+	const { data, error } = await query;
+	if (error) {
+		throw error;
+	}
+
+	let items = (data ?? []) as ExpenseRow[];
 	let nextCursor: string | null = null;
-	let items = data ?? [];
 
 	if (items.length > limit) {
 		const last = items[limit - 1];
-		nextCursor = encodeCursor({ occurred_at: last.occurred_at, id: last.id });
+		nextCursor = encodeCursor({ ts: last.ts, id: last.id });
 		items = items.slice(0, limit);
 	}
 
@@ -48,10 +61,12 @@ export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseR
 }
 
 export async function getExpense(id: string): Promise<ExpenseRow | null> {
-	const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
+	const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle(); // ← 這個 API 仍可用
 
-	if (error) throw error;
-	return data ?? null;
+	if (error) {
+		throw error;
+	}
+	return (data as ExpenseRow) ?? null;
 }
 
 export interface UpsertExpenseInput {
@@ -59,27 +74,30 @@ export interface UpsertExpenseInput {
 	title: string;
 	amount: number;
 	currency: string;
-	occurred_at: string;
+	ts: string; // ← 以 ts 為時間戳
 	scope: 'household' | 'personal';
 	split_mode: 'equal' | 'custom';
-	shares_json: unknown; // 建議沿用 ShareEntry[] 型別，但若要兼容 RPC，可設 unknown
+	shares_json: unknown;
 	is_settled?: boolean;
 	notes?: string | null;
 }
 
 export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseRow> {
-	const payload = { ...input };
-	const { data, error } = await supabase.from(TABLE).upsert(payload).select().single();
-	if (error) throw error;
+	const { data, error } = await supabase.from(TABLE).upsert(input).select().single(); // ← 回傳單筆新資料
+
+	if (error) {
+throw error;
+}
 	return data as ExpenseRow;
 }
 
 export async function toggleSettled(id: string, next: boolean): Promise<void> {
 	const { error } = await supabase.from(TABLE).update({ is_settled: next }).eq('id', id);
-	if (error) throw error;
+	if (error) {
+throw error;
+}
 }
 
-/** 批次切換結清（支援 ids 或日期區間）。若你有 RPC，可改呼叫 rpc('toggle_settled_bulk', ...) */
 export async function bulkToggleSettled(
 	params: { ids: string[]; next: boolean } | { from: string; to: string; next: boolean }
 ): Promise<number> {
@@ -89,21 +107,24 @@ export async function bulkToggleSettled(
 			.update({ is_settled: params.next })
 			.in('id', params.ids)
 			.select('id');
-		if (error) throw error;
+		if (error) {
+throw error;
+}
 		return count ?? 0;
 	} else {
 		const { error, count } = await supabase
 			.from(TABLE)
 			.update({ is_settled: params.next })
-			.gte('occurred_at', params.from)
-			.lte('occurred_at', params.to)
+			.gte('ts', params.from)
+			.lte('ts', params.to)
 			.select('id');
-		if (error) throw error;
+		if (error) {
+throw error;
+}
 		return count ?? 0;
 	}
 }
 
-/** 取得月結摘要（前端彙總版；若有 SQL/RPC 更快） */
 export async function fetchMonthlySummary(
 	year: number,
 	month: number,

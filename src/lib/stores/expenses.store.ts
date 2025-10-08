@@ -27,7 +27,9 @@ function createExpensesStore() {
 	async function loadMore() {
 		const q = get(_lastQuery);
 		const cursor = get(nextCursor);
-		if (!q || !cursor) return;
+		if (!q || !cursor) {
+			return;
+		}
 		loading.set(true);
 		try {
 			const page = await listExpenses({ ...q, cursor });
@@ -65,8 +67,7 @@ function createExpensesStore() {
 			items.update((prev) =>
 				prev.map((x) => {
 					const inRange =
-						(!params.from || x.occurred_at >= params.from) &&
-						(!params.to || x.occurred_at <= params.to);
+						(!params.from || x.ts >= params.from) && (!params.to || x.ts <= params.to);
 					return inRange ? { ...x, is_settled: params.next } : x;
 				})
 			);
@@ -76,7 +77,9 @@ function createExpensesStore() {
 		} catch (e) {
 			// 錯誤時重新載入（最保險）
 			const q = get(_lastQuery);
-			if (q) await load(q);
+			if (q) {
+				await load(q);
+			}
 			throw e;
 		}
 	}
