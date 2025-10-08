@@ -9,7 +9,6 @@
 	let open = $state(false);
 
 	const unsubscribe = loading.subscribe(($loading) => {
-		console.log('AuthModal user changed:', !$loading, $user);
 		if (!$loading) {
 			open = !$user;
 		}
