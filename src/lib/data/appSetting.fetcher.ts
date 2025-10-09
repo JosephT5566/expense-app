@@ -1,7 +1,7 @@
 import { supabase } from '$lib/supabase/supabaseClient';
 import type { AppSettingRow } from '$lib/types/appSetting';
 
-const TABLE = 'categories';
+const TABLE = 'app_settings';
 
 export async function listAppSetting(): Promise<AppSettingRow[]> {
     const query = supabase.from(TABLE).select('*').eq('id', true ).limit(1);

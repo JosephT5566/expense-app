@@ -2,7 +2,7 @@ import { writable } from 'svelte/store';
 import { listAppSetting } from '$lib/data/appSetting.fetcher';
 
 function createAppSettingStore() {
-    const users = writable<string[]>([]);
+    const allowedUsers = writable<string[]>([]);
     const loading = writable(false);
     const error = writable<unknown>(null);
 
@@ -11,7 +11,7 @@ function createAppSettingStore() {
         error.set(null);
         try {
             const res = await listAppSetting();
-            users.set(res[0]?.allowed_emails ?? []);
+            allowedUsers.set(res[0]?.allowed_emails ?? []);
         } catch (e) {
             error.set(e);
         } finally {
@@ -19,7 +19,7 @@ function createAppSettingStore() {
         }
     }
 
-    return { loading, error, load, users };
+    return { loading, error, load, users: allowedUsers };
 }
 
 export const appSettingStore = createAppSettingStore();
