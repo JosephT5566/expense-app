@@ -9,6 +9,7 @@ export type ShareEntry = Record<string, number>;
 export interface ExpenseRow {
 	id: string;
 	payer_email: string; // 建立者
+	note: string; // 主要內容
 	amount: number; // 總額（原始額）
 	currency: Currency;
 	ts: string; // ISO date
