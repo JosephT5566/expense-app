@@ -70,7 +70,7 @@ export async function getExpense(id: string): Promise<ExpenseRow | null> {
 }
 
 export interface UpsertExpenseInput {
-	// id?: string;
+	id?: string; // only provided when updating
 	note: string;
 	amount: number;
 	currency: string;

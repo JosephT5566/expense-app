@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { sessionStore } from '$lib/stores/session.store';
 	import { categoriesStore } from '$lib/stores/categories.store';
+	import { appSettingStore } from '$lib/stores/appSetting.store';
 	import '$lib/theme.css';
 	import Header from '$lib/components/ui/Header.svelte';
 	import BottomNav from '$lib/components/ui/BottomNav.svelte';
@@ -15,6 +16,7 @@
 	onMount(() => {
 		sessionStore.init();
 		categoriesStore.load('expense');
+		appSettingStore.load();
 	});
 </script>
 
