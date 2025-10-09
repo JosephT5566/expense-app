@@ -2,29 +2,24 @@ export type Currency = 'TWD' | 'USD' | 'GBP' | 'EUR';
 
 export type ExpenseScope = 'household' | 'personal';
 
-export type SplitMode = 'equal' | 'custom'; // equal: 平均分攤；custom：shares_json 內各自比例/金額
-
-export interface ShareEntry {
-	/** 參與者 uid 或 email（依你的 shares_json 內容而定） */
-	id: string;
-	/** 金額（若是比例制，可以事先換算成金額存入） */
-	amount: number;
-}
+export type ShareEntry = Record<string, number>;
+/** key: user email（依你的 shares_json 內容而定） */
+/** value: amount（若是比例制，可以事先換算成金額存入） */
 
 export interface ExpenseRow {
 	id: string;
-	owner_id: string; // 建立者
-	title: string;
+	payer_email: string; // 建立者
 	amount: number; // 總額（原始額）
 	currency: Currency;
 	ts: string; // ISO date
 	scope: ExpenseScope; // 'household' | 'personal'
-	split_mode: SplitMode; // 'equal' | 'custom'
-	shares_json: ShareEntry[]; // 僅能看到自己「有參與」的（RLS 篩）
-	is_settled: boolean; // 是否已標記結清
-	notes: string | null;
+	shares_json: ShareEntry; // 僅能看到自己「有參與」的（RLS 篩）
+	notes?: string;
+	category_id?: string;
+	meta: string;
 	created_at: string; // ISO
 	updated_at: string; // ISO
+	is_settled: boolean; // 是否已標記結清
 }
 
 /** 查詢條件（前端 store / fetcher 共用） */

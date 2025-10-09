@@ -93,7 +93,7 @@
 		<Dialog.Content
 			class={classNames(
 				'swipe-drawer-content',
-                'bottom-[72px]', // leave space for bottom nav
+                'bottom-[calc(15vh)]', // leave space for bottom nav
 				'relative inset-x-0 card rounded-b-none overflow-auto',
 				'pb-[15vh]'
 			)}

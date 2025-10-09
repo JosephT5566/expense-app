@@ -1,5 +1,5 @@
 import { supabase } from '$lib/supabase/supabaseClient';
-import type { ExpenseRow, ExpenseQuery, PageResult } from '$lib/types/expense';
+import type { ExpenseRow, ExpenseQuery, PageResult, ShareEntry, ExpenseScope } from '$lib/types/expense';
 import { encodeCursor, decodeCursor } from '$lib/utils/dates';
 
 const TABLE = 'expenses';
@@ -70,32 +70,34 @@ export async function getExpense(id: string): Promise<ExpenseRow | null> {
 }
 
 export interface UpsertExpenseInput {
-	id?: string;
-	title: string;
+	// id?: string;
+	note: string;
 	amount: number;
 	currency: string;
-	ts: string; // ← 以 ts 為時間戳
-	scope: 'household' | 'personal';
-	split_mode: 'equal' | 'custom';
-	shares_json: unknown;
+	ts: string;
+    payer_email: string;
+	scope: ExpenseScope;
+	shares_json: ShareEntry;
 	is_settled?: boolean;
-	notes?: string | null;
+	notes?: string;
+    category_id: string;
 }
 
 export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseRow> {
 	const { data, error } = await supabase.from(TABLE).upsert(input).select().single(); // ← 回傳單筆新資料
 
 	if (error) {
-throw error;
-}
+		throw error;
+	}
+
 	return data as ExpenseRow;
 }
 
 export async function toggleSettled(id: string, next: boolean): Promise<void> {
 	const { error } = await supabase.from(TABLE).update({ is_settled: next }).eq('id', id);
 	if (error) {
-throw error;
-}
+		throw error;
+	}
 }
 
 export async function bulkToggleSettled(
@@ -108,8 +110,8 @@ export async function bulkToggleSettled(
 			.in('id', params.ids)
 			.select('id');
 		if (error) {
-throw error;
-}
+			throw error;
+		}
 		return count ?? 0;
 	} else {
 		const { error, count } = await supabase
@@ -119,8 +121,8 @@ throw error;
 			.lte('ts', params.to)
 			.select('id');
 		if (error) {
-throw error;
-}
+			throw error;
+		}
 		return count ?? 0;
 	}
 }
