@@ -12,3 +12,25 @@ export function toISODateOnly(d: Date | string) {
 	const day = String(date.getUTCDate()).padStart(2, '0');
 	return `${year}-${month}-${day}`;
 }
+
+// 新增：計算「台灣時區（UTC+8）」的單日 UTC 邊界
+// 輸入：YYYY-MM-DD（台灣當地日期）
+// 輸出：對應的 UTC ISO 範圍（[from, to] 皆為含端點）
+export function taiwanDayBoundsISO(dateStr: string) {
+	const [y, m, d] = dateStr.split('-').map(Number);
+	// 台灣 00:00 (+08:00) => UTC 前一日 16:00
+	const from = new Date(Date.UTC(y, m - 1, d, -8, 0, 0, 0));
+	// 台灣 23:59:59.999 (+08:00) => UTC 當日 15:59:59.999
+	const to = new Date(Date.UTC(y, m - 1, d, 15, 59, 59, 999));
+	return { from: from.toISOString(), to: to.toISOString() };
+}
+
+// 新增：計算「台灣時區（UTC+8）」的月份 UTC 邊界
+// 輸入：year, month（1-12）指台灣當地年月
+export function taiwanMonthBoundsISO(year: number, month: number) {
+	// 月初台灣 00:00 (+08:00) => UTC 前一日 16:00
+	const start = new Date(Date.UTC(year, month - 1, 1, -8, 0, 0, 0));
+	// 月末台灣 23:59:59.999 (+08:00) => UTC 月末 15:59:59.999
+	const end = new Date(Date.UTC(year, month, 0, 15, 59, 59, 999));
+	return { from: start.toISOString(), to: end.toISOString() };
+}

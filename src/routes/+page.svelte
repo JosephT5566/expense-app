@@ -15,6 +15,7 @@
 	// 新增：家庭成員來源與 shares 型別
 	import { appSettingStore } from '$lib/stores/appSetting.store';
 	import type { ShareEntry } from '$lib/types/expense';
+	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -111,7 +112,7 @@
 	async function loadDayFor(dateStr: string) {
 		loading = true;
 		try {
-			const { from, to } = dayBoundsISO(dateStr);
+			const { from, to } = taiwanDayBoundsISO(dateStr);
 			const page = await listExpenses({ from, to, limit: 500, settled: 'all' });
 			items = page.items;
 		} finally {
@@ -123,12 +124,6 @@
 			m = String(d.getMonth() + 1).padStart(2, '0'),
 			da = String(d.getDate()).padStart(2, '0');
 		return `${y}-${m}-${da}`;
-	}
-	function dayBoundsISO(dateStr: string) {
-		const [y, m, d] = dateStr.split('-').map(Number);
-		const start = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0)),
-			end = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
-		return { from: start.toISOString(), to: end.toISOString() };
 	}
 	function isToday(dateStr: string) {
 		return dateStr === toDateOnlyStr(today);

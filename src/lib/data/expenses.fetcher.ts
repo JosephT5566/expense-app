@@ -1,6 +1,6 @@
 import { supabase } from '$lib/supabase/supabaseClient';
 import type { ExpenseRow, ExpenseQuery, PageResult, ShareEntry, ExpenseScope } from '$lib/types/expense';
-import { encodeCursor, decodeCursor } from '$lib/utils/dates';
+import { encodeCursor, decodeCursor, taiwanMonthBoundsISO } from '$lib/utils/dates';
 
 const TABLE = 'expenses';
 
@@ -74,7 +74,8 @@ export interface UpsertExpenseInput {
 	note: string;
 	amount: number;
 	currency: string;
-	ts: string;
+	ts?: string;
+	updated_at?: string;
     payer_email: string;
 	scope: ExpenseScope;
 	shares_json: ShareEntry;
@@ -132,10 +133,9 @@ export async function fetchMonthlySummary(
 	month: number,
 	scope: 'all' | 'household' | 'personal' = 'all'
 ) {
-	const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
-	const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).toISOString();
+	const { from, to } = taiwanMonthBoundsISO(year, month);
 
-	const res = await listExpenses({ from: start, to: end, scope, limit: 1000, settled: 'all' });
+	const res = await listExpenses({ from, to, scope, limit: 1000, settled: 'all' });
 	const total = res.items.reduce((acc, e) => acc + e.amount, 0);
 	const household = res.items
 		.filter((e) => e.scope === 'household')
