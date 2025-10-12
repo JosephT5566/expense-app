@@ -16,6 +16,7 @@
 	import { appSettingStore } from '$lib/stores/appSetting.store';
 	import type { ShareEntry } from '$lib/types/expense';
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
+	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -291,35 +292,11 @@
 			<button class="btn btn-primary w-full" onclick={openCreate}>輸入今日第一筆記帳</button>
 		</div>
 	{:else}
-		<ul class="mt-3 divide-y divide-black/5">
-			{#each items as e (e.id)}
-				<li class="py-2 flex items-center gap-3">
-					<div class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]">
-						{#if $categoryIconMap[e.category_id ?? '']}
-							<Icon
-								icon={$categoryIconMap[e.category_id ?? '']}
-								width={16}
-								height={16}
-							/>
-						{:else}
-							💸
-						{/if}
-					</div>
-					<div class="flex-1 min-w-0">
-						<div class="text-sm font-medium truncate">{e.note}</div>
-						<div class="text-xs opacity-70">{e.scope === 'household' ? 'h' : 'p'}</div>
-					</div>
-					<div class="text-right tabular-nums font-semibold">{e.amount}</div>
-					<button
-						class="ml-2 opacity-60 hover:opacity-100"
-						aria-label="Edit"
-						onclick={() => openEdit(e)}
-					>
-						✏️
-					</button>
-				</li>
-			{/each}
-		</ul>
+		<ExpenseListSection
+			items={items}
+			categoryIconMap={$categoryIconMap}
+			on:edit={(e) => openEdit(e.detail)}
+		/>
 		<div class="mt-3"><button class="btn w-full" onclick={openCreate}>新增項目</button></div>
 	{/if}
 </section>

@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { ExpenseRow, ExpenseQuery, PageResult } from '$lib/types/expense';
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
+import { taiwanMonthBoundsISO } from '$lib/utils/dates';
 
 function createExpensesStore() {
 	const items = writable<ExpenseRow[]>([]);
@@ -22,6 +23,12 @@ function createExpensesStore() {
 		} finally {
 			loading.set(false);
 		}
+	}
+	
+	async function loadThisMonth() {
+		const today = new Date();
+		const { from, to } = taiwanMonthBoundsISO(today.getFullYear(), today.getMonth() + 1);
+		await load({ from, to });
 	}
 
 	async function loadMore() {
@@ -96,6 +103,7 @@ function createExpensesStore() {
 		loading,
 		error,
 		load,
+		loadThisMonth,
 		loadMore,
 		markSettled,
 		markSettledBulk,

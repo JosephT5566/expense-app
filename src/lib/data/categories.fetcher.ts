@@ -15,7 +15,6 @@ export async function listCategories(params: ListCategoriesParams = {}): Promise
 	}
 
 	const { data, error } = await query;
-    console.log('list categories', data, error);
 
 	if (error) {
 		throw error;
