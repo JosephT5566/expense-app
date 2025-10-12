@@ -24,8 +24,23 @@ function createExpensesStore() {
 			loading.set(false);
 		}
 	}
-	
+
+	async function loadAndUpdate(q: ExpenseQuery) {
+		loading.set(true);
+		error.set(null);
+		try {
+			_lastQuery.set(q);
+			const page: PageResult<ExpenseRow> = await listExpenses(q);
+			items.update((prev) => [...prev, ...page.items]);
+		} catch (e) {
+			error.set(e);
+		} finally {
+			loading.set(false);
+		}
+	}
+
 	async function loadThisMonth() {
+		console.log('Load this month');
 		const today = new Date();
 		const { from, to } = taiwanMonthBoundsISO(today.getFullYear(), today.getMonth() + 1);
 		await load({ from, to });
@@ -91,6 +106,45 @@ function createExpensesStore() {
 		}
 	}
 
+	/** 以單筆結果更新 store：若存在則覆蓋，否則插入，並依 ts DESC, id DESC 排序 */
+	function upsertOne(row: ExpenseRow) {
+		items.update((prev) => {
+			const idx = prev.findIndex((x) => x.id === row.id);
+			let next = prev.slice();
+			if (idx >= 0) {
+				next[idx] = row;
+			} else {
+				next = [row, ...next];
+			}
+			next.sort((a, b) => {
+				if (a.ts !== b.ts) {
+					return a.ts < b.ts ? 1 : -1; // ts DESC
+				}
+				if (a.id !== b.id) {
+					return a.id < b.id ? 1 : -1; // id DESC（穩定）
+				}
+				return 0;
+			});
+			return next;
+		});
+	}
+
+	/** 載入指定年份月份的資料，取代目前 items */
+	async function loadMonth(year: number, month: number) {
+		const { from, to } = taiwanMonthBoundsISO(year, month);
+		await load({ from, to, limit: 1000, settled: 'all' });
+	}
+
+	/** 依日期字串 (YYYY-MM-DD 或含時間的 ISO) 載入其所屬月份 */
+	async function loadMonthByDate(dateISO: string) {
+		// 允許 'YYYY-MM-DD' 或完整 ISO；只需取得台灣年月
+		const d = new Date(dateISO);
+		const year = d.getFullYear();
+		const month = d.getMonth() + 1; // 1-12
+		const { from, to } = taiwanMonthBoundsISO(year, month);
+		await loadAndUpdate({ from, to });
+	}
+
 	function reset() {
 		items.set([]);
 		nextCursor.set(null);
@@ -107,6 +161,9 @@ function createExpensesStore() {
 		loadMore,
 		markSettled,
 		markSettledBulk,
+		upsertOne,
+		loadMonth,
+		loadMonthByDate,
 		reset,
 	};
 }

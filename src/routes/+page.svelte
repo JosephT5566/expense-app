@@ -1,9 +1,9 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
 	import { Dialog } from 'bits-ui';
-	import { listExpenses, upsertExpense } from '$lib/data/expenses.fetcher';
-	import type { ExpenseRow } from '$lib/types/expense';
+	import { upsertExpense } from '$lib/data/expenses.fetcher';
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
+	import type { ExpenseRow } from '$lib/types/expense';
 	import SwipeDrawer from '$lib/components/ui/SwipeDrawer.svelte';
 	import Calculator from '$lib/components/ui/Calculator.svelte';
 	import Carousel from '$lib/components/ui/Carousel.svelte';
@@ -12,11 +12,11 @@
 	import { sessionStore } from '$lib/stores/session.store';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import classNames from 'classnames';
-	// 新增：家庭成員來源與 shares 型別
 	import { appSettingStore } from '$lib/stores/appSetting.store';
 	import type { ShareEntry } from '$lib/types/expense';
-	import { taiwanDayBoundsISO } from '$lib/utils/dates';
+	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
+	import { expensesStore } from '$lib/stores/expenses.store';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -24,8 +24,13 @@
 	const today = new Date();
 	let selectedDate = $state(toDateOnlyStr(today));
 	let showDatePicker = $state(false);
-	let items = $state<ExpenseRow[]>([]);
-	let loading = $state(false);
+	// 改為從 store 過濾當日資料
+	const expensesItems = expensesStore.items;
+	const expensesLoading = expensesStore.loading;
+	const dayItems = $derived(() => {
+		const { from, to } = taiwanDayBoundsISO(selectedDate);
+		return ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to);
+	});
 	let amount = $state('');
 	let categoryId = $state('');
 	let scope = $state<'personal' | 'household'>('personal');
@@ -81,9 +86,26 @@
 	);
 	const sharesValid = $derived(Number(amount || 0) === sharesTotal);
 
+	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
+	const inflightMonths: Record<string, boolean> = $state({});
 	$effect(() => {
-		// run on init and whenever selectedDate changes
-		void loadDayFor(selectedDate);
+		if ($expensesItems.length === 0) {
+			return;
+		}
+
+		const d = new Date(selectedDate);
+		const y = d.getFullYear();
+		const m = d.getMonth() + 1;
+		const key = `${y}-${String(m).padStart(2, '0')}`;
+		const { from, to } = taiwanMonthBoundsISO(y, m);
+		const hasMonth = ($expensesItems).some((e) => e.ts >= from && e.ts <= to);
+
+		if (!hasMonth && !inflightMonths[key]) {
+			inflightMonths[key] = true;
+			void expensesStore
+				.loadMonthByDate(selectedDate)
+				.finally(() => (inflightMonths[key] = false));
+		}
 	});
 
 	// 新增：當 scope/成員變動時初始化 shares 的 key（不覆蓋已填值）
@@ -110,16 +132,6 @@
 		}
 	});
 
-	async function loadDayFor(dateStr: string) {
-		loading = true;
-		try {
-			const { from, to } = taiwanDayBoundsISO(dateStr);
-			const page = await listExpenses({ from, to, limit: 500, settled: 'all' });
-			items = page.items;
-		} finally {
-			loading = false;
-		}
-	}
 	function toDateOnlyStr(d: Date) {
 		const y = d.getFullYear(),
 			m = String(d.getMonth() + 1).padStart(2, '0'),
@@ -210,7 +222,7 @@
 		// 組裝 shares_json
 		let shares_json: ShareEntry;
 		if (scope === 'personal') {
-			shares_json = { [userEmail]: Number(amount) };
+			shares_json = { [userEmail]: Number(amount) } as ShareEntry;
 		} else {
 			const entries = Object.entries(shares)
 				.map(([email, v]) => [email, Number(v) || 0] as const)
@@ -220,7 +232,7 @@
 				alert('分帳總和需等於金額');
 				return;
 			}
-			shares_json = Object.fromEntries(entries);
+			shares_json = Object.fromEntries(entries) as ShareEntry;
 		}
 		const payload: UpsertExpenseInput = {
 			id: editMode ? selectedExpense?.id : undefined,
@@ -237,9 +249,10 @@
 		};
 		console.log('Would submit payload:', payload);
 		console.log('selected date:', selectedDate);
-		await upsertExpense(payload);
+		const saved = await upsertExpense(payload);
+		// 更新到全域 expenses store
+		expensesStore.upsertOne(saved);
 		drawerOpen = false;
-		await loadDayFor(selectedDate);
 	}
 
 	let startX = 0,
@@ -285,15 +298,15 @@
 			▶
 		</button>
 	</div>
-	{#if loading}
+	{#if $expensesLoading && dayItems().length === 0}
 		<p class="mt-3 opacity-70">載入中…</p>
-	{:else if items.length === 0}
+	{:else if dayItems().length === 0}
 		<div class="mt-3">
 			<button class="btn btn-primary w-full" onclick={openCreate}>輸入今日第一筆記帳</button>
 		</div>
 	{:else}
 		<ExpenseListSection
-			items={items}
+			items={dayItems()}
 			categoryIconMap={$categoryIconMap}
 			on:edit={(e) => openEdit(e.detail)}
 		/>

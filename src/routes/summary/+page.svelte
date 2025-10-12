@@ -8,7 +8,6 @@
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import Icon from '@iconify/svelte';
-	import { onMount } from 'svelte';
 
 	let scope = $state<'personal' | 'household'>('personal');
 	let expanded: Record<string, boolean> = $state({});
@@ -25,10 +24,6 @@
 		expenseOptions,
 		(opts) => Object.fromEntries(opts.map((o) => [o.value, o.label])) as Record<string, string>
 	);
-
-	onMount(() => {
-		void expensesStore.loadThisMonth();
-	});
 
 	function groupByCategory(rows: ExpenseRow[], scopeSel: 'personal' | 'household') {
 		const list = rows.filter((e) => e.scope === scopeSel);
