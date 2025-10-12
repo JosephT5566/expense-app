@@ -1,11 +1,21 @@
 <script lang="ts">
-	import { activeTab, type Tab } from '$lib/stores/nav.store';
-    import Icon from '@iconify/svelte';
-	const items: { key: Tab; label: string; icon: string }[] = [
-		{ key: 'add', label: 'Add', icon: 'solar:document-add-bold-duotone' },
-		{ key: 'summary', label: 'Summary', icon: 'solar:graph-up-bold-duotone' },
-		{ key: 'setting', label: 'Setting', icon: 'solar:settings-bold-duotone' },
+	import { type Tab } from '$lib/stores/nav.store';
+	import Icon from '@iconify/svelte';
+	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import { onMount } from 'svelte';
+	type NavPath = '/' | '/summary' | '/setting';
+	let activeTab = $state<Tab>('add');
+
+	const items: { key: Tab; label: string; path?: NavPath; icon: string }[] = [
+		{ key: 'add', label: 'Add', path: '/', icon: 'solar:document-add-bold-duotone' },
+		{ key: 'summary', label: 'Summary', path: '/summary', icon: 'solar:graph-up-bold-duotone' },
+		{ key: 'setting', label: 'Setting', path: '/setting', icon: 'solar:settings-bold-duotone' },
 	];
+
+	onMount(() => {
+		activeTab = items.find((it) => it.path === page.url.pathname)?.key || 'add';
+	});
 </script>
 
 <nav class="fixed bottom-0 inset-x-0 safe-bottom bg-white border-t border-black/10 z-20">
@@ -14,14 +24,14 @@
 			<li>
 				<button
 					class="w-full py-3 text-sm flex flex-col items-center gap-1"
-					class:selected={$activeTab === it.key}
-					onclick={() => activeTab.set(it.key)}
+					class:selected={activeTab === it.key}
+					onclick={() => {
+						if (it.path) {
+							window.location.href = resolve(it.path);
+						}
+					}}
 				>
-					<Icon
-						icon={it.icon}
-						width="24"
-						height="24"
-					/>
+					<Icon icon={it.icon} width="24" height="24" />
 					<span>{it.label}</span>
 				</button>
 			</li>
