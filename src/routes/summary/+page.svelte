@@ -3,14 +3,35 @@
 	import type { PieDatum } from '$lib/components/ui/PieChart.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import { expensesStore } from '$lib/stores/expenses.store';
+	import { sessionStore } from '$lib/stores/session.store';
 	import { categoriesStore } from '$lib/stores/categories.store';
 	import { derived } from 'svelte/store';
-	import type { ExpenseRow } from '$lib/types/expense';
+	import type { ExpenseRow, ExpenseScope } from '$lib/types/expense';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import Icon from '@iconify/svelte';
+	// 新增：月份選擇 Dialog 與台灣月份邊界
+	import { Dialog } from 'bits-ui';
+	import { taiwanMonthBoundsISO } from '$lib/utils/dates';
 
-	let scope = $state<'personal' | 'household'>('personal');
+	let scope = $state<ExpenseScope>('personal');
 	let expanded: Record<string, boolean> = $state({});
+	const { user } = sessionStore;
+
+	// 新增：月份選擇狀態
+	const today = new Date();
+	function toYearMonth(d: Date) {
+		console.log('toYearMonth called with date:', d.toISOString());
+		const y = d.getFullYear();
+		const m = String(d.getMonth() + 1).padStart(2, '0');
+		return `${y}-${m}`;
+	}
+	function formatYM(ym: string) {
+		const [y, m] = ym.split('-');
+		return `${y}/${Number(m)}`;
+	}
+	let selectedMonth = $state(toYearMonth(today));
+	let showMonthPicker = $state(false);
+	let wasMonthPickerOpen = $state(false);
 
 	const items = expensesStore.items;
 
@@ -25,15 +46,20 @@
 		(opts) => Object.fromEntries(opts.map((o) => [o.value, o.label])) as Record<string, string>
 	);
 
-	function groupByCategory(rows: ExpenseRow[], scopeSel: 'personal' | 'household') {
-		const list = rows.filter((e) => e.scope === scopeSel);
+	function groupByCategory(rows: ExpenseRow[], scopeSel: ExpenseScope) {
+		const list = scopeSel === 'personal' ? rows : rows.filter((e) => e.scope === scopeSel);
 		const mapObj: Record<string, { id: string; amount: number; items: ExpenseRow[] }> = {};
 		for (const r of list) {
 			const id = r.category_id ?? 'uncategorized';
 			if (!mapObj[id]) {
 				mapObj[id] = { id, amount: 0, items: [] };
 			}
-			mapObj[id].amount += r.amount;
+
+			if (r.scope === 'personal') {
+				mapObj[id].amount += r.shares_json?.[$user?.email ?? ''] ?? 0;
+			} else if (r.scope === 'household') {
+				mapObj[id].amount += r.amount;
+			}
 			mapObj[id].items.push(r);
 		}
 		const groups = Object.values(mapObj);
@@ -41,7 +67,20 @@
 		return groups;
 	}
 
-	const groups = $derived(groupByCategory($items, scope));
+	// 依選擇月份的 UTC 邊界（台灣時區）
+	const monthBounds = $derived(
+		(() => {
+			const [y, m] = selectedMonth.split('-').map(Number);
+			return taiwanMonthBoundsISO(y, m);
+		})()
+	);
+	// 當月篩選後分組
+	const groups = $derived(
+		groupByCategory(
+			($items ?? []).filter((e) => e.ts >= monthBounds.from && e.ts <= monthBounds.to),
+			scope
+		)
+	);
 	const pieData: PieDatum[] = $derived(
 		groups.map((g) => ({
 			label: $categoryLabelMap[g.id] ?? (g.id === 'uncategorized' ? '未分類' : g.id),
@@ -52,6 +91,33 @@
 	function toggleExpand(id: string) {
 		expanded[id] = !expanded[id];
 	}
+
+	// 關閉月份 Dialog 時載入所選月份
+	function confirmMonth() {
+		showMonthPicker = false;
+	}
+
+	$effect(() => {
+		if (wasMonthPickerOpen && !showMonthPicker) {
+			const [y, m] = selectedMonth.split('-').map(Number);
+			if (expensesStore.getMonthExpenses(y, m).length === 0) {
+				void expensesStore.loadMonthByDate(`${selectedMonth}-01`);
+			}
+		}
+		wasMonthPickerOpen = showMonthPicker;
+	});
+
+	$effect(() => {
+		console.log('Selected month changed to:', selectedMonth);
+		console.log('Month bounds:', monthBounds);
+		console.log(
+			'filtered items:',
+			($items ?? []).filter((e) => {
+				// console.log('Checking item ts:', e.ts);
+				return e.ts >= monthBounds.from && e.ts <= monthBounds.to;
+			})
+		);
+	});
 </script>
 
 <section class="card p-4">
@@ -62,14 +128,24 @@
 			data-active={scope === 'personal'}
 			onclick={() => (scope = 'personal')}
 		>
-			個人
+			我的花費
 		</button>
 		<button
 			class="px-3 py-1 rounded-md border border-black/10 data-[active=true]:bg-[var(--c-bg)]"
 			data-active={scope === 'household'}
 			onclick={() => (scope = 'household')}
 		>
-			家庭
+			共同花費
+		</button>
+	</div>
+
+	<!-- 當前月份顯示與選擇 -->
+	<div class="flex items-center justify-center mb-2">
+		<button
+			class="px-3 py-1 rounded-md hover:bg-black/5"
+			onclick={() => (showMonthPicker = true)}
+		>
+			{formatYM(selectedMonth)}
 		</button>
 	</div>
 
@@ -121,6 +197,25 @@
 		{/if}
 	</div>
 </section>
+
+<!-- 月份選擇 Dialog -->
+<Dialog.Root bind:open={showMonthPicker}>
+	<Dialog.Portal>
+		<Dialog.Overlay class="fixed inset-0 bg-black/40" />
+		<Dialog.Content class="card fixed inset-x-6 top-[25vh] p-5">
+			<Dialog.Title class="font-semibold">選擇月份</Dialog.Title>
+			<input
+				type="month"
+				bind:value={selectedMonth}
+				class="mt-2 w-full"
+				max={toYearMonth(today)}
+			/>
+			<div class="mt-4 flex justify-end">
+				<button class="btn btn-primary" onclick={confirmMonth}>完成</button>
+			</div>
+		</Dialog.Content>
+	</Dialog.Portal>
+</Dialog.Root>
 
 <style>
 	button[data-active='true'] {

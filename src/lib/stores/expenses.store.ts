@@ -31,7 +31,13 @@ function createExpensesStore() {
 		try {
 			_lastQuery.set(q);
 			const page: PageResult<ExpenseRow> = await listExpenses(q);
-			items.update((prev) => [...prev, ...page.items]);
+			items.update((prev) => {
+				const map = new Map(prev.map((r) => [r.id, r]));
+				for (const r of page.items) {
+					map.set(r.id, r);
+				}
+				return Array.from(map.values());
+			});
 		} catch (e) {
 			error.set(e);
 		} finally {
@@ -55,7 +61,13 @@ function createExpensesStore() {
 		loading.set(true);
 		try {
 			const page = await listExpenses({ ...q, cursor });
-			items.update((prev) => [...prev, ...page.items]);
+			items.update((prev) => {
+				const map = new Map(prev.map((r) => [r.id, r]));
+				for (const r of page.items) {
+					map.set(r.id, r);
+				}
+				return Array.from(map.values());
+			});
 			nextCursor.set(page.nextCursor);
 		} finally {
 			loading.set(false);
@@ -151,6 +163,20 @@ function createExpensesStore() {
 		error.set(null);
 	}
 
+	function getTodayExpense() {
+		const today = new Date();
+		const todayStr = today.toISOString().slice(0, 10);
+		return get(items).find((e) => e.ts.slice(0, 10) === todayStr);
+	}
+
+	function getMonthExpenses(year?: number, month?: number) {
+		const selectedYear = year ? year : new Date().getFullYear();
+		const selectedMonth = month ? month : new Date().getMonth() + 1;
+
+		const { from, to } = taiwanMonthBoundsISO(selectedYear, selectedMonth);
+		return get(items).filter((e) => e.ts >= from && e.ts <= to);
+	}
+
 	return {
 		items,
 		nextCursor,
@@ -165,6 +191,8 @@ function createExpensesStore() {
 		loadMonth,
 		loadMonthByDate,
 		reset,
+		getTodayExpense,
+		getMonthExpenses,
 	};
 }
 
