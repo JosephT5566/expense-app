@@ -3,9 +3,20 @@
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { createEventDispatcher } from 'svelte';
 
-	export let expense: ExpenseRow;
-	export let icon: string | null = null;
-	export let showEdit: boolean = true;
+	// export let expense: ExpenseRow;
+	// export let icon: string | null = null;
+	// export let showEdit: boolean = true;
+	let {
+		expense,
+		icon = null,
+		showEdit = true,
+		hideIcon = false,
+	}: {
+		hideIcon?: boolean;
+		expense: ExpenseRow;
+		icon: string | null;
+		showEdit: boolean;
+	} = $props();
 
 	const dispatch = createEventDispatcher<{ edit: ExpenseRow }>();
 
@@ -15,16 +26,20 @@
 </script>
 
 <li class="py-2 flex items-center gap-3">
-	<div class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]">
-		{#if icon}
-			<Icon {icon} width={16} height={16} />
-		{:else}
-			💸
-		{/if}
-	</div>
-	<div class="flex-1 min-w-0">
+	{#if !hideIcon}
+		<div class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]">
+			{#if icon}
+				<Icon {icon} width={16} height={16} />
+			{:else}
+				💸
+			{/if}
+		</div>
+	{/if}
+	<div class="flex-1 flex items-center min-w-0 gap-2">
 		<div class="text-sm font-medium truncate">{expense.note}</div>
-		<div class="text-xs opacity-70">{expense.scope === 'household' ? 'h' : 'p'}</div>
+		<div class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-primary)]/50">
+			{expense.scope === 'household' ? 'H' : 'P'}
+		</div>
 	</div>
 	<div class="text-right tabular-nums font-semibold">{expense.amount}</div>
 	{#if showEdit}

@@ -10,12 +10,11 @@
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import Icon from '@iconify/svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
-	import { Dialog } from 'bits-ui';
+	import { Dialog, Accordion } from 'bits-ui';
 	import { taiwanMonthBoundsISO } from '$lib/utils/dates';
-    import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 
 	let scope = $state<ExpenseScope>('personal');
-	let expanded: Record<string, boolean> = $state({});
 	const { user } = sessionStore;
 
 	// 新增：月份選擇狀態
@@ -89,43 +88,40 @@
 		}))
 	);
 
-	function toggleExpand(id: string) {
-		expanded[id] = !expanded[id];
-	}
-
 	// 關閉月份 Dialog 時載入所選月份
 	function confirmMonth() {
 		showMonthPicker = false;
 	}
 
 	$effect(() => {
-        // month selected and picker close
+		// month selected and picker close
 		if (wasMonthPickerOpen && !showMonthPicker) {
 			const [y, m] = selectedMonth.split('-').map(Number);
 			if (expensesStore.getMonthExpenses(y, m).length === 0) {
-                getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`)
-                    .then((newMonthExpense) => {
-                        expensesStore.setMoreItems(newMonthExpense);
-                    });
+				getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then(
+					(newMonthExpense) => {
+						expensesStore.setMoreItems(newMonthExpense);
+					}
+				);
 			}
 		}
 		wasMonthPickerOpen = showMonthPicker;
 	});
 
 	$effect(() => {
-		console.log('Selected month changed to:', selectedMonth);
+		// console.log('Selected month changed to:', selectedMonth);
 		// console.log('Month bounds:', monthBounds);
-		console.log(
-			'filtered items:',
-			($items ?? []).filter((e) => {
-				// console.log('Checking item ts:', e.ts);
-				return e.ts >= monthBounds.from && e.ts <= monthBounds.to;
-			})
-		);
+		// console.log(
+		// 	'filtered items:',
+		// 	($items ?? []).filter((e) => {
+		// 		// console.log('Checking item ts:', e.ts);
+		// 		return e.ts >= monthBounds.from && e.ts <= monthBounds.to;
+		// 	})
+		// );
 	});
 </script>
 
-<section class="card p-4">
+<section class="card p-4 mb-[10vh]">
 	<!-- 切換 personal / household -->
 	<div class="flex items-center justify-center gap-2 mb-3">
 		<button
@@ -164,41 +160,59 @@
 		{#if groups.length === 0}
 			<p class="text-sm opacity-60">本月無資料</p>
 		{:else}
-			{#each groups as g (g.id)}
-				<div class="py-2">
-					<button
-						class="w-full flex items-center justify-between gap-3"
-						onclick={() => toggleExpand(g.id)}
-					>
-						<div class="flex items-center gap-3 min-w-0">
-							<div
-								class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]"
+			<Accordion.Root type="single">
+				{#each groups as g (g.id)}
+					<Accordion.Item value={g.id} class="group p-1.5">
+						<Accordion.Header>
+							<Accordion.Trigger
+								class="w-full flex items-center justify-between gap-3 transition-all [&[data-state=open]>div>svg]:rotate-180"
 							>
-								{#if $categoryIconMap[g.id]}
-									<Icon icon={$categoryIconMap[g.id]} width={16} height={16} />
-								{:else}
-									💸
-								{/if}
-							</div>
-							<div class="text-sm font-medium truncate">
-								{$categoryLabelMap[g.id] ??
-									(g.id === 'uncategorized' ? '未分類' : g.id)}
-							</div>
-						</div>
-						<div class="tabular-nums font-semibold">{g.amount}</div>
-					</button>
-
-					{#if expanded[g.id]}
-						<div class="mt-2">
-							<ExpenseListSection
-								items={g.items}
-								categoryIconMap={$categoryIconMap}
-								showEdit={false}
-							/>
-						</div>
-					{/if}
-				</div>
-			{/each}
+								<div class="flex items-center gap-3 min-w-0">
+									<div
+										class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]"
+									>
+										{#if $categoryIconMap[g.id]}
+											<Icon
+												icon={$categoryIconMap[g.id]}
+												width={16}
+												height={16}
+											/>
+										{:else}
+											💸
+										{/if}
+									</div>
+									<div class="text-sm font-medium truncate">
+										{$categoryLabelMap[g.id] ??
+											(g.id === 'uncategorized' ? '未分類' : g.id)}
+									</div>
+								</div>
+								<div class="flex items-center gap-3">
+									<div class="tabular-nums font-semibold">{g.amount}</div>
+									<Icon
+										icon="mdi:caret"
+										class="size-[18px] transition-transform duration-200"
+										width="24"
+										height="24"
+									/>
+								</div>
+							</Accordion.Trigger>
+						</Accordion.Header>
+						<Accordion.Content
+							class="data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down overflow-hidden text-sm tracking-[-0.01em]"
+						>
+							<div class="mt-2">
+								<ExpenseListSection
+									items={g.items}
+									categoryIconMap={$categoryIconMap}
+									showEdit={false}
+                                    sectionClassname="px-3 bg-[var(--c-muted)]/25 rounded-md"
+                                    hideIcon={true}
+								/>
+							</div></Accordion.Content
+						>
+					</Accordion.Item>
+				{/each}
+			</Accordion.Root>
 		{/if}
 	</div>
 </section>

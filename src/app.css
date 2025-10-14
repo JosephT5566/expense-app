@@ -1,1 +1,23 @@
 @import 'tailwindcss';
+
+@theme {
+	--animate-accordion-down: accordion-down 0.2s ease-out;
+	@keyframes accordion-down {
+		from {
+			height: 0;
+		}
+		to {
+			height: var(--bits-accordion-content-height);
+		}
+	}
+
+	--animate-accordion-up: accordion-up 0.2s ease-out;
+	@keyframes accordion-up {
+		from {
+			height: var(--bits-accordion-content-height);
+		}
+		to {
+			height: 0;
+		}
+	}
+}
