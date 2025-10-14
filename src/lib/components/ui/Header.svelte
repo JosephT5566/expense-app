@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { sessionStore } from '$lib/stores/session.store';
+	import * as sessionStore from '$lib/stores/session.store';
 	import { theme } from '$lib/stores/theme.store';
 	import { get } from 'svelte/store';
 	const { appName = 'PJ Ledger' } = $props();

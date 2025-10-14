@@ -1,22 +1,26 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
+	import classNames from 'classnames';
 	import { Dialog } from 'bits-ui';
-	import { upsertExpense } from '$lib/data/expenses.fetcher';
+	import { get, derived } from 'svelte/store';
+
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
 	import type { ExpenseRow } from '$lib/types/expense';
+	import type { ShareEntry } from '$lib/types/expense';
+
+	import { upsertExpense } from '$lib/data/expenses.fetcher';
+	import * as categoriesStore from '$lib/stores/categories.store';
+	import * as sessionStore from '$lib/stores/session.store';
+	import * as appSettingStore from '$lib/stores/appSetting.store';
+	import * as expensesStore from '$lib/stores/expenses.store';
+
 	import SwipeDrawer from '$lib/components/ui/SwipeDrawer.svelte';
 	import Calculator from '$lib/components/ui/Calculator.svelte';
 	import Carousel from '$lib/components/ui/Carousel.svelte';
-	import { get, derived } from 'svelte/store';
-	import { categoriesStore } from '$lib/stores/categories.store';
-	import { sessionStore } from '$lib/stores/session.store';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
-	import classNames from 'classnames';
-	import { appSettingStore } from '$lib/stores/appSetting.store';
-	import type { ShareEntry } from '$lib/types/expense';
-	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
-	import { expensesStore } from '$lib/stores/expenses.store';
+
+	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -64,10 +68,7 @@
 	});
 
 	// 新增：載入 app 設定（家庭成員）
-	const allowedUsers = appSettingStore.users; // string[] emails
-	$effect(() => {
-		void appSettingStore.load();
-	});
+	const allowedUsers = appSettingStore.allowedUsers; // string[] emails
 	// 新增：email → 顯示名稱 mapping
 	const userLabelMap = derived([allowedUsers, sessionStore.user], ([allowed, me]) => {
 		const map: Record<string, string> = {};
@@ -81,9 +82,7 @@
 		return map;
 	});
 	// 新增：shares 合計與驗證
-	const sharesTotal = $derived(
-		Object.values(shares).reduce((a, v) => a + (Number(v) || 0), 0)
-	);
+	const sharesTotal = $derived(Object.values(shares).reduce((a, v) => a + (Number(v) || 0), 0));
 	const sharesValid = $derived(Number(amount || 0) === sharesTotal);
 
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
@@ -98,7 +97,7 @@
 		const m = d.getMonth() + 1;
 		const key = `${y}-${String(m).padStart(2, '0')}`;
 		const { from, to } = taiwanMonthBoundsISO(y, m);
-		const hasMonth = ($expensesItems).some((e) => e.ts >= from && e.ts <= to);
+		const hasMonth = $expensesItems.some((e) => e.ts >= from && e.ts <= to);
 
 		if (!hasMonth && !inflightMonths[key]) {
 			inflightMonths[key] = true;
@@ -357,36 +356,39 @@
 	<!-- Category Grid + Carousel -->
 	{#if $expenseOptions.length > 0}
 		{#snippet children(page: unknown, i: number)}
-		<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
-			{#each (page as CategoryCard[]) as cat (cat.id)}
-				<button
-					type="button"
-					class={classNames(
-						'flex flex-col items-center gap-1 p-2 rounded-lg shadow-md',
-						'bg-white data-[selected=true]:bg-[var(--c-bg)]',
-					)}
-					data-selected={categoryId === cat.id}
-					onclick={() => (categoryId = cat.id)}
-				>
-					<div
+			<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
+				{#each page as CategoryCard[] as cat (cat.id)}
+					<button
+						type="button"
 						class={classNames(
-							'size-12 grid place-items-center rounded-xl',
-							'text-[var(--c-accent)]'
+							'flex flex-col items-center gap-1 p-2 rounded-lg shadow-md',
+							'bg-white data-[selected=true]:bg-[var(--c-bg)]'
 						)}
 						data-selected={categoryId === cat.id}
+						onclick={() => (categoryId = cat.id)}
 					>
-						<Icon icon={cat.icon} width={32} height={32} />
-					</div>
-					<div
-						class={classNames('text-xs truncate max-w-16', 'text-[var(--c-accent)]')}
-						data-selected={categoryId === cat.id}
-					>
-						{cat.name}
-					</div>
-				</button>
-			{/each}
-		</div>
-	{/snippet}
+						<div
+							class={classNames(
+								'size-12 grid place-items-center rounded-xl',
+								'text-[var(--c-accent)]'
+							)}
+							data-selected={categoryId === cat.id}
+						>
+							<Icon icon={cat.icon} width={32} height={32} />
+						</div>
+						<div
+							class={classNames(
+								'text-xs truncate max-w-16',
+								'text-[var(--c-accent)]'
+							)}
+							data-selected={categoryId === cat.id}
+						>
+							{cat.name}
+						</div>
+					</button>
+				{/each}
+			</div>
+		{/snippet}
 
 		<Carousel
 			items={$categoryPages}
@@ -427,9 +429,7 @@
 			disabled={scope === 'personal'}
 			class="size-4"
 		/>
-		<label for="settled-input" class="text-sm">
-			已結清
-		</label>
+		<label for="settled-input" class="text-sm"> 已結清 </label>
 	</div>
 
 	{#if scope === 'household'}
@@ -441,7 +441,9 @@
 				<div class="flex flex-col gap-2">
 					{#each $allowedUsers as email (email)}
 						<div class="flex items-center gap-2">
-							<div class="flex-1 text-sm truncate">{$userLabelMap[email] ?? email}</div>
+							<div class="flex-1 text-sm truncate">
+								{$userLabelMap[email] ?? email}
+							</div>
 							<input
 								class="w-28 p-2 rounded-lg border border-black/10 text-right"
 								inputmode="decimal"

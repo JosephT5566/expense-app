@@ -2,33 +2,57 @@
 	import '../app.css';
 	import favicon from '$lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
-	import { sessionStore } from '$lib/stores/session.store';
-	import { categoriesStore } from '$lib/stores/categories.store';
-	import { appSettingStore } from '$lib/stores/appSetting.store';
-	import { expensesStore } from '$lib/stores/expenses.store';
+	import { type LayoutData } from './$types';
+	import type { Snippet } from 'svelte';
+	import { invalidateAll } from '$app/navigation';
+
+	import { setFromLoad as setSessionStore, startAuthListener } from '$lib/stores/session.store';
+	import { setFromLoad as setCategoriesStore } from '$lib/stores/categories.store';
+	import { setFromLoad as setAppSettingStore } from '$lib/stores/appSetting.store';
+	import * as expensesStore from '$lib/stores/expenses.store';
+	import { setMonthlyItemsFromLoad, items as expenseItems } from '$lib/stores/expenses.store';
 	import '$lib/theme.css';
 	import Header from '$lib/components/ui/Header.svelte';
 	import BottomNav from '$lib/components/ui/BottomNav.svelte';
 	import AuthModal from '$lib/components/ui/AuthModal.svelte';
 	import { isDev } from '$lib/utils/helpers';
-	// import { initAuth } from '$lib/stores/session.store';
+	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
 
-	let { children } = $props();
+	let {
+		data,
+		children,
+	}: {
+		children: Snippet;
+		data: LayoutData;
+	} = $props();
+
+	// 1) 直接 set，不要在 component 內再發請求
+	setSessionStore(data.user);
+	setCategoriesStore(data.categories);
+	setAppSettingStore(data.allowedEmails);
+	setMonthlyItemsFromLoad(data.monthlyData);
 
 	onMount(() => {
-		sessionStore.init();
-		categoriesStore.load('expense');
-		appSettingStore.load();
-		expensesStore.loadThisMonth();
-
 		const unsubExpenseStore = isDev
-			? expensesStore.items.subscribe(($items) => {
+			? expenseItems.subscribe(($items) => {
 					console.log('Expenses items changed:', $items);
 				})
 			: null;
 
+		const unsubAuthListener = startAuthListener({
+			onLogout: async () => {
+				expensesStore.clearAll();
+				clearAllExpensesCache();
+			},
+			onLogin: async () => {
+				// trigger load in the layout.ts to refetch data
+				await invalidateAll();
+			},
+		});
+
 		return () => {
 			unsubExpenseStore?.();
+			unsubAuthListener?.();
 		};
 	});
 </script>

@@ -1,38 +1,17 @@
 import { writable, derived } from 'svelte/store';
-import type { CategoryRow, CategoryKind } from '$lib/types/category';
-import { listCategories } from '$lib/data/categories.fetcher';
+import type { CategoryRow } from '$lib/types/category';
 
-function createCategoriesStore() {
-	const items = writable<CategoryRow[]>([]);
-	const loading = writable(false);
-	const error = writable<unknown>(null);
-
-	async function load(kind?: CategoryKind) {
-		loading.set(true);
-		error.set(null);
-		try {
-			const res = await listCategories(kind ? { kind } : {});
-			items.set(res);
-		} catch (e) {
-			error.set(e);
-		} finally {
-			loading.set(false);
-		}
-	}
-
-	// options for selects, keyed by kind
-	const expenseOptions = derived(items, ($items) =>
-		$items
-			.filter((c) => c.kind === 'expense')
-			.map((c) => ({ value: c.id, label: c.name }))
-	);
-	const incomeOptions = derived(items, ($items) =>
-		$items
-			.filter((c) => c.kind === 'income')
-			.map((c) => ({ value: c.id, label: c.name }))
-	);
-
-	return { items, loading, error, load, expenseOptions, incomeOptions };
+export const items = writable<CategoryRow[]>([]);
+export const loading = writable(false);
+export const error = writable<unknown>(null);
+export function setFromLoad(list: CategoryRow[]) {
+	items.set(list);
+	loading.set(false);
 }
 
-export const categoriesStore = createCategoriesStore();
+export const expenseOptions = derived(items, ($items) =>
+	$items.filter((c) => c.kind === 'expense').map((c) => ({ value: c.id, label: c.name }))
+);
+export const incomeOptions = derived(items, ($items) =>
+	$items.filter((c) => c.kind === 'income').map((c) => ({ value: c.id, label: c.name }))
+);

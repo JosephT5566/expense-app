@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { supabase } from '$lib/supabase/supabaseClient';
-	import { sessionStore } from '$lib/stores/session.store';
+	import { user, loading } from '$lib/stores/session.store';
 	import { Dialog } from 'bits-ui';
 	import classNames from 'classnames';
 	import { onDestroy } from 'svelte';
 	import Icon from '@iconify/svelte';
-	const { user, loading } = sessionStore;
 	let open = $state(false);
 
 	const unsubscribe = loading.subscribe(($loading) => {
+		console.log('AuthModal user changed:', $loading, $user);
 		if (!$loading) {
 			open = !$user;
 		}

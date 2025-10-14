@@ -2,9 +2,9 @@
 	import PieChart from '$lib/components/ui/PieChart.svelte';
 	import type { PieDatum } from '$lib/components/ui/PieChart.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
-	import { expensesStore } from '$lib/stores/expenses.store';
-	import { sessionStore } from '$lib/stores/session.store';
-	import { categoriesStore } from '$lib/stores/categories.store';
+	import * as expensesStore from '$lib/stores/expenses.store';
+	import * as sessionStore from '$lib/stores/session.store';
+	import * as categoriesStore from '$lib/stores/categories.store';
 	import { derived } from 'svelte/store';
 	import type { ExpenseRow, ExpenseScope } from '$lib/types/expense';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
