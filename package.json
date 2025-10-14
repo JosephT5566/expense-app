@@ -49,6 +49,7 @@
 		"@types/lodash": "^4.17.20",
 		"bits-ui": "^2.11.4",
 		"classnames": "^2.5.1",
+		"idb-keyval": "^6.2.2",
 		"lodash": "^4.17.21",
 		"swipe-listener": "^1.3.0"
 	}

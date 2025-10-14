@@ -34,3 +34,16 @@ export function taiwanMonthBoundsISO(year: number, month: number) {
 	const end = new Date(Date.UTC(year, month, 0, 15, 59, 59, 999));
 	return { from: start.toISOString(), to: end.toISOString() };
 }
+
+export function currentTaiwanMonthKey() {
+	const now = new Date();
+	const taiwanNow = new Date(now.getTime() + 8 * 60 * 60 * 1000); // UTC+8
+	const year = taiwanNow.getUTCFullYear();
+	const month = String(taiwanNow.getUTCMonth() + 1).padStart(2, '0');
+	return `${year}-${month}`; // 'YYYY-MM'
+}
+
+export function decodeMonthKey(monthKey: string) {
+	const [y, m] = monthKey.split('-').map(Number);
+	return { year: y, month: m };
+}

@@ -1,6 +1,12 @@
 import { supabase } from '$lib/supabase/supabaseClient';
-import type { ExpenseRow, ExpenseQuery, PageResult, ShareEntry, ExpenseScope } from '$lib/types/expense';
-import { encodeCursor, decodeCursor, taiwanMonthBoundsISO } from '$lib/utils/dates';
+import type {
+	ExpenseRow,
+	ExpenseQuery,
+	PageResult,
+	ShareEntry,
+	ExpenseScope,
+} from '$lib/types/expense';
+import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
 
 const TABLE = 'expenses';
 
@@ -60,6 +66,28 @@ export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseR
 	return { items, nextCursor };
 }
 
+/**
+ * 以「台灣時區」計算該月的 [from, to) 邊界，再呼叫現有的 listExpenses。
+ * @param monthKey 例如 '2025-10'
+ * @param q 其他查詢條件（會覆蓋預設），但不需提供 from/to
+ */
+export async function listExpensesMonthly(
+	monthKey: string,
+	q: Omit<ExpenseQuery, 'from' | 'to'> = {}
+): Promise<PageResult<ExpenseRow>> {
+	const { year, month } = decodeMonthKey(monthKey);
+	const { from, to } = taiwanMonthBoundsISO(year, month);
+	// 設定一個較合理的預設頁大小；也可沿用呼叫端提供的 q.limit
+	const limit = q.limit ?? 500;
+
+	return listExpenses({
+		...q,
+		limit,
+		from, // 含當月 00:00:00 (台灣) 對應的 UTC ISO
+		to, // 不含次月 00:00:00 (台灣) 對應的 UTC ISO
+	});
+}
+
 export async function getExpense(id: string): Promise<ExpenseRow | null> {
 	const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle(); // ← 這個 API 仍可用
 
@@ -76,12 +104,12 @@ export interface UpsertExpenseInput {
 	currency: string;
 	ts?: string;
 	updated_at?: string;
-    payer_email: string;
+	payer_email: string;
 	scope: ExpenseScope;
 	shares_json: ShareEntry;
 	is_settled?: boolean;
 	notes?: string;
-    category_id: string;
+	category_id: string;
 }
 
 export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseRow> {
