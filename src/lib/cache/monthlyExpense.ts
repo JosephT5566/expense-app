@@ -3,7 +3,7 @@ import { writable, get } from 'svelte/store';
 import { get as idbGet, set as idbSet, keys, del } from 'idb-keyval';
 import type { ExpenseRow } from '$lib/types/expense';
 import { getTaiwanMonthKey } from '$lib/utils/dates';
-import { getExpenseCacheKey } from '$lib/utils/cache';
+import { EXPENSE_CACHE_PREFIX, getExpenseCacheKey } from '$lib/utils/cache';
 // import { revalidateInBackground } from '$lib/data/monthly-cache-first';
 
 type MonthKey = string; // '2025-10'
@@ -11,7 +11,7 @@ type MonthlyData = ExpenseRow[]; // 你的型別
 type CacheEntry = { data: MonthlyData; ts: number }; // ts = 快取時間
 
 const mem = writable(new Map<MonthKey, CacheEntry>());
-const STALE_MS = 5 * 60 * 1000; // 5 分鐘（可調）
+const STALE_MS = 10 * 60 * 1000; // 10 分鐘（可調）
 
 export async function getExpenseFromCache(monthKey: MonthKey): Promise<MonthlyData | null> {
 	const m = get(mem);
@@ -50,7 +50,7 @@ export function isStale(month: MonthKey) {
 }
 
 export async function clearAllExpensesCache() {
-	const all = (await keys()).map(String);
+	const all = (await keys()).map(String).filter((k) => k.startsWith(EXPENSE_CACHE_PREFIX));
 
 	await Promise.all(all.map((k) => del(k)));
 }

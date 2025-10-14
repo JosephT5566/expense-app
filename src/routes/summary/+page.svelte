@@ -12,6 +12,7 @@
 	// 新增：月份選擇 Dialog 與台灣月份邊界
 	import { Dialog } from 'bits-ui';
 	import { taiwanMonthBoundsISO } from '$lib/utils/dates';
+    import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 
 	let scope = $state<ExpenseScope>('personal');
 	let expanded: Record<string, boolean> = $state({});
@@ -98,10 +99,14 @@
 	}
 
 	$effect(() => {
+        // month selected and picker close
 		if (wasMonthPickerOpen && !showMonthPicker) {
 			const [y, m] = selectedMonth.split('-').map(Number);
 			if (expensesStore.getMonthExpenses(y, m).length === 0) {
-				void expensesStore.loadMonthByDate(`${selectedMonth}-01`);
+                getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`)
+                    .then((newMonthExpense) => {
+                        expensesStore.setMoreItems(newMonthExpense);
+                    });
 			}
 		}
 		wasMonthPickerOpen = showMonthPicker;
@@ -109,7 +114,7 @@
 
 	$effect(() => {
 		console.log('Selected month changed to:', selectedMonth);
-		console.log('Month bounds:', monthBounds);
+		// console.log('Month bounds:', monthBounds);
 		console.log(
 			'filtered items:',
 			($items ?? []).filter((e) => {

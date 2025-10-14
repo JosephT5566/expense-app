@@ -7,10 +7,15 @@ import type {
 	ExpenseScope,
 } from '$lib/types/expense';
 import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
+import { isDev } from '$lib/utils/helpers';
 
 const TABLE = 'expenses';
 
 export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseRow>> {
+	if (isDev) {
+		console.log('fetch expenses');
+	}
+
 	const limit = q.limit ?? 50;
 
 	// 基礎 query：以 ts DESC, id DESC，並多抓 1 筆判斷是否有下一頁
@@ -75,6 +80,9 @@ export async function listExpensesMonthly(
 	monthKey: string,
 	q: Omit<ExpenseQuery, 'from' | 'to'> = {}
 ): Promise<PageResult<ExpenseRow>> {
+	if (isDev) {
+		console.log('fetch expenses for month', monthKey);
+	}
 	const { year, month } = decodeMonthKey(monthKey);
 	const { from, to } = taiwanMonthBoundsISO(year, month);
 	// 設定一個較合理的預設頁大小；也可沿用呼叫端提供的 q.limit

@@ -21,6 +21,7 @@
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
 	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
+	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -88,6 +89,7 @@
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	const inflightMonths: Record<string, boolean> = $state({});
 	$effect(() => {
+		// when state selectedDate changes
 		if ($expensesItems.length === 0) {
 			return;
 		}
@@ -97,13 +99,19 @@
 		const m = d.getMonth() + 1;
 		const key = `${y}-${String(m).padStart(2, '0')}`;
 		const { from, to } = taiwanMonthBoundsISO(y, m);
+
+		// check if we have any item in this month in the expenses store
 		const hasMonth = $expensesItems.some((e) => e.ts >= from && e.ts <= to);
 
 		if (!hasMonth && !inflightMonths[key]) {
 			inflightMonths[key] = true;
-			void expensesStore
-				.loadMonthByDate(selectedDate)
-				.finally(() => (inflightMonths[key] = false));
+			getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`)
+				.then((newMonthExpense) => {
+					expensesStore.setMoreItems(newMonthExpense);
+				})
+				.finally(() => {
+					inflightMonths[key] = false;
+				});
 		}
 	});
 

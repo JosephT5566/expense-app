@@ -3,6 +3,7 @@ import { browser } from '$app/environment';
 import { getExpenseFromCache, setExpenseCache, isStale } from '$lib/cache/monthlyExpense';
 import { listExpensesMonthly } from '$lib/data/expenses.fetcher';
 
+// before using, check the store first.
 export async function getMonthlyFromCacheFirst(monthKey: string) {
 	// 先嘗試命中（記憶體或 IDB），命中就馬上回資料
 	if (browser) {

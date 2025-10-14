@@ -15,6 +15,16 @@ export function setMonthlyItemsFromLoad(data: ExpenseRow[]) {
 	items.set(data);
 }
 
+export function setMoreItems(data: ExpenseRow[]) {
+	items.update((prev) => {
+		const map = new Map(prev.map((r) => [r.id, r]));
+		for (const r of data) {
+			map.set(r.id, r);
+		}
+		return Array.from(map.values());
+	});
+}
+
 export async function load(q: ExpenseQuery) {
 	loading.set(true);
 	error.set(null);
