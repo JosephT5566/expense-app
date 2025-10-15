@@ -93,9 +93,10 @@
 		<Dialog.Content
 			class={classNames(
 				'swipe-drawer-content',
-                'bottom-[calc(15vh)]', // leave space for bottom nav
-				'relative inset-x-0 card rounded-b-none overflow-auto',
-				'pb-[15vh]'
+				'bottom-[85vh]', // leave space for bottom nav
+				'relative inset-x-0 rounded-b-none overflow-auto bg-white rounded-2xl',
+				'pb-[var(--nav-height)]',
+				'data-[state=open]:animate-enter-from-bottom',
 			)}
 			style="transform: translateY({dragY}px); height: {maxHeight};"
 		>
@@ -132,8 +133,8 @@
 		width: 30%;
 		height: 4px;
 		border-radius: 2px;
-        top: 8px;
-        left: 50%;
-        transform: translateX(-50%);
+		top: 8px;
+		left: 50%;
+		transform: translateX(-50%);
 	}
 </style>

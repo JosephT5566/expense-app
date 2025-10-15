@@ -22,6 +22,7 @@
 
 	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { onMount } from 'svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -45,6 +46,8 @@
 	let isSettled = $state<boolean>(false);
 	// 新增：分帳輸入（email -> amount string）
 	let shares = $state<Record<string, string>>({});
+
+	let calculatorModal: HTMLDialogElement | null = $state(null);
 
 	// 分類資料
 	const categoryItems = categoriesStore.items;
@@ -137,6 +140,19 @@
 				isSettled = false;
 			}
 		}
+	});
+
+	onMount(() => {
+		if (!calculatorModal) {
+			return;
+		}
+
+		calculatorModal.addEventListener('click', (e) => {
+			if (e.target === calculatorModal) {
+				e.stopPropagation();
+				(calculatorModal as HTMLDialogElement).close();
+			}
+		});
 	});
 
 	function toDateOnlyStr(d: Date) {
@@ -341,6 +357,17 @@
 	</Dialog.Portal>
 </Dialog.Root>
 
+<dialog bind:this={calculatorModal} id="calculator_modal" class="modal" closedby="any">
+	<div class="modal-box w-11/12 max-w-5xl">
+		{#key calcResetKey}
+			<Calculator bind:amount />
+		{/key}
+		<form method="dialog" class="modal-backdrop">
+			<button>close</button>
+		</form>
+	</div>
+</dialog>
+
 <SwipeDrawer bind:open={drawerOpen} title={editMode ? '編輯項目' : '新增項目'}>
 	<label class="block text-sm mb-1" for="date-input">日期</label>
 	<input
@@ -352,13 +379,24 @@
 	/>
 
 	<label class="block text-sm mb-1" for="amount-input">金額</label>
-	<input
-		id="amount-input"
-		class="w-full mb-3 p-3 rounded-lg border border-black/10"
-		inputmode="decimal"
-		bind:value={amount}
-		placeholder="0"
-	/>
+	<div class="join w-full mb-3 rounded-lg relative">
+		<input
+			class="w-full p-3 rounded-lg border border-black/10"
+			id="amount-input"
+			inputmode="decimal"
+			type="number"
+			bind:value={amount}
+			placeholder="0"
+		/>
+		<button
+			class="btn btn-primary h-full join-item absolute right-0 rounded-l-[0px]!"
+			onclick={() => {
+				calculatorModal?.showModal();
+			}}
+		>
+			<Icon icon="solar:calculator-bold-duotone" width="24" height="24" />
+		</button>
+	</div>
 
 	<div class="block text-sm mb-1">類別</div>
 	<!-- Category Grid + Carousel -->
@@ -481,9 +519,6 @@
 	<button class="btn btn-primary w-full mb-3" onclick={submitForm}
 		>{editMode ? '更新' : '新增'}</button
 	>
-	{#key calcResetKey}
-		<Calculator bind:amount />
-	{/key}
 </SwipeDrawer>
 
 <style>

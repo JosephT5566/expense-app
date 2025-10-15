@@ -1,4 +1,9 @@
 @import 'tailwindcss';
+@plugin 'daisyui';
+
+:root {
+	--nav-height: 72px;
+}
 
 @theme {
 	--animate-accordion-down: accordion-down 0.2s ease-out;
@@ -18,6 +23,16 @@
 		}
 		to {
 			height: 0;
+		}
+	}
+
+	--animate-enter-from-bottom: enter-from-bottom 0.2s ease;
+	@keyframes enter-from-bottom {
+		0% {
+			transform: translateY(300px);
+		}
+		100% {
+			transform: translateY(0);
 		}
 	}
 }
