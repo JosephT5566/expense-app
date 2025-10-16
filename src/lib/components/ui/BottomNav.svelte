@@ -2,6 +2,7 @@
 	import { type Tab } from '$lib/stores/nav.store';
 	import Icon from '@iconify/svelte';
 	import { resolve } from '$app/paths';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	type NavPath = '/' | '/summary' | '/setting';
@@ -26,9 +27,11 @@
 					class="w-full py-3 text-sm flex flex-col items-center gap-1"
 					class:selected={activeTab === it.key}
 					onclick={() => {
-						if (it.path) {
-							window.location.href = resolve(it.path);
+						if (!it.path || page.url.pathname === it.path) {
+							return;
 						}
+						activeTab = it.key;
+						goto(resolve(it.path));
 					}}
 				>
 					<Icon icon={it.icon} width="24" height="24" />
