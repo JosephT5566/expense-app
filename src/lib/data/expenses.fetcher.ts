@@ -130,6 +130,27 @@ export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseR
 	return data as ExpenseRow;
 }
 
+/**
+ * 更新指定支出項目的結清狀態。
+ *
+ * 用途：
+ * - 用於單筆切換「是否已結清」（is_settled）的狀態。
+ * - 通常對應 UI 上的 toggle 開關。
+ *
+ * @async
+ * @function toggleSettled
+ * @param {string} id - 要更新的項目 ID。
+ * @param {boolean} next - 要設定的結清狀態，`true` 表示已結清、`false` 表示未結清。
+ * @returns {Promise<number>} 成功更新的筆數（通常為 0 或 1）。
+ *
+ * @throws {Error} 若 Supabase 更新過程發生錯誤時會拋出例外。
+ *
+ * @example
+ * ```ts
+ * const affected = await toggleSettled("exp_123", true);
+ * console.log(`${affected} row updated`);
+ * ```
+ */
 export async function toggleSettled(id: string, next: boolean): Promise<void> {
 	const { error } = await supabase.from(TABLE).update({ is_settled: next }).eq('id', id);
 	if (error) {
@@ -137,6 +158,44 @@ export async function toggleSettled(id: string, next: boolean): Promise<void> {
 	}
 }
 
+/**
+ * 批次更新多筆支出項目的結清狀態。
+ *
+ * 可根據條件：
+ * 1. 多筆 ID（使用 `ids`），或
+ * 2. 指定時間區間（使用 `from` / `to`）
+ * 來批次更新。
+ *
+ * @async
+ * @function bulkToggleSettled
+ * @param {Object} params - 更新條件參數物件。
+ * @param {string[]} [params.ids] - 要更新的多筆項目 ID 清單。
+ * @param {string} [params.from] - 起始時間（ISO 格式），與 `to` 搭配使用。
+ * @param {string} [params.to] - 結束時間（ISO 格式），與 `from` 搭配使用。
+ * @param {boolean} params.next - 要設定的結清狀態。
+ * @returns {Promise<number>} 成功更新的筆數（若無匹配則為 0）。
+ *
+ * @throws {Error} 若 Supabase 更新過程發生錯誤時會拋出例外。
+ *
+ * @example <caption>依多筆 ID 批次更新</caption>
+ * ```ts
+ * const affected = await bulkToggleSettled({
+ *   ids: ["exp_001", "exp_002", "exp_003"],
+ *   next: true
+ * });
+ * console.log(`${affected} rows updated`);
+ * ```
+ *
+ * @example <caption>依時間區間批次更新</caption>
+ * ```ts
+ * const affected = await bulkToggleSettled({
+ *   from: "2025-10-01T00:00:00Z",
+ *   to: "2025-10-31T23:59:59Z",
+ *   next: false
+ * });
+ * console.log(`${affected} rows updated`);
+ * ```
+ */
 export async function bulkToggleSettled(
 	params: { ids: string[]; next: boolean } | { from: string; to: string; next: boolean }
 ): Promise<number> {
