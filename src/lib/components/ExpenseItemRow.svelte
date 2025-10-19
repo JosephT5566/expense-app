@@ -11,21 +11,43 @@
 		icon = null,
 		showEdit = true,
 		hideIcon = false,
+		selectable = false,
+		checked = false,
 	}: {
 		hideIcon?: boolean;
 		expense: ExpenseRow;
 		icon: string | null;
 		showEdit: boolean;
+		selectable?: boolean;
+		checked?: boolean;
 	} = $props();
 
-	const dispatch = createEventDispatcher<{ edit: ExpenseRow }>();
+	const dispatch = createEventDispatcher<{
+		edit: ExpenseRow;
+		toggle: { id: string; checked: boolean };
+	}>();
 
 	function onEdit() {
 		dispatch('edit', expense);
 	}
+
+	function onToggle(e: Event) {
+		const target = e.target as HTMLInputElement;
+		dispatch('toggle', { id: expense.id, checked: !!target.checked });
+	}
 </script>
 
 <li class="py-2 flex items-center gap-3">
+	{#if selectable}
+		<input
+			type="checkbox"
+			class="checkbox checkbox-sm"
+			{checked}
+			onchange={onToggle}
+			aria-label="Select expense"
+		/>
+	{/if}
+
 	{#if !hideIcon}
 		<div class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]">
 			{#if icon}
@@ -37,7 +59,9 @@
 	{/if}
 	<div class="flex-1 flex items-center min-w-0 gap-2">
 		<div class="text-sm font-medium truncate">{expense.note}</div>
-		<div class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-primary)]/50">
+		<div
+			class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-primary)]/50"
+		>
 			{expense.scope === 'household' ? 'H' : 'P'}
 		</div>
 	</div>
