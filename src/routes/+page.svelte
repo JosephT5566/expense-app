@@ -74,17 +74,8 @@
 	// 新增：載入 app 設定（家庭成員）
 	const allowedUsers = appSettingStore.allowedUsers; // string[] emails
 	// 新增：email → 顯示名稱 mapping
-	const userLabelMap = derived([allowedUsers, sessionStore.user], ([allowed, me]) => {
-		const map: Record<string, string> = {};
-		for (const email of allowed) {
-			if (me?.email === email && me.display_name) {
-				map[email] = me.display_name;
-			} else {
-				map[email] = email.split('@')[0]; // 預設用 email 前綴
-			}
-		}
-		return map;
-	});
+	const allowedUserNames = appSettingStore.allowedUserNames;
+
 	// 新增：shares 合計與驗證
 	const sharesTotal = $derived(Object.values(shares).reduce((a, v) => a + (Number(v) || 0), 0));
 	const sharesValid = $derived(Number(amount || 0) === sharesTotal);
@@ -488,7 +479,7 @@
 					{#each $allowedUsers as email (email)}
 						<div class="flex items-center gap-2">
 							<div class="flex-1 text-sm truncate">
-								{$userLabelMap[email] ?? email}
+								{$allowedUserNames[email] ?? email}
 							</div>
 							<input
 								class="w-28 p-2 rounded-lg border border-black/10 text-right"
