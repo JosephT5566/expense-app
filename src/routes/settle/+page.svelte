@@ -215,7 +215,7 @@
 
 <section class="card p-4 mb-[10vh] flex flex-col gap-3">
 	<!-- 範圍 + 開關 -->
-	<DateRangePicker title="test" bind:dateRange />
+	<DateRangePicker title="選擇計算範圍" bind:dateRange />
 
 	<!-- 列表 -->
 	{#if loading}
@@ -286,10 +286,10 @@
 	{/if}
 
 	<button
-		class="btn btn-primary"
+		class="btn btn-primary disabled:bg-[var(--c-muted)]!"
 		disabled={selected.length === 0 || loading}
 		onclick={startSettle}
 	>
-		Start settle
+		設為結清
 	</button>
 </section>
