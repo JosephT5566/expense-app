@@ -13,6 +13,7 @@
 		hideIcon = false,
 		selectable = false,
 		checked = false,
+		displayShare = false,
 	}: {
 		hideIcon?: boolean;
 		expense: ExpenseRow;
@@ -20,6 +21,7 @@
 		showEdit: boolean;
 		selectable?: boolean;
 		checked?: boolean;
+		displayShare?: boolean;
 	} = $props();
 
 	const dispatch = createEventDispatcher<{
@@ -32,13 +34,14 @@
 	}
 
 	function onToggle(e: Event) {
+		// console.log('row toggle', e);
 		const target = e.target as HTMLInputElement;
 		dispatch('toggle', { id: expense.id, checked: !!target.checked });
 	}
 </script>
 
 <li class="py-2 flex items-center gap-3">
-	{#if selectable}
+	{#if !displayShare && selectable}
 		<input
 			type="checkbox"
 			class="checkbox checkbox-sm"

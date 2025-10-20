@@ -9,17 +9,52 @@ export function setFromLoad(allowedEmails: string[]) {
 	loading.set(false);
 }
 
-export const allowedUserNames = derived([allowedUsers, user], ([allowed, me]) => {
-	const emailNameMapping = JSON.parse(PUBLIC_EMAIL_NAME_MAPPING);
-	const map: Record<string, string> = {};
-	for (const email of allowed) {
-		if (emailNameMapping?.[email]) {
-			map[email] = emailNameMapping[email];
-		} else if (me?.email === email && me.display_name) {
-			map[email] = me.display_name;
-		} else {
-			map[email] = email.split('@')[0]; // 預設用 email 前綴
+export const allowedUserInfo = derived([allowedUsers, user], ([allowed, me]) => {
+	const emailNameMapping = JSON.parse(PUBLIC_EMAIL_NAME_MAPPING) as Record<
+		string,
+		{
+			name: string;
+			color: string;
 		}
+	>;
+
+	const info: Record<
+		string,
+		{
+			name: string;
+			color: string | null;
+		}
+	> = {};
+	for (const email of allowed) {
+		let userName = null;
+		if (emailNameMapping?.[email]) {
+			userName = emailNameMapping[email].name;
+		} else if (me?.email === email && me.display_name) {
+			userName = me.display_name;
+		} else {
+			userName = email.split('@')[0]; // 預設用 email 前綴
+		}
+		info[email] = {
+			name: userName,
+			color: emailNameMapping?.[email]?.color || null,
+		};
 	}
-	return map;
+	return info;
 });
+
+export const getUserInfo = (email: string): { name: string; color: string } => {
+	const emailNameMapping = JSON.parse(PUBLIC_EMAIL_NAME_MAPPING) as {
+		email: string;
+		name: string;
+		color: string;
+	}[];
+
+	const matchedEmail = emailNameMapping.find((m) => m.email === email);
+
+	const name = matchedEmail ? matchedEmail.name : email.split('@')[0];
+
+	return {
+		name,
+		color: '',
+	};
+};

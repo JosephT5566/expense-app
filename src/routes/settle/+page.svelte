@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Dialog, Switch } from 'bits-ui';
+	import { Dialog } from 'bits-ui';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import * as categoriesStore from '$lib/stores/categories.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
@@ -10,7 +10,8 @@
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
 	import { SvelteSet } from 'svelte/reactivity';
-	import { allowedUserNames } from '$lib/stores/appSetting.store';
+	import { allowedUserInfo, getUserInfo } from '$lib/stores/appSetting.store';
+	import classNames from 'classnames';
 
 	const mockdata: ExpenseRow[] = [
 		{
@@ -266,6 +267,7 @@
 	});
 
 	function toggleOne(e: CustomEvent<{ id: string; checked: boolean }>) {
+		console.log('toggle one', e.detail.id);
 		// const s = new SvelteSet(selected);
 		const hasItem = selected.includes(e.detail.id);
 		if (e.detail.checked && !hasItem) {
@@ -335,29 +337,31 @@
 
 	// 當前使用者算式
 	const currentUser = $derived(get(userStore));
-	const myFormula = $derived(() => {
+	const myFormula = $derived.by(() => {
 		if (!currentUser?.email || selectedRows.length === 0) {
 			return '';
 		}
-		const paidTerms: number[] = [];
-		const oweTerms: number[] = [];
+
+		const oweTerms: string[] = [];
+
 		for (const r of selectedRows) {
-			if (r.payer_email === currentUser.email) {
-				paidTerms.push(r.amount);
+			if (r.scope === 'personal') {
+				continue;
 			}
-			const s = r.shares_json?.[currentUser.email] ?? 0;
-			if (s > 0) {
-				oweTerms.push(s);
+			if (r.payer_email === currentUser.email) {
+				// I paid
+				const sum = Object.values(r.shares_json).reduce((acc, cur) => {
+					return acc + cur;
+				}, 0);
+
+				if (sum > 0) {
+					oweTerms.push(`+${sum - r.shares_json[r.payer_email]}`);
+				}
+			} else {
+				oweTerms.push(`-${r.shares_json[currentUser.email]}`);
 			}
 		}
-		const paidSum = paidTerms.reduce((a, v) => a + v, 0);
-		const oweSum = oweTerms.reduce((a, v) => a + v, 0);
-		const left =
-			(paidTerms.length ? paidTerms.join(' + ') : '0') +
-			' - (' +
-			(oweTerms.length ? oweTerms.join(' + ') : '0') +
-			')';
-		return `${left} = ${paidSum - oweSum}`;
+		return oweTerms.join('');
 	});
 
 	const net = $derived(computeNetByEmail(selectedRows));
@@ -418,6 +422,7 @@
 				hideIcon={false}
 				selectable={true}
 				selectedIds={selected}
+				displayShare={true}
 				on:toggle={toggleOne}
 			/>
 		</div>
@@ -433,22 +438,31 @@
 		{:else}
 			<ul class="text-sm space-y-1">
 				{#each transfers as t, i (i)}
-					<li>{$allowedUserNames[t.from]} → {$allowedUserNames[t.to]}:{t.amount}</li>
+					<li>
+						{$allowedUserInfo[t.from].name} → {$allowedUserInfo[t.to].name}:{t.amount}
+					</li>
 				{/each}
 			</ul>
 		{/if}
 	</div>
 
-	<!-- 用 Bits UI 的 Switch 控制是否顯示算式（預設 false） -->
-	<Switch.Root bind:checked={showFormula} class="flex items-center gap-2">
-		<span>顯示我的算式</span>
-		<Switch.Thumb />
-	</Switch.Root>
+	<label class="label">
+		<input
+			type="checkbox"
+			bind:checked={showFormula}
+			class={classNames(
+				'toggle',
+				'border-[var(--c-primary)]/30 before:bg-[var(--c-primary)]/30',
+				'checked:border-[var(--c-primary)] checked:before:bg-[var(--c-primary)] checked:text-orange-800'
+			)}
+		/>
+		顯示算式
+	</label>
 
 	<!-- 我的算式（受 Switch 控制） -->
 	{#if showFormula && myFormula}
 		<div class="mt-3 text-xs opacity-80">
-			我的算式：{myFormula}
+			{myFormula}
 		</div>
 	{/if}
 

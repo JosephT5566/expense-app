@@ -74,7 +74,7 @@
 	// 新增：載入 app 設定（家庭成員）
 	const allowedUsers = appSettingStore.allowedUsers; // string[] emails
 	// 新增：email → 顯示名稱 mapping
-	const allowedUserNames = appSettingStore.allowedUserNames;
+	const allowedUserInfo = appSettingStore.allowedUserInfo;
 
 	// 新增：shares 合計與驗證
 	const sharesTotal = $derived(Object.values(shares).reduce((a, v) => a + (Number(v) || 0), 0));
@@ -479,7 +479,7 @@
 					{#each $allowedUsers as email (email)}
 						<div class="flex items-center gap-2">
 							<div class="flex-1 text-sm truncate">
-								{$allowedUserNames[email] ?? email}
+								{$allowedUserInfo[email].name ?? email}
 							</div>
 							<input
 								class="w-28 p-2 rounded-lg border border-black/10 text-right"
