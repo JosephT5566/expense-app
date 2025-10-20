@@ -15,6 +15,7 @@ html[data-theme='sunset'] {
 	--c-bg: #f4e9d7;
 	--c-muted: #b8c4a9;
 	--c-accent: #6fa4af;
+    --c-foreground: #F9F9F9
 }
 
 /* Example alt theme (Moss Night) – just a placeholder for future */

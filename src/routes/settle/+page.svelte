@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Dialog } from 'bits-ui';
+	import { type DateRange } from 'bits-ui';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import * as categoriesStore from '$lib/stores/categories.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
@@ -8,9 +8,9 @@
 	import { listExpenses } from '$lib/data/expenses.fetcher';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
-	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
-	import { SvelteSet } from 'svelte/reactivity';
-	import { allowedUserInfo, getUserInfo } from '$lib/stores/appSetting.store';
+	import { taiwanDayBoundsISO } from '$lib/utils/dates';
+	import { allowedUserInfo } from '$lib/stores/appSetting.store';
+	import DateRangePicker from '$lib/components/ui/DateRangePicker.svelte';
 	import classNames from 'classnames';
 
 	const mockdata: ExpenseRow[] = [
@@ -199,23 +199,9 @@
 		return Object.fromEntries(entries) as Record<string, string>;
 	});
 
-	// 預設區間：台灣當月
-	const now = new Date();
-	const monthBounds = taiwanMonthBoundsISO(now.getFullYear(), now.getMonth() + 1);
-	function isoToTaiwanDateStr(iso: string) {
-		const d = new Date(iso);
-		const t = new Date(d.getTime() + 8 * 60 * 60 * 1000); // UTC+8
-		const y = t.getUTCFullYear();
-		const m = String(t.getUTCMonth() + 1).padStart(2, '0');
-		const da = String(t.getUTCDate()).padStart(2, '0');
-		return `${y}-${m}-${da}`;
-	}
-
-	let startDate = $state(isoToTaiwanDateStr(monthBounds.from));
-	let endDate = $state(isoToTaiwanDateStr(monthBounds.to));
-	let showRangePicker = $state(false);
-
 	let loading = $state(false);
+	let dateRange = $state<DateRange | undefined>(undefined);
+
 	let rows = $state<ExpenseRow[]>([]);
 	let selected = $state<string[]>([]);
 	let selectAll = $state(false);
@@ -225,25 +211,22 @@
 
 	const userStore = sessionStore.user;
 
-	async function fetchData() {
-		// 驗證
-		if (endDate < startDate) {
-			alert('結束日期需大於等於開始日期');
-			return;
-		}
+	async function fetchData(startDateString: string, endDateString: string) {
 		loading = true;
+		console.log('fetch start', startDateString, endDateString);
+
 		try {
-			// const fromISO = taiwanDayBoundsISO(startDate).from;
-			// const toISO = taiwanDayBoundsISO(endDate).to;
-			// const page = await listExpenses({
-			// 	from: fromISO,
-			// 	to: toISO,
-			// 	scope: 'household',
-			// 	settled: 'only_unsettled',
-			// 	limit: 1000,
-			// });
-			// rows = page.items;
-			rows = mockdata;
+			const fromISO = taiwanDayBoundsISO(startDateString).from;
+			const toISO = taiwanDayBoundsISO(endDateString).to;
+			const page = await listExpenses({
+				from: fromISO,
+				to: toISO,
+				scope: 'household',
+				settled: 'only_unsettled',
+				limit: 1000,
+			});
+			rows = page.items;
+			// rows = mockdata;
 			selected = [];
 			selectAll = false;
 		} catch (e) {
@@ -251,20 +234,43 @@
 			alert('讀取失敗');
 		} finally {
 			loading = false;
-			showRangePicker = false;
 		}
 	}
-
+	
 	$effect(() => {
-		console.log('selected items', selected);
-	});
+		const startDate = dateRange?.start?.toString();
+		const endDate = dateRange?.end?.toString();
 
-	$effect(() => {
-		// 初始化載入
-		if (rows.length === 0) {
-			fetchData();
+		if (!startDate || !endDate) {
+			console.log('reset data');
+			rows = [];
 		}
 	});
+
+	$effect(() => {
+		const startDate = dateRange?.start?.toString();
+		const endDate = dateRange?.end?.toString();
+
+		// console.log('try to fetch');
+		if (
+			loading || // is loading
+			(startDate && endDate && rows.length > 0) || // data is fetched and we haven't refetch
+			!startDate ||
+			!endDate
+		) {
+			// console.log('but return')
+			return;
+		}
+
+		fetchData(startDate, endDate);
+	});
+
+	// $effect(() => {
+	// 	// 初始化載入
+	// 	if (rows.length === 0) {
+	// 		fetchData();
+	// 	}
+	// });
 
 	function toggleOne(e: CustomEvent<{ id: string; checked: boolean }>) {
 		console.log('toggle one', e.detail.id);
@@ -387,16 +393,7 @@
 
 <section class="card p-4 mb-[10vh] flex flex-col gap-3">
 	<!-- 範圍 + 開關 -->
-	<div class="flex items-center justify-between gap-3">
-		<button
-			class="px-3 py-1 rounded-md border border-black/10"
-			onclick={() => (showRangePicker = true)}
-		>
-			範圍：{startDate} ~ {endDate}
-		</button>
-	</div>
-
-	<!-- 操作列：全選 + 結清 -->
+	<DateRangePicker title="test" bind:dateRange />
 
 	<!-- 列表 -->
 	{#if loading}
@@ -461,7 +458,7 @@
 
 	<!-- 我的算式（受 Switch 控制） -->
 	{#if showFormula && myFormula}
-		<div class="mt-3 text-xs opacity-80">
+		<div class="text-xs opacity-80">
 			{myFormula}
 		</div>
 	{/if}
@@ -474,27 +471,3 @@
 		Start settle
 	</button>
 </section>
-
-<!-- Date Range Dialog -->
-<Dialog.Root bind:open={showRangePicker}>
-	<Dialog.Portal>
-		<Dialog.Overlay class="fixed inset-0 bg-black/40" />
-		<Dialog.Content class="card fixed inset-x-6 top-[20vh] p-5">
-			<Dialog.Title class="font-semibold">選擇日期區間（台灣時區）</Dialog.Title>
-			<div class="mt-3 grid grid-cols-2 gap-3">
-				<div>
-					<label class="text-sm">開始</label>
-					<input type="date" class="mt-1 w-full" bind:value={startDate} />
-				</div>
-				<div>
-					<label class="text-sm">結束</label>
-					<input type="date" class="mt-1 w-full" bind:value={endDate} />
-				</div>
-			</div>
-			<div class="mt-4 flex justify-end gap-2">
-				<button class="btn" onclick={() => (showRangePicker = false)}>取消</button>
-				<button class="btn btn-primary" onclick={fetchData}>套用</button>
-			</div>
-		</Dialog.Content>
-	</Dialog.Portal>
-</Dialog.Root>
