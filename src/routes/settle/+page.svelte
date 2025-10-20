@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { type DateRange } from 'bits-ui';
+	import Icon from '@iconify/svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import * as categoriesStore from '$lib/stores/categories.store';
-	import * as expensesStore from '$lib/stores/expenses.store';
 	import * as sessionStore from '$lib/stores/session.store';
 	import { derived, get } from 'svelte/store';
-	import { listExpenses } from '$lib/data/expenses.fetcher';
+	import { listExpenses, bulkToggleSettled } from '$lib/data/expenses.fetcher';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
@@ -25,6 +25,7 @@
 	let dateRange = $state<DateRange | undefined>(undefined);
 
 	let rows = $state<ExpenseRow[]>([]);
+	let settledTrash = $state<ExpenseRow[]>([]);
 	let selected = $state<string[]>([]);
 	let selectAll = $state(false);
 
@@ -200,8 +201,10 @@
 			alert('請先選擇要結清的項目');
 			return;
 		}
+
 		try {
-			await expensesStore.markSettledBulk({ ids: [...selected], next: true });
+			await bulkToggleSettled({ ids: [...selected], next: true });
+			settledTrash = rows.filter((r) => selected.includes(r.id));
 			// 畫面上移除已結清項
 			rows = rows.filter((r) => !selected.includes(r.id));
 			selected = [];
@@ -209,6 +212,22 @@
 		} catch (e) {
 			console.error(e);
 			alert('結清失敗');
+		}
+	}
+
+	async function recoverSettle() {
+		if (settledTrash.length === 0) {
+			alert('請先完成結清');
+			return;
+		}
+		try {
+			await bulkToggleSettled({ ids: settledTrash.map((t) => t.id), next: false });
+			rows = [...rows, ...settledTrash];
+			selected = [];
+			selectAll = false;
+		} catch (e) {
+			console.error(e);
+			alert('重置失敗');
 		}
 	}
 </script>
@@ -285,11 +304,20 @@
 		</div>
 	{/if}
 
-	<button
-		class="btn btn-primary disabled:bg-[var(--c-muted)]!"
-		disabled={selected.length === 0 || loading}
-		onclick={startSettle}
-	>
-		設為結清
-	</button>
+	<div class="flex w-full gap-2">
+		<button
+			class="grow btn btn-primary disabled:bg-[var(--c-muted)]!"
+			disabled={selected.length === 0 || loading}
+			onclick={startSettle}
+		>
+			設為結清
+		</button>
+		<button
+			class="basis-s btn btn-primary disabled:bg-[var(--c-muted)]!"
+			disabled={settledTrash.length === 0}
+			onclick={recoverSettle}
+		>
+			<Icon icon="solar:restart-linear" width="24" height="24" />
+		</button>
+	</div>
 </section>
