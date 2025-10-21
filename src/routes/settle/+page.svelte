@@ -21,7 +21,8 @@
 		return Object.fromEntries(entries) as Record<string, string>;
 	});
 
-	let loading = $state(false);
+	let fetchLoading = $state(false);
+	let settleLoading = $state(false);
 	let dateRange = $state<DateRange | undefined>(undefined);
 
 	let rows = $state<ExpenseRow[]>([]);
@@ -35,7 +36,7 @@
 	const userStore = sessionStore.user;
 
 	async function fetchData(startDateString: string, endDateString: string) {
-		loading = true;
+		fetchLoading = true;
 		console.log('fetch start', startDateString, endDateString);
 
 		try {
@@ -49,6 +50,7 @@
 				limit: 1000,
 			});
 			rows = page.items;
+			console.log('fetch success', rows.length);
 			// rows = mockdata;
 			selected = [];
 			selectAll = false;
@@ -56,11 +58,12 @@
 			console.error(e);
 			alert('讀取失敗');
 		} finally {
-			loading = false;
+			fetchLoading = false;
 		}
 	}
 
 	$effect(() => {
+		// reset expenses when date selection start
 		const startDate = dateRange?.start?.toString();
 		const endDate = dateRange?.end?.toString();
 
@@ -76,15 +79,17 @@
 
 		// console.log('try to fetch');
 		if (
-			loading || // is loading
+			fetchLoading || // is loading
 			(startDate && endDate && rows.length > 0) || // data is fetched and we haven't refetch
 			!startDate ||
-			!endDate
+			!endDate ||
+			settledTrash.length > 0
 		) {
 			// console.log('but return')
 			return;
 		}
 
+		settledTrash = [];
 		fetchData(startDate, endDate);
 	});
 
@@ -96,11 +101,8 @@
 	// });
 
 	function toggleOne(e: CustomEvent<{ id: string; checked: boolean }>) {
-		console.log('toggle one', e.detail.id);
-		// const s = new SvelteSet(selected);
 		const hasItem = selected.includes(e.detail.id);
 		if (e.detail.checked && !hasItem) {
-			// s.add(e.detail.id);
 			selected = [...selected, e.detail.id];
 		} else if (!e.detail.checked && hasItem) {
 			selected = selected.filter((s) => s !== e.detail.id);
@@ -198,12 +200,16 @@
 
 	async function startSettle() {
 		if (selected.length === 0) {
-			alert('請先選擇要結清的項目');
+			alert('請先選擇項目');
 			return;
 		}
 
+		settleLoading = true;
 		try {
+			console.log('toggle settle', [...selected]);
 			await bulkToggleSettled({ ids: [...selected], next: true });
+			alert(`完成結清`)
+
 			settledTrash = rows.filter((r) => selected.includes(r.id));
 			// 畫面上移除已結清項
 			rows = rows.filter((r) => !selected.includes(r.id));
@@ -212,6 +218,8 @@
 		} catch (e) {
 			console.error(e);
 			alert('結清失敗');
+		} finally {
+			settleLoading = false;
 		}
 	}
 
@@ -220,9 +228,16 @@
 			alert('請先完成結清');
 			return;
 		}
+
 		try {
+			console.log(
+				'toggle reset',
+				settledTrash.map((t) => t.id)
+			);
 			await bulkToggleSettled({ ids: settledTrash.map((t) => t.id), next: false });
+
 			rows = [...rows, ...settledTrash];
+			settledTrash = [];
 			selected = [];
 			selectAll = false;
 		} catch (e) {
@@ -237,8 +252,15 @@
 	<DateRangePicker title="選擇計算範圍" bind:dateRange />
 
 	<!-- 列表 -->
-	{#if loading}
-		<p class="mt-3 opacity-70">載入中…</p>
+	{#if fetchLoading}
+		<div class="flex justify-center">
+			<Icon
+				icon="svg-spinners:90-ring-with-bg"
+				class="text-[var(--c-muted)]"
+				width="64px"
+				height="64px"
+			/>
+		</div>
 	{:else if rows.length === 0}
 		<p class="mt-3 opacity-70">此區間沒有待結清項目</p>
 	{:else}
@@ -307,10 +329,14 @@
 	<div class="flex w-full gap-2">
 		<button
 			class="grow btn btn-primary disabled:bg-[var(--c-muted)]!"
-			disabled={selected.length === 0 || loading}
+			disabled={selected.length === 0 || fetchLoading}
 			onclick={startSettle}
 		>
-			設為結清
+			{#if !settleLoading}
+				設為結清
+			{:else}
+				<Icon icon="svg-spinners:90-ring-with-bg" width="24" height="24" />
+			{/if}
 		</button>
 		<button
 			class="basis-s btn btn-primary disabled:bg-[var(--c-muted)]!"

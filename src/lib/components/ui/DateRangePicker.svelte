@@ -45,7 +45,7 @@
 							{:else}
 								<DateRangePicker.Segment
 									{part}
-									class="rounded-md hover:bg-[var(--c-bg)] focus:bg-[var(--c-bg)] focus:text-[var(--c-text)] aria-[valuetext=Empty]:text-[var(--c-muted)] focus-visible:ring-0! focus-visible:ring-offset-0! p-1"
+									class="rounded-md hover:bg-[var(--c-bg)] focus:bg-[var(--c-bg)] focus:text-[var(--c-text)] aria-[valuetext=Empty]:text-[var(--c-muted)] focus-visible:outline-0! focus-visible:outline-offset-0! p-1"
 								>
 									{value}
 								</DateRangePicker.Segment>
@@ -68,9 +68,10 @@
 	<DateRangePicker.Content
 		sideOffset={6}
 		onCloseAutoFocus={() => {
-			console.log('calendar closed');
 			if (!dateRange?.start || !dateRange?.end) {
-				dateRange = undefined;
+				setTimeout(() => {
+					dateRange = undefined;
+				}, 10);
 			}
 		}}
 		class="z-50"
@@ -114,13 +115,13 @@
 											>
 												<DateRangePicker.Day
 													class={classNames(
-														'rounded-xl hover:border-[var(--c-primary)] focus-visible:ring-foreground!',
+														'rounded-xl hover:border-[var(--c-primary)] focus-visible:outline-[var(--c-accent)]!',
 														'data-selection-end:rounded-xl data-selection-start:rounded-xl',
 														'data-highlighted:bg-[var(--c-bg)] data-selected:bg-[var(--c-bg)]',
 														'data-disabled:text-[var(--c-text)]/30 data-selected:text-[var(--c-text)]',
 														'data-selection-end:text-[var(--c-bg)] data-selection-start:text-[var(--c-bg)] data-selection-end:bg-[var(--c-primary)] data-selection-start:bg-[var(--c-primary)]',
-														'data-selection-start:font-medium data-selection-start:focus-visible:ring-2 data-selection-start:focus-visible:ring-offset-2!',
-														'data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:rounded-none data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:focus-visible:ring-0! data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:focus-visible:ring-offset-0!',
+														'data-selection-start:font-medium data-selection-start:focus-visible:outline-2 data-selection-start:focus-visible:outline-offset-2!',
+														'data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:rounded-none data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:focus-visible:outline-0! data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:focus-visible:outline-offset-0!',
 														'data-unavailable:text-[var(--c-muted)] data-selected:[&:not([data-selection-start])]:[&:not([data-selection-end])]:focus-visible:border-[var(--c-primary)] data-disabled:pointer-events-none data-highlighted:rounded-none  data-outside-month:pointer-events-none data-selected:font-medium data-selection-end:font-medium data-unavailable:line-through',
 														'group relative inline-flex size-10 items-center justify-center overflow-visible whitespace-nowrap border border-transparent bg-transparent p-0 text-sm font-normal transition-all'
 													)}
