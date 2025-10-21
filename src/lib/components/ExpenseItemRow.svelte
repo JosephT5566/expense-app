@@ -2,6 +2,7 @@
 	import Icon from '@iconify/svelte';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { createEventDispatcher } from 'svelte';
+	import { getTaiwanDate } from '$lib/utils/dates';
 
 	// export let expense: ExpenseRow;
 	// export let icon: string | null = null;
@@ -10,6 +11,7 @@
 		expense,
 		icon = null,
 		showEdit = true,
+		showDate = false,
 		hideIcon = false,
 		selectable = false,
 		checked = false,
@@ -19,6 +21,7 @@
 		expense: ExpenseRow;
 		icon: string | null;
 		showEdit: boolean;
+		showDate: boolean;
 		selectable?: boolean;
 		checked?: boolean;
 		displayShare?: boolean;
@@ -40,7 +43,7 @@
 	}
 </script>
 
-<li class="py-2 flex items-center gap-3">
+<li class="py-2 flex w-full items-center gap-2">
 	{#if !displayShare && selectable}
 		<input
 			type="checkbox"
@@ -61,12 +64,16 @@
 		</div>
 	{/if}
 	<div class="flex-1 flex items-center min-w-0 gap-2">
-		<div class="text-sm font-medium truncate">{expense.note}</div>
-		<div
+		{#if showDate}
+			{@const { month, day } = getTaiwanDate(expense.ts)}
+			<span>{month}/{day}</span>
+		{/if}
+		<span class="pr-0.5 text-sm font-medium truncate whitespace-pre-wrap text-start">{expense.note}</span>
+		<span
 			class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-primary)]/50"
 		>
 			{expense.scope === 'household' ? 'H' : 'P'}
-		</div>
+		</span>
 	</div>
 	<div class="text-right tabular-nums font-semibold">{expense.amount}</div>
 	{#if showEdit}

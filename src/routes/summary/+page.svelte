@@ -205,6 +205,7 @@
 									items={g.items}
 									categoryIconMap={$categoryIconMap}
 									showEdit={false}
+                                    showDate={true}
                                     sectionClassname="px-3 bg-[var(--c-muted)]/25 rounded-md"
                                     hideIcon={true}
 								/>

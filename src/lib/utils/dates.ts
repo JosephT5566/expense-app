@@ -35,6 +35,14 @@ export function taiwanMonthBoundsISO(year: number, month: number) {
 	return { from: start.toISOString(), to: end.toISOString() };
 }
 
+export function getTaiwanDate(tsUTC: string) {
+	const date = new Date(tsUTC);
+	const year = date.getFullYear();
+	const month = date.getMonth() + 1;
+	const day = date.getDate();
+	return { year, month, day };
+}
+
 export function getTaiwanMonthKey(tsUTC?: string) {
 	const date = tsUTC ? new Date(tsUTC) : new Date();
 	const taiwanNow = new Date(date.getTime() + 8 * 60 * 60 * 1000); // UTC+8

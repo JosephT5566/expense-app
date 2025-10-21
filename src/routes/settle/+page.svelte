@@ -8,11 +8,11 @@
 	import { listExpenses, bulkToggleSettled } from '$lib/data/expenses.fetcher';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
-	import { taiwanDayBoundsISO } from '$lib/utils/dates';
+	import { taiwanDayBoundsISO, getTaiwanDate } from '$lib/utils/dates';
 	import { allowedUserInfo } from '$lib/stores/appSetting.store';
 	import DateRangePicker from '$lib/components/ui/DateRangePicker.svelte';
 	import classNames from 'classnames';
-	// import { mockdata } from './mock';
+	import { mockdata } from './mock';
 
 	// 類別圖示 map
 	const categoryItems = categoriesStore.items;
@@ -42,16 +42,16 @@
 		try {
 			const fromISO = taiwanDayBoundsISO(startDateString).from;
 			const toISO = taiwanDayBoundsISO(endDateString).to;
-			const page = await listExpenses({
-				from: fromISO,
-				to: toISO,
-				scope: 'household',
-				settled: 'only_unsettled',
-				limit: 1000,
-			});
-			rows = page.items;
-			console.log('fetch success', rows.length);
-			// rows = mockdata;
+			// const page = await listExpenses({
+			// 	from: fromISO,
+			// 	to: toISO,
+			// 	scope: 'household',
+			// 	settled: 'only_unsettled',
+			// 	limit: 1000,
+			// });
+			// rows = page.items;
+			// console.log('fetch success', rows.length);
+			rows = mockdata.filter((md) => md.scope === 'household');
 			selected = [];
 			selectAll = false;
 		} catch (e) {
@@ -194,6 +194,33 @@
 		}
 		return oweTerms.join('');
 	});
+	const myCalList: { item: string; amount: number; date: string }[] | [] = $derived.by(() => {
+		if (!currentUser?.email) {
+			return [];
+		}
+
+		return selectedRows
+			.filter((r) => r.scope !== 'personal')
+			.map((r) => {
+				const { month, day } = getTaiwanDate(r.ts);
+				if (r.payer_email === currentUser.email) {
+					const sum = Object.values(r.shares_json).reduce((acc, cur) => {
+						return acc + cur;
+					}, 0);
+					return {
+						item: r.note,
+						amount: sum - r.shares_json[r.payer_email],
+						date: `${month}/${day}`,
+					};
+				} else {
+					return {
+						item: r.note,
+						amount: -r.shares_json[currentUser.email],
+						date: `${month}/${day}`,
+					};
+				}
+			});
+	});
 
 	const net = $derived(computeNetByEmail(selectedRows));
 	const transfers = $derived(computeTransfers(net));
@@ -208,7 +235,7 @@
 		try {
 			console.log('toggle settle', [...selected]);
 			await bulkToggleSettled({ ids: [...selected], next: true });
-			alert(`完成結清`)
+			alert(`完成結清`);
 
 			settledTrash = rows.filter((r) => selected.includes(r.id));
 			// 畫面上移除已結清項
@@ -278,6 +305,7 @@
 				items={rows}
 				categoryIconMap={$categoryIconMap}
 				showEdit={false}
+				showDate={true}
 				sectionClassname="px-2 bg-[var(--c-muted)]/25 rounded-md"
 				hideIcon={false}
 				selectable={true}
@@ -289,7 +317,7 @@
 	{/if}
 
 	<!-- 建議結清 -->
-	<div class="mt-4">
+	<div>
 		<h3 class="font-semibold mb-2 text-sm">建議結清</h3>
 		{#if selected.length === 0}
 			<p class="text-sm opacity-60">尚未選擇項目</p>
@@ -306,25 +334,40 @@
 		{/if}
 	</div>
 
-	<label class="label">
-		<input
-			type="checkbox"
-			bind:checked={showFormula}
-			class={classNames(
-				'toggle',
-				'border-[var(--c-primary)]/30 before:bg-[var(--c-primary)]/30',
-				'checked:border-[var(--c-primary)] checked:before:bg-[var(--c-primary)] checked:text-orange-800'
-			)}
-		/>
-		顯示算式
-	</label>
+	<div>
+		<label class="label">
+			<input
+				type="checkbox"
+				bind:checked={showFormula}
+				class={classNames(
+					'toggle',
+					'border-[var(--c-primary)]/30 before:bg-[var(--c-primary)]/30',
+					'checked:border-[var(--c-primary)] checked:before:bg-[var(--c-primary)] checked:text-orange-800'
+				)}
+			/>
+			顯示算式
+		</label>
 
-	<!-- 我的算式（受 Switch 控制） -->
-	{#if showFormula && myFormula}
-		<div class="text-xs opacity-80">
-			{myFormula}
-		</div>
-	{/if}
+		<!-- 我的算式（受 Switch 控制） -->
+		{#if showFormula && myFormula}
+			<fieldset class="fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4">
+				<legend class="fieldset-legend">列表與算式</legend>
+				<p class="label">列表</p>
+				<div class="pl-4">
+					<ul class="list-decimal">
+						{#each myCalList as c, i (i)}
+							<li>{c.date} {c.item}: {c.amount}</li>
+						{/each}
+					</ul>
+				</div>
+
+				<p class="label">算式</p>
+				<div class="text-xs opacity-80">
+					{myFormula}
+				</div>
+			</fieldset>
+		{/if}
+	</div>
 
 	<div class="flex w-full gap-2">
 		<button
@@ -339,7 +382,7 @@
 			{/if}
 		</button>
 		<button
-			class="basis-s btn btn-primary disabled:bg-[var(--c-muted)]!"
+			class="btn btn-primary p-2! disabled:bg-[var(--c-muted)]!"
 			disabled={settledTrash.length === 0}
 			onclick={recoverSettle}
 		>

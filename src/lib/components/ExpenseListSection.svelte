@@ -10,6 +10,7 @@
 		items = [],
 		categoryIconMap = {},
 		showEdit = true,
+		showDate = false,
 		sectionClassname,
 		hideIcon,
 		selectable = false,
@@ -19,6 +20,7 @@
 		items: ExpenseRow[];
 		categoryIconMap: Record<string, string>;
 		showEdit?: boolean;
+		showDate?: boolean;
 		sectionClassname?: string;
 		hideIcon?: boolean;
 		selectable?: boolean;
@@ -72,6 +74,7 @@
 								icon={categoryIconMap[e.category_id ?? ''] ?? null}
 								{hideIcon}
 								{showEdit}
+								{showDate}
 								{selectable}
 								{displayShare}
 								checked={selectedIds.includes(e.id)}
@@ -95,7 +98,7 @@
 							{#each Object.keys(e.shares_json) as userEmail (userEmail)}
 								{@const userInfo = $allowedUserInfo[userEmail]}
 								<li>
-									{userInfo.name} - {e.shares_json[userEmail]}
+									{userInfo.name}: {e.shares_json[userEmail]}
 								</li>
 							{/each}
 						</ul>
@@ -110,6 +113,7 @@
 				icon={categoryIconMap[e.category_id ?? ''] ?? null}
 				{hideIcon}
 				{showEdit}
+				{showDate}
 				{selectable}
 				checked={selectedIds.includes(e.id)}
 				on:edit={onEdit}
