@@ -12,7 +12,7 @@
 	import { allowedUserInfo } from '$lib/stores/appSetting.store';
 	import DateRangePicker from '$lib/components/ui/DateRangePicker.svelte';
 	import classNames from 'classnames';
-	import { mockdata } from './mock';
+	// import { mockdata } from './mock';
 
 	// 類別圖示 map
 	const categoryItems = categoriesStore.items;
@@ -42,16 +42,16 @@
 		try {
 			const fromISO = taiwanDayBoundsISO(startDateString).from;
 			const toISO = taiwanDayBoundsISO(endDateString).to;
-			// const page = await listExpenses({
-			// 	from: fromISO,
-			// 	to: toISO,
-			// 	scope: 'household',
-			// 	settled: 'only_unsettled',
-			// 	limit: 1000,
-			// });
-			// rows = page.items;
-			// console.log('fetch success', rows.length);
-			rows = mockdata.filter((md) => md.scope === 'household');
+			const page = await listExpenses({
+				from: fromISO,
+				to: toISO,
+				scope: 'household',
+				settled: 'only_unsettled',
+				limit: 1000,
+			});
+			rows = page.items;
+			console.log('fetch success', rows.length);
+			// rows = mockdata.filter((md) => md.scope === 'household');
 			selected = [];
 			selectAll = false;
 		} catch (e) {
