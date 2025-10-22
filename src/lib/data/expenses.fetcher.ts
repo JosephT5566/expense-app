@@ -46,6 +46,10 @@ export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseR
 		query = query.eq('is_settled', false);
 	}
 
+	if (q.search) {
+		query = query.ilike('note', `%${q.search}%`);
+	}
+
 	// 遊標（以 ts + id 做穩定排序的 key，DESC）
 	if (q.cursor) {
 		const c = decodeCursor(q.cursor); // { ts, id }
@@ -238,4 +242,19 @@ export async function fetchMonthlySummary(
 	const personal = total - household;
 
 	return { total, household, personal, count: res.items.length };
+}
+
+// 針對搜尋頁面的輔助函式（不另開檔案）
+export async function searchExpenses(params: {
+	text: string;
+	scope?: ExpenseQuery['scope'];
+	settled?: ExpenseQuery['settled'];
+	limit?: number;
+}): Promise<PageResult<ExpenseRow>> {
+	return listExpenses({
+		search: params.text,
+		scope: params.scope ?? 'all',
+		settled: params.settled ?? 'all',
+		limit: params.limit ?? 50,
+	});
 }
