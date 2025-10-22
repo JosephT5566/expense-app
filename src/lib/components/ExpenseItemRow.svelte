@@ -1,7 +1,6 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
 	import type { ExpenseRow } from '$lib/types/expense';
-	import { createEventDispatcher } from 'svelte';
 	import { getTaiwanDate } from '$lib/utils/dates';
 
 	// export let expense: ExpenseRow;
@@ -16,6 +15,8 @@
 		selectable = false,
 		checked = false,
 		displayShare = false,
+		onEdit = undefined as ((expense: ExpenseRow) => void) | undefined,
+		onToggle = undefined as ((args: { id: string; checked: boolean }) => void) | undefined,
 	}: {
 		hideIcon?: boolean;
 		expense: ExpenseRow;
@@ -25,21 +26,19 @@
 		selectable?: boolean;
 		checked?: boolean;
 		displayShare?: boolean;
+		onEdit?: (expense: ExpenseRow) => void;
+		onToggle?: (args: { id: string; checked: boolean }) => void;
 	} = $props();
 
-	const dispatch = createEventDispatcher<{
-		edit: ExpenseRow;
-		toggle: { id: string; checked: boolean };
-	}>();
-
-	function onEdit() {
-		dispatch('edit', expense);
+	function handleEdit() {
+		onEdit?.(expense);
 	}
 
-	function onToggle(e: Event) {
+	function handleToggle(e: Event) {
 		// console.log('row toggle', e);
 		const target = e.target as HTMLInputElement;
-		dispatch('toggle', { id: expense.id, checked: !!target.checked });
+		e.stopPropagation();
+		onToggle?.({ id: expense.id, checked: !!target.checked });
 	}
 </script>
 
@@ -49,7 +48,7 @@
 			type="checkbox"
 			class="checkbox checkbox-sm"
 			{checked}
-			onchange={onToggle}
+			onchange={handleToggle}
 			aria-label="Select expense"
 		/>
 	{/if}
@@ -77,7 +76,7 @@
 	</div>
 	<div class="text-right tabular-nums font-semibold">{expense.amount}</div>
 	{#if showEdit}
-		<button class="ml-2 opacity-60 hover:opacity-100" aria-label="Edit" onclick={onEdit}>
+		<button class="ml-2 opacity-60 hover:opacity-100" aria-label="Edit" onclick={handleEdit}>
 			✏️
 		</button>
 	{/if}
