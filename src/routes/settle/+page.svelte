@@ -100,12 +100,12 @@
 	// 	}
 	// });
 
-	function toggleOne(e: CustomEvent<{ id: string; checked: boolean }>) {
-		const hasItem = selected.includes(e.detail.id);
-		if (e.detail.checked && !hasItem) {
-			selected = [...selected, e.detail.id];
-		} else if (!e.detail.checked && hasItem) {
-			selected = selected.filter((s) => s !== e.detail.id);
+	function toggleOne(args: { id: string; checked: boolean }) {
+		const hasItem = selected.includes(args.id);
+		if (args.checked && !hasItem) {
+			selected = [...selected, args.id];
+		} else if (!args.checked && hasItem) {
+			selected = selected.filter((s) => s !== args.id);
 		}
 		selectAll = rows.length > 0 && selected.length === rows.length;
 	}
@@ -311,7 +311,7 @@
 				selectable={true}
 				selectedIds={selected}
 				displayShare={true}
-				on:toggle={toggleOne}
+				onToggle={toggleOne}
 			/>
 		</div>
 	{/if}

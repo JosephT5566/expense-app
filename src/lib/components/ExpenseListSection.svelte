@@ -2,7 +2,6 @@
 	import ExpenseItemRow from '$lib/components/ExpenseItemRow.svelte';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import classNames from 'classnames';
-	import { createEventDispatcher } from 'svelte';
 	import { Accordion } from 'bits-ui';
 	import { allowedUserInfo } from '$lib/stores/appSetting.store';
 
@@ -16,6 +15,8 @@
 		selectable = false,
 		selectedIds = [],
 		displayShare = false,
+		onEdit = undefined as ((expense: ExpenseRow) => void) | undefined,
+		onToggle = undefined as ((args: { id: string; checked: boolean }) => void) | undefined,
 	}: {
 		items: ExpenseRow[];
 		categoryIconMap: Record<string, string>;
@@ -26,22 +27,19 @@
 		selectable?: boolean;
 		selectedIds?: string[];
 		displayShare?: boolean;
+		onEdit?: (expense: ExpenseRow) => void;
+		onToggle?: (args: { id: string; checked: boolean }) => void;
 	} = $props();
 
-	const dispatch = createEventDispatcher<{
-		edit: ExpenseRow;
-		toggle: { id: string; checked: boolean };
-	}>();
-	function onEdit(e: CustomEvent<ExpenseRow>) {
-		dispatch('edit', e.detail);
-	}
-	function onToggle(e: CustomEvent<{ id: string; checked: boolean }>) {
-		e.stopPropagation();
-		dispatch('toggle', e.detail);
-	}
 	const handleCheckboxClicked = (id: string, checked: boolean) => {
 		console.log('checkbox clicked');
-		dispatch('toggle', { id, checked });
+		onToggle?.({ id, checked });
+	};
+	const handleEdit = (expense: ExpenseRow) => {
+		onEdit?.(expense);
+	};
+	const handleToggle = (args: { id: string; checked: boolean }) => {
+		onToggle?.(args);
 	};
 </script>
 
@@ -78,8 +76,8 @@
 								{selectable}
 								{displayShare}
 								checked={selectedIds.includes(e.id)}
-								on:edit={onEdit}
-								on:toggle={onToggle}
+								onEdit={handleEdit}
+								onToggle={handleToggle}
 							/>
 						</Accordion.Trigger>
 					</Accordion.Header>
@@ -116,8 +114,8 @@
 				{showDate}
 				{selectable}
 				checked={selectedIds.includes(e.id)}
-				on:edit={onEdit}
-				on:toggle={onToggle}
+				onEdit={handleEdit}
+				onToggle={handleToggle}
 			/>
 		{/each}
 	{/if}

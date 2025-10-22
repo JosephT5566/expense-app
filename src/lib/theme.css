@@ -55,6 +55,12 @@ body {
     border: none;
 }
 
+.btn-primary-light {
+	background: var(--c-bg);
+	color: var(--c-text);
+    border: none;
+}
+
 /* Bottom nav safe-area support */
 .safe-bottom {
 	padding-bottom: env(safe-area-inset-bottom);

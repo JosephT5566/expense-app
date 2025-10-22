@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, createEventDispatcher } from 'svelte';
+	import { onMount } from 'svelte';
 	import type { Snippet } from 'svelte';
 	import SwipeListener from 'swipe-listener';
 	import classNames from 'classnames';
@@ -36,9 +36,8 @@
 		pauseOnFocus = true,
 		/** 預設 children snippet：{#snippet children(pageItem, i)}...{/snippet} */
 		children = undefined as Snippet<[Item, number]> | undefined,
+		onChange = undefined as ((payload: { index: number }) => void) | undefined,
 	} = $props();
-
-	const dispatch = createEventDispatcher<{ change: { index: number } }>();
 
 	// state（runes）
 	let viewport: HTMLDivElement;
@@ -126,7 +125,7 @@
 		const preferBehavior: ScrollBehavior = prefersReducedMotion ? 'auto' : behavior;
 		viewport.scrollTo({ left: target * pageWidth(), behavior: preferBehavior });
 		// 向外拋出改變事件
-		dispatch('change', { index });
+		onChange?.({ index });
 	}
 
 	function next(step = 1) {
