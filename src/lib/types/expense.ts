@@ -23,6 +23,28 @@ export interface ExpenseRow {
 	is_settled: boolean; // 是否已標記結清
 }
 
+export class NewExpense implements Partial<ExpenseRow> {
+	currency: Currency;
+	amount: number;
+	category_id: string;
+	scope: ExpenseScope;
+	note: string;
+	is_settled: boolean;
+	shares_json: ShareEntry;
+	ts: string;
+
+	constructor() {
+		this.currency = 'TWD';
+		this.amount = 0;
+		this.category_id = '';
+		this.scope = 'personal';
+		this.note = '';
+		this.is_settled = false;
+		this.shares_json = {};
+		this.ts = new Date().toISOString();
+	}
+}
+
 /** 查詢條件（前端 store / fetcher 共用） */
 export interface ExpenseQuery {
 	from?: string; // inclusive ISO date

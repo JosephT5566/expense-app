@@ -13,6 +13,14 @@ export function toISODateOnly(d: Date | string) {
 	return `${year}-${month}-${day}`;
 }
 
+export function toTaiwanDateString(d: Date | string) {
+	const date = typeof d === 'string' ? new Date(d) : d;
+	const year = date.getFullYear();
+	const month = String(date.getMonth() + 1).padStart(2, '0');
+	const day = String(date.getDate()).padStart(2, '0');
+	return `${year}-${month}-${day}`;
+}
+
 // 新增：計算「台灣時區（UTC+8）」的單日 UTC 邊界
 // 輸入：YYYY-MM-DD（台灣當地日期）
 // 輸出：對應的 UTC ISO 範圍（[from, to] 皆為含端點）

@@ -1,5 +1,5 @@
 import { writable, get } from 'svelte/store';
-import type { ExpenseRow, ExpenseQuery, PageResult } from '$lib/types/expense';
+import { type ExpenseRow, type ExpenseQuery, type PageResult, NewExpense } from '$lib/types/expense';
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
 import { taiwanMonthBoundsISO } from '$lib/utils/dates';
 import { persistExpensePatch } from '$lib/cache/monthlyExpense';
@@ -191,6 +191,10 @@ export function getTodayExpense() {
 	const today = new Date();
 	const todayStr = today.toISOString().slice(0, 10);
 	return get(items).find((e) => e.ts.slice(0, 10) === todayStr);
+}
+
+export function getExpenseById(id: string) {
+	return get(items).find((e) => e.id === id) || new NewExpense();
 }
 
 export function getMonthExpenses(year?: number, month?: number) {

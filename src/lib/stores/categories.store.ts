@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import type { CategoryRow } from '$lib/types/category';
+import { getCategoryIcon } from '$lib/utils/category-icons';
 
 export const items = writable<CategoryRow[]>([]);
 export const loading = writable(false);
@@ -15,3 +16,8 @@ export const expenseOptions = derived(items, ($items) =>
 export const incomeOptions = derived(items, ($items) =>
 	$items.filter((c) => c.kind === 'income').map((c) => ({ value: c.id, label: c.name }))
 );
+
+export const categoryIconMap = derived(items, (itemsArr) => {
+	const entries = itemsArr.map((c) => [c.id, getCategoryIcon(c.name)] as const);
+	return Object.fromEntries(entries) as Record<string, string>;
+});
