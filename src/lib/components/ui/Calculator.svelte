@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
-	let { amount = $bindable<string>('') } = $props();
+	let { amountNum = $bindable(0) } = $props();
 
 	let calcExpr = $state('');
 	let errorMsg = $state('');
@@ -26,7 +26,7 @@
 	function tapKey(k: string) {
 		if (k === 'C') {
 			calcExpr = '';
-			amount = '';
+			amountNum = 0;
 			errorMsg = '';
 			return;
 		}
@@ -82,7 +82,7 @@
 				const val = Function(`"use strict";return (${calcExpr})`)();
 				if (typeof val === 'number' && isFinite(val)) {
 					const result = String(Math.round(val * 100) / 100);
-					amount = result;
+					amountNum = Number(result);
 					calcExpr = result;
 					errorMsg = '';
 				} else {
@@ -99,6 +99,10 @@
 		calcExpr += k;
 		errorMsg = '';
 	}
+
+	export function resetCal () {
+		calcExpr = String(amountNum);
+	}
 </script>
 
 <div class="card p-3">
@@ -109,7 +113,11 @@
 	{/if}
 	<div class="grid grid-cols-4 gap-2">
 		{#each KEYS as k (k)}
-			<button class="p-3 rounded-lg border border-black/10 flex items-center justify-center" onclick={() => tapKey(k)} aria-label={k}>
+			<button
+				class="p-3 rounded-lg border border-black/10 flex items-center justify-center"
+				onclick={() => tapKey(k)}
+				aria-label={k}
+			>
 				{#if isOperator(k)}
 					<Icon icon={OP_ICONS[k]} width="20" height="20" />
 				{:else}
