@@ -2,6 +2,9 @@
 	import PieChart from '$lib/components/ui/PieChart.svelte';
 	import type { PieDatum } from '$lib/components/ui/PieChart.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
+	import SwipeDrawer from '$lib/components/ui/SwipeDrawer.svelte';
+	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
+
 	import * as expensesStore from '$lib/stores/expenses.store';
 	import * as sessionStore from '$lib/stores/session.store';
 	import * as categoriesStore from '$lib/stores/categories.store';
@@ -11,7 +14,7 @@
 	import Icon from '@iconify/svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
 	import { Dialog, Accordion } from 'bits-ui';
-	import { taiwanMonthBoundsISO } from '$lib/utils/dates';
+	import { taiwanMonthBoundsISO, toTaiwanDateString } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 
 	let scope = $state<ExpenseScope>('personal');
@@ -32,6 +35,10 @@
 	let selectedMonth = $state(toYearMonth(today));
 	let showMonthPicker = $state(false);
 	let wasMonthPickerOpen = $state(false);
+
+	let drawerOpen = $state(false);
+	let expenseId = $state('');
+	let selectedDate = $state(toYearMonth(today));
 
 	const items = expensesStore.items;
 
@@ -204,10 +211,15 @@
 								<ExpenseListSection
 									items={g.items}
 									categoryIconMap={$categoryIconMap}
-									showEdit={false}
+									showEdit={true}
                                     showDate={true}
                                     sectionClassname="px-3 bg-[var(--c-muted)]/25 rounded-md"
                                     hideIcon={true}
+									onEdit={(e) => {
+										expenseId = e.id;
+										selectedDate = toTaiwanDateString(e.ts);
+										drawerOpen = true;
+									}}
 								/>
 							</div></Accordion.Content
 						>
@@ -236,6 +248,18 @@
 		</Dialog.Content>
 	</Dialog.Portal>
 </Dialog.Root>
+
+
+<SwipeDrawer bind:open={drawerOpen} title="編輯項目">
+	<ExpenseDrawerContent
+		expenseId={expenseId}
+		selectedDate={selectedDate}
+		editMode={true}
+		onSubmitFinish={() => {
+			drawerOpen = false;
+		}}
+	/>
+</SwipeDrawer>
 
 <style>
 	button[data-active='true'] {

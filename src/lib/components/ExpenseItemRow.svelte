@@ -67,7 +67,9 @@
 			{@const { month, day } = getTaiwanDate(expense.ts)}
 			<span>{month}/{day}</span>
 		{/if}
-		<span class="pr-0.5 text-sm font-medium truncate whitespace-pre-wrap text-start">{expense.note}</span>
+		<span class="pr-0.5 text-sm font-medium truncate whitespace-pre-wrap text-start"
+			>{expense.note}</span
+		>
 		<span
 			class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-primary)]/50"
 		>
@@ -76,8 +78,8 @@
 	</div>
 	<div class="text-right tabular-nums font-semibold">{expense.amount}</div>
 	{#if showEdit}
-		<button class="ml-2 opacity-60 hover:opacity-100" aria-label="Edit" onclick={handleEdit}>
-			✏️
+		<button class="p-1 ml-2 text-[var(--c-primary)] hover:opacity-100" aria-label="Edit" onclick={handleEdit}>
+			<Icon icon="solar:pen-new-square-bold-duotone" width="20" height="20" />
 		</button>
 	{/if}
 </li>
