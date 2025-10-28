@@ -20,10 +20,12 @@
 	let {
 		expenseId = '',
 		editMode = false,
+		selectedDate = '',
 		onSubmitFinish,
 	}: {
 		expenseId?: string;
 		editMode?: boolean;
+		selectedDate: string;
 		onSubmitFinish?: () => void;
 	} = $props();
 
@@ -32,8 +34,6 @@
 	);
 
 	const today = new Date();
-	let selectedDate = $state(toTaiwanDateString(expenseData.ts));
-	let selectedExpense = $state<ExpenseRow | null>(null);
 
 	let calculatorModal: HTMLDialogElement | null = $state(null);
 	let calculatorRef = $state<ReturnType<typeof Calculator>>();
@@ -165,7 +165,7 @@
 
 		const originTs = toTaiwanDateString((expenseData as ExpenseRow).ts);
 		const payload: UpsertExpenseInput = {
-			id: editMode ? selectedExpense?.id : undefined,
+			id: editMode ? expenseId : undefined,
 			note: expenseData.note,
 			amount: Number(expenseData.amount),
 			currency: 'TWD',

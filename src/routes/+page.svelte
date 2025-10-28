@@ -16,10 +16,6 @@
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
 
-	$effect(() => {
-		console.log('drawerOpen', drawerOpen);
-	});
-
 	let expenseId = $state('');
 	const today = new Date();
 	let selectedDate = $state(toDateOnlyStr(today));
@@ -176,6 +172,7 @@
 <SwipeDrawer bind:open={drawerOpen} title={editMode ? '編輯項目' : '新增項目'}>
 	<ExpenseDrawerContent
 		expenseId={editMode ? expenseId : undefined}
+		selectedDate={selectedDate}
 		{editMode}
 		onSubmitFinish={() => {
 			drawerOpen = false;
