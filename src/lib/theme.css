@@ -15,10 +15,10 @@ html[data-theme='sunset'] {
 	--c-bg: #f4e9d7; /* App 全局背景、卡片底色 */
 	--c-muted: #b8c4a9; /* 次要文字、分隔線、disabled 狀態 */
 	--c-accent: #6fa4af; /* 次要強調、hover 狀態、資訊或中性訊息 */
-    --c-text: #1f2937; /* 主要文字顏色（通常深灰或近黑） */
-    --c-text-muted: #6b7280; /* 次文字（灰藍調）*/
+	--c-text: #1f2937; /* 主要文字顏色（通常深灰或近黑） */
+	--c-text-muted: #6b7280; /* 次文字（灰藍調）*/
 	--c-card: #ffffff; /* 元件背景色（比 --c-bg 稍深或稍淺） */
-    --c-border: #e2dacb; /* 邊框、分隔線 */
+	--c-border: #e2dacb; /* 邊框、分隔線 */
 }
 
 /* Example alt theme (Moss Night) – just a placeholder for future */
@@ -46,19 +46,28 @@ body {
 .btn {
 	border-radius: calc(var(--radius) - 4px);
 	padding: 0.75rem 1rem;
-    box-shadow: none;
+	box-shadow: none;
+
+	&:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 }
 
 .btn-primary {
 	background: var(--c-primary);
 	color: white;
-    border: none;
+	border: none;
+
+	&:disabled {
+		background: var(--c-muted);
+	}
 }
 
 .btn-primary-light {
 	background: var(--c-bg);
 	color: var(--c-text);
-    border: none;
+	border: none;
 }
 
 /* Bottom nav safe-area support */
