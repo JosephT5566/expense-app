@@ -3,10 +3,10 @@ import { supabase } from '$lib/supabase/supabaseClient';
 import type { LayoutLoad } from './$types';
 import { listCategories } from '$lib/data/categories.fetcher';
 import { listAppSetting } from '$lib/data/appSetting.fetcher';
-
 import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 import { getTaiwanMonthKey } from '$lib/utils/dates';
 import { LOAD_DEP_KEYS } from '$lib/utils/const';
+import { signOutIfExpired } from '$lib/supabase/auth';
 
 export const load: LayoutLoad = async ({ depends, url }) => {
 	const monthKey = url.searchParams.get('m') ?? getTaiwanMonthKey(); // 2025-10
@@ -15,6 +15,8 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 	depends(LOAD_DEP_KEYS.categories);
 	depends(LOAD_DEP_KEYS.appSettings);
 	depends(LOAD_DEP_KEYS.expenses);
+
+	await signOutIfExpired();
 
 	// 1) 取登入使用者（在 ssr=false 下可安全呼叫）
 	const { data: u } = await supabase.auth.getUser();

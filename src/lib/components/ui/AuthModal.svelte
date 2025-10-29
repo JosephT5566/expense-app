@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { supabase } from '$lib/supabase/supabaseClient';
+	import { signInWithOAuth } from '$lib/supabase/auth';
 	import { user, loading } from '$lib/stores/session.store';
 	import { Dialog } from 'bits-ui';
 	import classNames from 'classnames';
@@ -19,7 +19,7 @@
 	});
 
 	async function signInWithGoogle() {
-		await supabase.auth.signInWithOAuth({
+		await signInWithOAuth({
 			provider: 'google',
 			options: { redirectTo: window.location.origin },
 		});
