@@ -5,7 +5,8 @@
 	import classNames from 'classnames';
 	import { onDestroy } from 'svelte';
 	import Icon from '@iconify/svelte';
-	import { resolve } from '$app/paths';
+	import { base } from '$app/paths';
+	
 	let open = $state(false);
 
 	const unsubscribe = loading.subscribe(($loading) => {
@@ -32,7 +33,7 @@
 	async function signInWithGoogle() {
 		await signInWithOAuth({
 			provider: 'google',
-			options: { redirectTo: resolve('/') },
+			options: { redirectTo: `${base}/` },
 		});
 	}
 </script>
