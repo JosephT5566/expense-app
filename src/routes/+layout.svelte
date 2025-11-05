@@ -4,7 +4,8 @@
 	import { onMount } from 'svelte';
 	import { type LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { resolve } from '$app/paths';
 
 	import { setFromLoad as setSessionStore, startAuthListener } from '$lib/stores/session.store';
 	import { setFromLoad as setCategoriesStore } from '$lib/stores/categories.store';
@@ -41,8 +42,10 @@
 
 		const unsubAuthListener = startAuthListener({
 			onLogout: async () => {
+				console.log('🚀 User logged out');
 				expensesStore.clearAll();
 				clearAllExpensesCache();
+				goto(resolve('/')); // redirect to home
 			},
 			onLogin: async () => {
 				// trigger load in the layout.ts to refetch data

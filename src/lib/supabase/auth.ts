@@ -1,4 +1,5 @@
 import { supabase } from '$lib/supabase/supabaseClient';
+import { loading as sessionLoading } from '$lib/stores/session.store';
 
 const SIGN_IN_AT_KEY = 'expense-app:sign-in-at';
 const SIGN_IN_TTL_KEY = 'expense-app:sign-in-ttl';
@@ -108,7 +109,9 @@ export async function signOutIfExpired(durationOverrideMs?: number) {
  * Wrapper around Supabase OAuth sign-in to keep auth helpers colocated.
  */
 export async function signInWithOAuth(params: SignInWithOAuthParams) {
-	return supabase.auth.signInWithOAuth(params);
+	sessionLoading.set(true);
+	await supabase.auth.signInWithOAuth(params);
+	sessionLoading.set(false);
 }
 
 /**
@@ -116,5 +119,7 @@ export async function signInWithOAuth(params: SignInWithOAuthParams) {
  */
 export async function signOut() {
 	clearSignInTracking();
-	return supabase.auth.signOut();
+	sessionLoading.set(true);
+	await supabase.auth.signOut();
+	sessionLoading.set(false);
 }
