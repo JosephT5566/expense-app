@@ -5,6 +5,7 @@
 	import type { Snippet } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import type { AppUser } from '$lib/types/user';
 
 	import { setFromLoad as setSessionStore, startAuthListener } from '$lib/stores/session.store';
 	import { setFromLoad as setCategoriesStore } from '$lib/stores/categories.store';
@@ -28,9 +29,7 @@
 	const { user, categories, allowedEmails, monthlyData } = data ?? {};
 
 	// 1) 直接 set，不要在 component 內再發請求
-	if (user) {
-		setSessionStore(user);
-	}
+	setSessionStore(user as AppUser | null);
 	if (categories) {
 		setCategoriesStore(categories);
 	}
