@@ -7,13 +7,12 @@ import { EXPENSE_CACHE_PREFIX, getExpenseCacheKey } from '$lib/utils/cache';
 // import { revalidateInBackground } from '$lib/data/monthly-cache-first';
 
 type MonthKey = string; // '2025-10'
-type MonthlyData = ExpenseRow[]; // 你的型別
-type CacheEntry = { data: MonthlyData; ts: number }; // ts = 快取時間
+type CacheEntry = { data: ExpenseRow[]; ts: number }; // ts = 快取時間
 
 const mem = writable(new Map<MonthKey, CacheEntry>());
 const STALE_MS = 10 * 60 * 1000; // 10 分鐘（可調）
 
-export async function getExpenseFromCache(monthKey: MonthKey): Promise<MonthlyData | null> {
+export async function getExpenseFromCache(monthKey: MonthKey): Promise<ExpenseRow[] | null> {
 	const m = get(mem);
 	const hit = m.get(monthKey);
 	if (hit) {
@@ -30,7 +29,7 @@ export async function getExpenseFromCache(monthKey: MonthKey): Promise<MonthlyDa
 	return null;
 }
 
-export async function setExpenseCache(monthKey: MonthKey, data: MonthlyData) {
+export async function setExpenseCache(monthKey: MonthKey, data: ExpenseRow[]) {
 	const entry = { data, ts: Date.now() };
 	const m = get(mem);
 	m.set(monthKey, entry);

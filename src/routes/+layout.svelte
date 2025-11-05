@@ -1,6 +1,5 @@
 <script lang="ts">
 	import '../app.css';
-	import favicon from '$lib/assets/favicon.svg';
 	import { onMount } from 'svelte';
 	import { type LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
@@ -26,12 +25,21 @@
 		children: Snippet;
 		data: LayoutData;
 	} = $props();
+	const { user, categories, allowedEmails, monthlyData } = data ?? {};
 
 	// 1) 直接 set，不要在 component 內再發請求
-	setSessionStore(data.user);
-	setCategoriesStore(data.categories);
-	setAppSettingStore(data.allowedEmails);
-	setMonthlyItemsFromLoad(data.monthlyData);
+	if (user) {
+		setSessionStore(user);
+	}
+	if (categories) {
+		setCategoriesStore(categories);
+	}
+	if (allowedEmails) {
+		setAppSettingStore(allowedEmails);
+	}
+	if (monthlyData) {
+		setMonthlyItemsFromLoad(monthlyData);
+	}
 
 	onMount(() => {
 		const unsubExpenseStore = isDev
@@ -61,7 +69,7 @@
 </script>
 
 <svelte:head>
-	<link rel="icon" href={favicon} />
+	<title>Welcome to PJ's Ledger</title>
 </svelte:head>
 
 <Header />

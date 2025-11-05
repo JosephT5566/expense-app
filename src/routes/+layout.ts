@@ -1,6 +1,8 @@
 // src/routes/+layout.ts
 import { supabase } from '$lib/supabase/supabaseClient';
 import type { LayoutLoad } from './$types';
+import { browser } from '$app/environment';
+
 import { listCategories } from '$lib/data/categories.fetcher';
 import { listAppSetting } from '$lib/data/appSetting.fetcher';
 import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
@@ -9,6 +11,11 @@ import { LOAD_DEP_KEYS } from '$lib/utils/const';
 import { signOutIfExpired } from '$lib/supabase/auth';
 
 export const load: LayoutLoad = async ({ depends, url }) => {
+	if (!browser) {
+		// ssr 下不處理
+		return {};
+	}
+
 	const monthKey = url.searchParams.get('m') ?? getTaiwanMonthKey(); // 2025-10
 
 	depends(LOAD_DEP_KEYS.session);
@@ -28,6 +35,13 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 				photo_url: u.user.user_metadata?.avatar_url ?? null,
 			}
 		: null;
+
+	console.log('layout load user', user);
+
+	if (!user) {
+		// is signed out, skip other data fetch
+		return {};
+	}
 
 	// 2) 取分類（expense）
 	const categories = await listCategories({ kind: 'expense' });
