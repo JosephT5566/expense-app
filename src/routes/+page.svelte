@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Dialog } from 'bits-ui';
+	import _isEmpty from 'lodash/isEmpty';
 
 	import type { ExpenseRow } from '$lib/types/expense';
 
@@ -29,7 +30,6 @@
 	});
 
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
-	const inflightMonths: Record<string, boolean> = $state({});
 	$effect(() => {
 		// when state selectedDate changes
 		if ($expensesItems.length === 0) {
@@ -45,15 +45,16 @@
 		// check if we have any item in this month in the expenses store
 		const hasMonth = $expensesItems.some((e) => e.ts >= from && e.ts <= to);
 
-		if (!hasMonth && !inflightMonths[key]) {
-			inflightMonths[key] = true;
-			getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`)
-				.then((newMonthExpense) => {
+		if (!hasMonth) {
+			console.log('load month from cache', key);
+			getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then(
+				(newMonthExpense) => {
+					if (_isEmpty(newMonthExpense)) {
+						return;
+					}
 					expensesStore.setMoreItems(newMonthExpense);
-				})
-				.finally(() => {
-					inflightMonths[key] = false;
-				});
+				}
+			);
 		}
 	});
 
@@ -172,7 +173,7 @@
 <SwipeDrawer bind:open={drawerOpen} title={editMode ? '編輯項目' : '新增項目'}>
 	<ExpenseDrawerContent
 		expenseId={editMode ? expenseId : undefined}
-		selectedDate={selectedDate}
+		{selectedDate}
 		{editMode}
 		onSubmitFinish={() => {
 			drawerOpen = false;
