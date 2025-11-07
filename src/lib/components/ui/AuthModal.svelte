@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { signInWithOAuth } from '$lib/supabase/auth';
+	import { signIn } from '$lib/supabase/auth';
 	import { user, loading } from '$lib/stores/session.store';
 	import { Dialog } from 'bits-ui';
 	import classNames from 'classnames';
 	import { onDestroy } from 'svelte';
 	import Icon from '@iconify/svelte';
-	import { base } from '$app/paths';
 	
 	let open = $state(false);
 
@@ -31,10 +30,7 @@
 	});
 
 	async function signInWithGoogle() {
-		await signInWithOAuth({
-			provider: 'google',
-			options: { redirectTo: `${base}/` },
-		});
+		await signIn();
 	}
 </script>
 

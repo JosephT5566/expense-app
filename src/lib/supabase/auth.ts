@@ -1,12 +1,11 @@
 import { supabase } from '$lib/supabase/supabaseClient';
 import { loading as sessionLoading } from '$lib/stores/session.store';
+import { base } from '$app/paths';
 
 const SIGN_IN_AT_KEY = 'expense-app:sign-in-at';
 const SIGN_IN_TTL_KEY = 'expense-app:sign-in-ttl';
 
 export const DEFAULT_AUTO_SIGN_OUT_MS = 1000 * 60 * 60 * 8; // eight hours
-
-type SignInWithOAuthParams = Parameters<typeof supabase.auth.signInWithOAuth>[0];
 
 interface StoredSignInInfo {
 	signedInAt: number;
@@ -108,9 +107,13 @@ export async function signOutIfExpired(durationOverrideMs?: number) {
 /**
  * Wrapper around Supabase OAuth sign-in to keep auth helpers colocated.
  */
-export async function signInWithOAuth(params: SignInWithOAuthParams) {
+export async function signIn() {
+	console.log('Redirecting to sign-in...', `${base}/`);
 	sessionLoading.set(true);
-	await supabase.auth.signInWithOAuth(params);
+	await supabase.auth.signInWithOAuth({
+		provider: 'google',
+		options: { redirectTo: `${base}/` },
+	});
 	sessionLoading.set(false);
 }
 
