@@ -1,6 +1,7 @@
 import { supabase } from '$lib/supabase/supabaseClient';
 import { loading as sessionLoading } from '$lib/stores/session.store';
 import { base } from '$app/paths';
+import { page } from '$app/state';
 
 const SIGN_IN_AT_KEY = 'expense-app:sign-in-at';
 const SIGN_IN_TTL_KEY = 'expense-app:sign-in-ttl';
@@ -106,13 +107,18 @@ export async function signOutIfExpired(durationOverrideMs?: number) {
 
 /**
  * Wrapper around Supabase OAuth sign-in to keep auth helpers colocated.
+ * The URL in redirectTo should match the Redirect URLs list configuration.
+ * (https://supabase.com/dashboard/project/_/auth/url-configuration)
  */
 export async function signIn() {
-	console.log('Redirecting to sign-in...', `${base}/`);
+	const pageUrl = page.url;
+	const redirectTo = `${pageUrl.origin}${base}/`;
+	
+	console.log('Redirecting to sign-in...', redirectTo);
 	sessionLoading.set(true);
 	await supabase.auth.signInWithOAuth({
 		provider: 'google',
-		options: { redirectTo: `${base}/` },
+		options: { redirectTo },
 	});
 	sessionLoading.set(false);
 }
