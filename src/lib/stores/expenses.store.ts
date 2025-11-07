@@ -205,6 +205,14 @@ export function getMonthExpenses(year?: number, month?: number) {
 	return get(items).filter((e) => e.ts >= from && e.ts <= to);
 }
 
+export function hasMonthExpenses(year: number, month: number) {
+	const selectedYear = year ? year : new Date().getFullYear();
+	const selectedMonth = month ? month : new Date().getMonth() + 1;
+
+	const { from, to } = taiwanMonthBoundsISO(selectedYear, selectedMonth);
+	return get(items).some((e) => e.ts >= from && e.ts <= to);
+}
+
 export function clearAll() {
 	monthlyItems.set(new Map());
 	items.set([]);

@@ -114,7 +114,6 @@ export async function signIn() {
 	const pageUrl = page.url;
 	const redirectTo = `${pageUrl.origin}${base}/`;
 	
-	console.log('Redirecting to sign-in...', redirectTo);
 	sessionLoading.set(true);
 	await supabase.auth.signInWithOAuth({
 		provider: 'google',

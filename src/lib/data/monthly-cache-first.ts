@@ -17,6 +17,7 @@ export async function getMonthlyFromCacheFirst(monthKey: string) {
 		}
 	}
 
+	console.log('monthly cache miss for', monthKey);
 	// 沒命中 → 正式請求
 	const fresh = await listExpensesMonthly(monthKey);
 	if (browser) {

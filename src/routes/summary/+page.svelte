@@ -14,7 +14,7 @@
 	import Icon from '@iconify/svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
 	import { Dialog, Accordion } from 'bits-ui';
-	import { taiwanMonthBoundsISO, toTaiwanDateString } from '$lib/utils/dates';
+	import { toTaiwanDateString } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 
 	let scope = $state<ExpenseScope>('personal');
@@ -40,8 +40,6 @@
 	let expenseId = $state('');
 	let selectedDate = $state(toYearMonth(today));
 
-	const items = expensesStore.items;
-
 	const categoryItems = categoriesStore.items;
 	const expenseOptions = categoriesStore.expenseOptions;
 	const categoryIconMap = derived(categoryItems, (arr) => {
@@ -53,8 +51,12 @@
 		(opts) => Object.fromEntries(opts.map((o) => [o.value, o.label])) as Record<string, string>
 	);
 
-	function groupByCategory(rows: ExpenseRow[], scopeSel: ExpenseScope) {
-		const list = scopeSel === 'personal' ? rows : rows.filter((e) => e.scope === scopeSel);
+	function groupByCategory() {
+		const [y, m] = selectedMonth.split('-').map(Number);
+		const rows = expensesStore.getMonthExpenses(y, m);
+
+		console.log('Grouping rows:', rows);
+		const list = scope === 'personal' ? rows : rows.filter((e) => e.scope === scope);
 		const mapObj: Record<string, { id: string; amount: number; items: ExpenseRow[] }> = {};
 		for (const r of list) {
 			const id = r.category_id ?? 'uncategorized';
@@ -74,20 +76,8 @@
 		return groups;
 	}
 
-	// 依選擇月份的 UTC 邊界（台灣時區）
-	const monthBounds = $derived(
-		(() => {
-			const [y, m] = selectedMonth.split('-').map(Number);
-			return taiwanMonthBoundsISO(y, m);
-		})()
-	);
 	// 當月篩選後分組
-	const groups = $derived(
-		groupByCategory(
-			($items ?? []).filter((e) => e.ts >= monthBounds.from && e.ts <= monthBounds.to),
-			scope
-		)
-	);
+	let groups = $state<{ id: string; amount: number; items: ExpenseRow[] }[]>([]);
 	const pieData: PieDatum[] = $derived(
 		groups.map((g) => ({
 			label: $categoryLabelMap[g.id] ?? (g.id === 'uncategorized' ? '未分類' : g.id),
@@ -98,13 +88,14 @@
 	// 關閉月份 Dialog 時載入所選月份
 	function confirmMonth() {
 		showMonthPicker = false;
+		groups = groupByCategory();
 	}
 
 	$effect(() => {
 		// month selected and picker close
 		if (wasMonthPickerOpen && !showMonthPicker) {
 			const [y, m] = selectedMonth.split('-').map(Number);
-			if (expensesStore.getMonthExpenses(y, m).length === 0) {
+			if (!expensesStore.hasMonthExpenses(y, m)) {
 				getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then(
 					(newMonthExpense) => {
 						expensesStore.setMoreItems(newMonthExpense);
@@ -212,9 +203,9 @@
 									items={g.items}
 									categoryIconMap={$categoryIconMap}
 									showEdit={true}
-                                    showDate={true}
-                                    sectionClassname="px-3 bg-[var(--c-muted)]/25 rounded-md"
-                                    hideIcon={true}
+									showDate={true}
+									sectionClassname="px-3 bg-[var(--c-muted)]/25 rounded-md"
+									hideIcon={true}
 									onEdit={(e) => {
 										expenseId = e.id;
 										selectedDate = toTaiwanDateString(e.ts);
@@ -249,11 +240,10 @@
 	</Dialog.Portal>
 </Dialog.Root>
 
-
 <SwipeDrawer bind:open={drawerOpen} title="編輯項目">
 	<ExpenseDrawerContent
-		expenseId={expenseId}
-		selectedDate={selectedDate}
+		{expenseId}
+		{selectedDate}
 		editMode={true}
 		onSubmitFinish={() => {
 			drawerOpen = false;

@@ -11,7 +11,7 @@
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
-	import { taiwanDayBoundsISO, taiwanMonthBoundsISO } from '$lib/utils/dates';
+	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 
 	let drawerOpen = $state(false);
@@ -32,22 +32,12 @@
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	$effect(() => {
 		// when state selectedDate changes
-		if ($expensesItems.length === 0) {
-			return;
-		}
-
-		const d = new Date(selectedDate);
-		const y = d.getFullYear();
-		const m = d.getMonth() + 1;
+		const [y, m] = selectedDate.split('-').map(Number);
 		const key = `${y}-${String(m).padStart(2, '0')}`;
-		const { from, to } = taiwanMonthBoundsISO(y, m);
 
 		// check if we have any item in this month in the expenses store
-		const hasMonth = $expensesItems.some((e) => e.ts >= from && e.ts <= to);
-
-		if (!hasMonth) {
-			console.log('load month from cache', key);
-			getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then(
+		if (!expensesStore.hasMonthExpenses(y, m)) {
+			getMonthlyFromCacheFirst(key).then(
 				(newMonthExpense) => {
 					if (_isEmpty(newMonthExpense)) {
 						return;
