@@ -16,6 +16,7 @@
 	import { Dialog, Accordion } from 'bits-ui';
 	import { toTaiwanDateString } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { onDestroy } from 'svelte';
 
 	let scope = $state<ExpenseScope>('personal');
 	const { user } = sessionStore;
@@ -38,6 +39,7 @@
 
 	let drawerOpen = $state(false);
 	let expenseId = $state('');
+	// For editing expense item
 	let selectedDate = $state(toYearMonth(today));
 
 	const categoryItems = categoriesStore.items;
@@ -51,11 +53,16 @@
 		(opts) => Object.fromEntries(opts.map((o) => [o.value, o.label])) as Record<string, string>
 	);
 
+	let categoryGroups = $state<{ id: string; amount: number; items: ExpenseRow[] }[]>([]);
+
+	const unsubs = expensesStore.items.subscribe(() => {
+		categoryGroups = groupByCategory();
+	});
+
 	function groupByCategory() {
 		const [y, m] = selectedMonth.split('-').map(Number);
 		const rows = expensesStore.getMonthExpenses(y, m);
 
-		console.log('Grouping rows:', rows);
 		const list = scope === 'personal' ? rows : rows.filter((e) => e.scope === scope);
 		const mapObj: Record<string, { id: string; amount: number; items: ExpenseRow[] }> = {};
 		for (const r of list) {
@@ -77,9 +84,8 @@
 	}
 
 	// 當月篩選後分組
-	let groups = $state<{ id: string; amount: number; items: ExpenseRow[] }[]>([]);
 	const pieData: PieDatum[] = $derived(
-		groups.map((g) => ({
+		categoryGroups.map((g) => ({
 			label: $categoryLabelMap[g.id] ?? (g.id === 'uncategorized' ? '未分類' : g.id),
 			value: g.amount,
 		}))
@@ -88,7 +94,6 @@
 	// 關閉月份 Dialog 時載入所選月份
 	function confirmMonth() {
 		showMonthPicker = false;
-		groups = groupByCategory();
 	}
 
 	$effect(() => {
@@ -106,16 +111,8 @@
 		wasMonthPickerOpen = showMonthPicker;
 	});
 
-	$effect(() => {
-		// console.log('Selected month changed to:', selectedMonth);
-		// console.log('Month bounds:', monthBounds);
-		// console.log(
-		// 	'filtered items:',
-		// 	($items ?? []).filter((e) => {
-		// 		// console.log('Checking item ts:', e.ts);
-		// 		return e.ts >= monthBounds.from && e.ts <= monthBounds.to;
-		// 	})
-		// );
+	onDestroy(() => {
+		unsubs();
 	});
 </script>
 
@@ -125,14 +122,20 @@
 		<button
 			class="px-3 py-1 rounded-md border border-black/10 data-[active=true]:bg-[var(--c-bg)]"
 			data-active={scope === 'personal'}
-			onclick={() => (scope = 'personal')}
+			onclick={() => {
+				scope = 'personal';
+				categoryGroups = groupByCategory();
+			}}
 		>
 			我的花費
 		</button>
 		<button
 			class="px-3 py-1 rounded-md border border-black/10 data-[active=true]:bg-[var(--c-bg)]"
 			data-active={scope === 'household'}
-			onclick={() => (scope = 'household')}
+			onclick={() => {
+				scope = 'household';
+				categoryGroups = groupByCategory();
+			}}
 		>
 			共同花費
 		</button>
@@ -155,11 +158,11 @@
 
 	<!-- 類別列表 -->
 	<div class="mt-4 divide-y divide-black/5">
-		{#if groups.length === 0}
+		{#if categoryGroups.length === 0}
 			<p class="text-sm opacity-60">本月無資料</p>
 		{:else}
 			<Accordion.Root type="single">
-				{#each groups as g (g.id)}
+				{#each categoryGroups as g (g.id)}
 					<Accordion.Item value={g.id} class="group p-1.5">
 						<Accordion.Header>
 							<Accordion.Trigger
