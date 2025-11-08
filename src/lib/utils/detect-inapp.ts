@@ -1,5 +1,8 @@
 // credit: https://github.com/f2etw/detect-inapp
 
+import { onMount } from "svelte";
+import { writable } from "svelte/store";
+
 export const isInApp = (useragent: string) => {
     if (!useragent) {
         return false;
@@ -56,3 +59,13 @@ export const openInDefaultBrowser = (url: string) => {
         window.open(url, '_blank');
     }
 };
+
+export function getIsMobile() {
+  const isMobile = writable(false);
+
+  onMount(() => {
+    isMobile.set(isInApp(navigator.userAgent));
+  });
+
+  return isMobile;
+}

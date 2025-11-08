@@ -13,7 +13,7 @@
 
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
-	import { isInApp } from '$lib/utils/detect-inapp';
+	import { getIsMobile } from '$lib/utils/detect-inapp';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -111,7 +111,7 @@
 	<div class="flex items-center justify-center">
 		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
 
-		{#if navigator !== undefined && isInApp(navigator.userAgent)}
+		{#if getIsMobile()}
 			<input
 				type="date"
 				bind:value={selectedDate}
