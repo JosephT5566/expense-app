@@ -111,7 +111,7 @@
 	<div class="flex items-center justify-center">
 		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
 
-		{#if isInApp(navigator.userAgent)}
+		{#if navigator !== undefined && isInApp(navigator.userAgent)}
 			<input
 				type="date"
 				bind:value={selectedDate}
