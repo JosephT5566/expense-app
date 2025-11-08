@@ -13,6 +13,7 @@
 
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { isInApp } from '$lib/utils/detect-inapp';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -37,14 +38,12 @@
 
 		// check if we have any item in this month in the expenses store
 		if (!expensesStore.hasMonthExpenses(y, m)) {
-			getMonthlyFromCacheFirst(key).then(
-				(newMonthExpense) => {
-					if (_isEmpty(newMonthExpense)) {
-						return;
-					}
-					expensesStore.setMoreItems(newMonthExpense);
+			getMonthlyFromCacheFirst(key).then((newMonthExpense) => {
+				if (_isEmpty(newMonthExpense)) {
+					return;
 				}
-			);
+				expensesStore.setMoreItems(newMonthExpense);
+			});
 		}
 	});
 
@@ -111,11 +110,21 @@
 >
 	<div class="flex items-center justify-center">
 		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
-		<button
-			class="px-3 py-1 rounded-md hover:bg-black/5"
-			onclick={() => (showDatePicker = true)}
-			>{isToday(selectedDate) ? 'Today' : selectedDate}</button
-		>
+
+		{#if isInApp(navigator.userAgent)}
+			<input
+				type="date"
+				bind:value={selectedDate}
+				class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
+				max={toDateOnlyStr(today)}
+			/>
+		{:else}
+			<button
+				class="px-3 py-1 rounded-md bg-[var(--c-bg)] hover:bg-black/5"
+				onclick={() => (showDatePicker = true)}
+				>{isToday(selectedDate) ? 'Today' : selectedDate}</button
+			>
+		{/if}
 		<button
 			class="px-2 py-1 disabled:opacity-40"
 			disabled={isToday(selectedDate)}
