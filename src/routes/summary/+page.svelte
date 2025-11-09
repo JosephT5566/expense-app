@@ -17,9 +17,11 @@
 	import { toTaiwanDateString } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import { onDestroy } from 'svelte';
+	import { getIsMobile } from '$lib/utils/detect-device';
 
 	let scope = $state<ExpenseScope>('personal');
 	const { user } = sessionStore;
+	const isMobile = getIsMobile();
 
 	// 新增：月份選擇狀態
 	const today = new Date();
@@ -143,12 +145,21 @@
 
 	<!-- 當前月份顯示與選擇 -->
 	<div class="flex items-center justify-center mb-2">
-		<button
-			class="px-3 py-1 rounded-md hover:bg-black/5"
-			onclick={() => (showMonthPicker = true)}
-		>
-			{formatYM(selectedMonth)}
-		</button>
+		{#if $isMobile}
+			<input
+				type="month"
+				bind:value={selectedMonth}
+				class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
+				max={toYearMonth(today)}
+			/>
+		{:else}
+			<button
+				class="px-3 py-1 rounded-md hover:bg-black/5"
+				onclick={() => (showMonthPicker = true)}
+			>
+				{formatYM(selectedMonth)}
+			</button>
+		{/if}
 	</div>
 
 	<!-- 圓餅圖 -->
