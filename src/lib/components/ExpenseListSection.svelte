@@ -32,7 +32,6 @@
 	} = $props();
 
 	const handleCheckboxClicked = (id: string, checked: boolean) => {
-		console.log('checkbox clicked');
 		onToggle?.({ id, checked });
 	};
 	const handleEdit = (expense: ExpenseRow) => {

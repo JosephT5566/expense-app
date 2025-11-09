@@ -104,3 +104,8 @@ export async function persistExpensePatch(oldRow: ExpenseRow | null, newRow: Exp
 	// 	revalidateInBackground(oldMonthKey).catch(() => {});
 	// }
 }
+
+export async function persistExpenseDelete(row: ExpenseRow) {
+	const monthKey = getTaiwanMonthKey(row.ts);
+	await patchCacheRemove(monthKey, row.id);
+}

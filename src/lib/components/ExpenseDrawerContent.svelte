@@ -4,12 +4,12 @@
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
 	import { onMount } from 'svelte';
 	import type { ShareEntry } from '$lib/types/expense';
-	import { upsertExpense } from '$lib/data/expenses.fetcher';
+	import { upsertExpense, deleteExpense } from '$lib/data/expenses.fetcher';
 	import Icon from '@iconify/svelte';
 	import classNames from 'classnames';
 	import { allowedUserInfo, allowedUsers } from '$lib/stores/appSetting.store';
 	import { expenseOptions, categoryIconMap } from '$lib/stores/categories.store';
-	import { getExpenseById, upsertOne } from '$lib/stores/expenses.store';
+	import { getExpenseById, upsertOne, deleteOne } from '$lib/stores/expenses.store';
 	import { user as currentUser } from '$lib/stores/session.store';
 	import Calculator from '$lib/components/ui/Calculator.svelte';
 	import Carousel from '$lib/components/ui/Carousel.svelte';
@@ -188,6 +188,28 @@
 		upsertOne(saved);
 		onSubmitFinish?.();
 	}
+
+	async function handleDelete(expenseId: string) {
+		const confirmDelete = confirm('確定要刪除嗎？');
+		if (!confirmDelete) {
+			return;
+		}
+		try {
+			const { status } = await deleteExpense(expenseId);
+			if (status !== 204) {
+				throw new Error(`Failed to delete expense, status code: ${status}`);
+			}
+
+			alert('刪除完成');
+			deleteOne(expenseId);
+		} catch (error) {
+			alert('刪除失敗，請稍後再試。');
+			console.error('Delete expense error:', error);
+			return;
+		} finally {
+			onSubmitFinish?.();
+		}
+	}
 </script>
 
 <dialog
@@ -339,8 +361,12 @@
 									name={email}
 									type="number"
 									inputmode="decimal"
-									bind:value={shares[email]}
-									placeholder="0"
+									value={shares[email] == 0 ? '' : shares[email]}
+									oninput={(e) => {
+										const target = e.target as HTMLInputElement;
+										shares[email] = Number(target.value);
+									}}
+									placeholder="Enter a number"
 								/>
 							</div>
 						{/each}
@@ -375,10 +401,20 @@
 		placeholder="例如：午餐便當"
 	/>
 
-	<button type="submit" class="btn btn-primary w-full mb-3" disabled={!isUpdated}>
+	<button type="submit" class="btn btn-primary w-full" disabled={!isUpdated}>
 		{editMode ? '更新' : '新增'}
 	</button>
 </form>
+{#if editMode}
+	<button
+		class="btn btn-primary w-full mt-3"
+		onclick={() => {
+			handleDelete(expenseId);
+		}}
+	>
+		刪除
+	</button>
+{/if}
 
 <style>
 	form :global(.select) {

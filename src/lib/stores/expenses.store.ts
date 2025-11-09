@@ -2,7 +2,7 @@ import { writable, get } from 'svelte/store';
 import { type ExpenseRow, type ExpenseQuery, type PageResult, NewExpense } from '$lib/types/expense';
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
 import { taiwanMonthBoundsISO } from '$lib/utils/dates';
-import { persistExpensePatch } from '$lib/cache/monthlyExpense';
+import { persistExpensePatch, persistExpenseDelete } from '$lib/cache/monthlyExpense';
 
 export const items = writable<ExpenseRow[]>([]);
 export const nextCursor = writable<string | null>(null);
@@ -163,6 +163,27 @@ export function upsertOne(row: ExpenseRow) {
 	persistExpensePatch(oldRow, row).catch((e) => {
 		console.error('Failed to persist expense patch to cache', e);
 	});
+}
+
+export function deleteOne(id: string) {
+	let removed: ExpenseRow | null = null;
+	items.update((prev) => {
+		const next: ExpenseRow[] = [];
+		for (const row of prev) {
+			if (row.id === id) {
+				removed = row;
+				continue;
+			}
+			next.push(row);
+		}
+		return next;
+	});
+
+	if (removed) {
+		persistExpenseDelete(removed).catch((e) => {
+			console.error('Failed to remove expense from cache', e);
+		});
+	}
 }
 
 /** 載入指定年份月份的資料，取代目前 items */

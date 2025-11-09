@@ -134,6 +134,19 @@ export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseR
 	return data as ExpenseRow;
 }
 
+export async function deleteExpense(id: string): Promise<{ status: number }> {
+	console.log('Deleting expense', id);
+	const { error, status } = await supabase.from(TABLE).delete().eq('id', id);
+
+	if (error) {
+		throw error;
+	}
+
+	return {
+		status
+	};
+}
+
 /**
  * 更新指定支出項目的結清狀態。
  *
