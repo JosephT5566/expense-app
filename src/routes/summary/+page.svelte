@@ -94,24 +94,22 @@
 	);
 
 	// 關閉月份 Dialog 時載入所選月份
-	function confirmMonth() {
+	async function handleCloseMonthSelector() {
 		showMonthPicker = false;
+		await fetchMonthlyExpenses()
 	}
 
-	$effect(() => {
-		// month selected and picker close
-		if (wasMonthPickerOpen && !showMonthPicker) {
-			const [y, m] = selectedMonth.split('-').map(Number);
-			if (!expensesStore.hasMonthExpenses(y, m)) {
-				getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then(
-					(newMonthExpense) => {
-						expensesStore.setMoreItems(newMonthExpense);
-					}
-				);
-			}
+	async function fetchMonthlyExpenses() {
+		const [y, m] = selectedMonth.split('-').map(Number);
+
+		if (expensesStore.hasMonthExpenses(y, m)) {
+			return;
 		}
-		wasMonthPickerOpen = showMonthPicker;
-	});
+
+		await getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then((newMonthExpense) => {
+			expensesStore.setMoreItems(newMonthExpense);
+		});
+	}
 
 	onDestroy(() => {
 		unsubs();
@@ -151,6 +149,9 @@
 				bind:value={selectedMonth}
 				class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
 				max={toYearMonth(today)}
+				oninput={() => {
+					fetchMonthlyExpenses();
+				}}
 			/>
 		{:else}
 			<button
@@ -248,7 +249,7 @@
 				max={toYearMonth(today)}
 			/>
 			<div class="mt-4 flex justify-end">
-				<button class="btn btn-primary" onclick={confirmMonth}>完成</button>
+				<button class="btn btn-primary" onclick={handleCloseMonthSelector}>完成</button>
 			</div>
 		</Dialog.Content>
 	</Dialog.Portal>
