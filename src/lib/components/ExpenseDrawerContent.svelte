@@ -227,8 +227,12 @@
 				id="amount-input"
 				inputmode="decimal"
 				type="number"
-				bind:value={expenseData.amount}
-				placeholder="0"
+				value={expenseData.amount === 0 ? '' : expenseData.amount}
+				oninput={(e) => {
+					const target = e.target as HTMLInputElement;
+					expenseData.amount = Number(target.value);
+				}}
+				placeholder="Enter a number"
 			/>
 			<button
 				type="button"
