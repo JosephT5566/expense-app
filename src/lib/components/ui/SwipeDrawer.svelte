@@ -93,8 +93,7 @@
 		<Dialog.Content
 			class={classNames(
 				'swipe-drawer-content',
-				'bottom-[85vh]', // leave space for bottom nav
-				'relative inset-x-0 rounded-b-none overflow-auto bg-white rounded-2xl',
+				'absolute bottom-0 inset-x-0 rounded-b-none overflow-auto bg-white rounded-2xl',
 				'pb-[var(--nav-height)]',
 				'data-[state=open]:animate-enter-from-bottom',
 			)}
