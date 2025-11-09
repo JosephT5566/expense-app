@@ -16,7 +16,7 @@
 	let {
 		open = $bindable(false),
 		title = '',
-		maxHeight = '85vh',
+		maxHeight = '85dvh',
 		disableClose = false,
 		children,
 	}: Props = $props();
