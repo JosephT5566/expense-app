@@ -56,7 +56,6 @@
 			const [start, end] = e.detail.y;
 			const diff = end - start;
 
-			// console.log('swiping', diff);
 			if (diff > 0) {
 				dragging = true;
 				dragY = diff;

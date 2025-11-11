@@ -3,6 +3,7 @@ import { type ExpenseRow, type ExpenseQuery, type PageResult, NewExpense } from 
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
 import { taiwanMonthBoundsISO } from '$lib/utils/dates';
 import { persistExpensePatch, persistExpenseDelete } from '$lib/cache/monthlyExpense';
+import Logger from '$lib/utils/logger';
 
 export const items = writable<ExpenseRow[]>([]);
 export const nextCursor = writable<string | null>(null);
@@ -61,7 +62,7 @@ async function loadAndUpdate(q: ExpenseQuery) {
 }
 
 export async function loadThisMonth() {
-	console.log('Load this month');
+	Logger.log('Load this month');
 	const today = new Date();
 	const { from, to } = taiwanMonthBoundsISO(today.getFullYear(), today.getMonth() + 1);
 	await load({ from, to });
@@ -158,10 +159,10 @@ export function upsertOne(row: ExpenseRow) {
 		// });
 		return next;
 	});
-	console.log('Upserted expense', row, oldRow);
+	Logger.log('Upserted expense', row, oldRow);
 
 	persistExpensePatch(oldRow, row).catch((e) => {
-		console.error('Failed to persist expense patch to cache', e);
+		Logger.error('Failed to persist expense patch to cache', e);
 	});
 }
 
@@ -181,7 +182,7 @@ export function deleteOne(id: string) {
 
 	if (removed) {
 		persistExpenseDelete(removed).catch((e) => {
-			console.error('Failed to remove expense from cache', e);
+			Logger.error('Failed to remove expense from cache', e);
 		});
 	}
 }

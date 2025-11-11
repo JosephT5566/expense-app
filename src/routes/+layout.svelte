@@ -18,6 +18,7 @@
 	import AuthModal from '$lib/components/ui/AuthModal.svelte';
 	import { isDev } from '$lib/utils/helpers';
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
+	import Logger from '$lib/utils/logger';
 
 	let {
 		data,
@@ -43,13 +44,13 @@
 	onMount(() => {
 		const unsubExpenseStore = isDev
 			? expenseItems.subscribe(($items) => {
-					console.log('Expenses items changed:', $items);
+					Logger.log('Expenses items changed:', $items);
 				})
 			: null;
 
 		const unsubAuthListener = startAuthListener({
 			onLogout: async () => {
-				console.log('🚀 User logged out');
+				Logger.log('🚀 User logged out');
 				expensesStore.clearAll();
 				clearAllExpensesCache();
 				goto(resolve('/')); // redirect to home

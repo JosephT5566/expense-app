@@ -35,7 +35,6 @@
 	}
 
 	function handleToggle(e: Event) {
-		// console.log('row toggle', e);
 		const target = e.target as HTMLInputElement;
 		e.stopPropagation();
 		onToggle?.({ id: expense.id, checked: !!target.checked });

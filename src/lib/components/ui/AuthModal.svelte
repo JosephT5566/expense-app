@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { signIn } from '$lib/supabase/auth';
+	import Logger from '$lib/utils/logger';
 	import { user, loading } from '$lib/stores/session.store';
 	import { Dialog } from 'bits-ui';
 	import classNames from 'classnames';
@@ -9,7 +10,7 @@
 	let open = $state(false);
 
 	const unsubscribe = loading.subscribe(($loading) => {
-		console.log('AuthModal loading changed:', $loading, $user);
+		Logger.log('AuthModal loading changed:', $loading, $user);
 		if ($loading) {
 			open = true;
 		} else {
@@ -18,7 +19,7 @@
 	});
 
 	const unsubscribeUser = user.subscribe(($user) => {
-		console.log('AuthModal user changed:', $user);
+		Logger.log('AuthModal user changed:', $user);
 		if (!$user) {
 			open = true;
 		}

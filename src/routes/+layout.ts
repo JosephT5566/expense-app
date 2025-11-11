@@ -9,6 +9,7 @@ import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 import { getTaiwanMonthKey } from '$lib/utils/dates';
 import { LOAD_DEP_KEYS } from '$lib/utils/const';
 import { signOutIfExpired } from '$lib/supabase/auth';
+import Logger from '$lib/utils/logger';
 
 export const load: LayoutLoad = async ({ depends, url }) => {
 	if (!browser) {
@@ -36,7 +37,7 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 			}
 		: null;
 
-	console.log('layout load user', user);
+	Logger.log('layout load user', user);
 
 	if (!user) {
 		// is signed out, skip other data fetch

@@ -15,6 +15,7 @@
 	import Carousel from '$lib/components/ui/Carousel.svelte';
 	import { derived } from 'svelte/store';
 	import { toTaiwanDateString } from '$lib/utils/dates';
+	import Logger from '$lib/utils/logger';
 	type CategoryCard = { id: string; name: string; icon: string };
 
 	let {
@@ -84,9 +85,9 @@
 	let isUpdated = $state(false);
 	$effect(() => {
 		if (JSON.stringify(previousExpense) !== JSON.stringify(expenseData)) {
-			console.log('data changed');
+			Logger.log('data changed');
 			isUpdated = true;
-			// console.log('expenseData', $state.snapshot(expenseData));
+			// Logger.log('expenseData', $state.snapshot(expenseData));
 		}
 	});
 	$effect(() => {
@@ -182,12 +183,12 @@
 					? new Date(selectedDate).toISOString()
 					: undefined,
 		};
-		console.log('Would submit payload:', payload);
+		Logger.log('Would submit payload:', payload);
 
-		const saved = await upsertExpense(payload);
-		// 更新到全域 expenses store
-		upsertOne(saved);
-		onSubmitFinish?.();
+		// const saved = await upsertExpense(payload);
+		// // 更新到全域 expenses store
+		// upsertOne(saved);
+		// onSubmitFinish?.();
 	}
 
 	async function handleDelete(expenseId: string) {
@@ -205,7 +206,7 @@
 			deleteOne(expenseId);
 		} catch (error) {
 			alert('刪除失敗，請稍後再試。');
-			console.error('Delete expense error:', error);
+			Logger.error('Delete expense error:', error);
 			return;
 		} finally {
 			onSubmitFinish?.();

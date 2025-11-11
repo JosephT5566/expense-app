@@ -12,6 +12,7 @@
 	import { allowedUserInfo } from '$lib/stores/appSetting.store';
 	import DateRangePicker from '$lib/components/ui/DateRangePicker.svelte';
 	import classNames from 'classnames';
+	import Logger from '$lib/utils/logger';
 	// import { mockdata } from './mock';
 
 	// 類別圖示 map
@@ -37,7 +38,7 @@
 
 	async function fetchData(startDateString: string, endDateString: string) {
 		fetchLoading = true;
-		console.log('fetch start', startDateString, endDateString);
+		Logger.log('fetch start', startDateString, endDateString);
 
 		try {
 			const fromISO = taiwanDayBoundsISO(startDateString).from;
@@ -50,12 +51,12 @@
 				limit: 1000,
 			});
 			rows = page.items;
-			console.log('fetch success', rows.length);
+			Logger.log('fetch success', rows.length);
 			// rows = mockdata.filter((md) => md.scope === 'household');
 			selected = [];
 			selectAll = false;
 		} catch (e) {
-			console.error(e);
+			Logger.error(e);
 			alert('讀取失敗');
 		} finally {
 			fetchLoading = false;
@@ -68,7 +69,7 @@
 		const endDate = dateRange?.end?.toString();
 
 		if (!startDate || !endDate) {
-			console.log('reset data');
+			Logger.log('reset data');
 			rows = [];
 		}
 	});
@@ -77,7 +78,7 @@
 		const startDate = dateRange?.start?.toString();
 		const endDate = dateRange?.end?.toString();
 
-		// console.log('try to fetch');
+		// Logger.log('try to fetch');
 		if (
 			fetchLoading || // is loading
 			(startDate && endDate && rows.length > 0) || // data is fetched and we haven't refetch
@@ -85,7 +86,7 @@
 			!endDate ||
 			settledTrash.length > 0
 		) {
-			// console.log('but return')
+			// Logger.log('but return')
 			return;
 		}
 
@@ -233,7 +234,7 @@
 
 		settleLoading = true;
 		try {
-			console.log('toggle settle', [...selected]);
+			Logger.log('toggle settle', [...selected]);
 			await bulkToggleSettled({ ids: [...selected], next: true });
 			alert(`完成結清`);
 
@@ -243,7 +244,7 @@
 			selected = [];
 			selectAll = false;
 		} catch (e) {
-			console.error(e);
+			Logger.error(e);
 			alert('結清失敗');
 		} finally {
 			settleLoading = false;
@@ -257,7 +258,7 @@
 		}
 
 		try {
-			console.log(
+			Logger.log(
 				'toggle reset',
 				settledTrash.map((t) => t.id)
 			);
@@ -268,7 +269,7 @@
 			selected = [];
 			selectAll = false;
 		} catch (e) {
-			console.error(e);
+			Logger.error(e);
 			alert('重置失敗');
 		}
 	}

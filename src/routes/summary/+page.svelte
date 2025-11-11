@@ -18,6 +18,7 @@
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import { onDestroy } from 'svelte';
 	import { getIsMobile } from '$lib/utils/detect-device';
+	import Logger from '$lib/utils/logger';
 
 	let scope = $state<ExpenseScope>('personal');
 	const { user } = sessionStore;
@@ -26,7 +27,7 @@
 	// 新增：月份選擇狀態
 	const today = new Date();
 	function toYearMonth(d: Date) {
-		console.log('toYearMonth called with date:', d.toISOString());
+		Logger.log('toYearMonth called with date:', d.toISOString());
 		const y = d.getFullYear();
 		const m = String(d.getMonth() + 1).padStart(2, '0');
 		return `${y}-${m}`;

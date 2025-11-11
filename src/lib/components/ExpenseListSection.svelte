@@ -4,6 +4,7 @@
 	import classNames from 'classnames';
 	import { Accordion } from 'bits-ui';
 	import { allowedUserInfo } from '$lib/stores/appSetting.store';
+	import Logger from '$lib/utils/logger';
 
 	let {
 		items = [],
@@ -56,7 +57,7 @@
 								class="checkbox checkbox-sm"
 								{checked}
 								onchange={(t: Event) => {
-									console.log(t);
+									Logger.log(t);
 									const target = t.target as HTMLInputElement;
 									handleCheckboxClicked(e.id, !!target.checked);
 								}}

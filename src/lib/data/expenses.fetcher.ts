@@ -8,12 +8,13 @@ import type {
 } from '$lib/types/expense';
 import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
 import { isDev } from '$lib/utils/helpers';
+import Logger from '$lib/utils/logger';
 
 const TABLE = 'expenses';
 
 export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseRow>> {
 	if (isDev) {
-		console.log('fetch expenses');
+		Logger.log('fetch expenses');
 	}
 
 	const limit = q.limit ?? 50;
@@ -85,7 +86,7 @@ export async function listExpensesMonthly(
 	q: Omit<ExpenseQuery, 'from' | 'to'> = {}
 ): Promise<PageResult<ExpenseRow>> {
 	if (isDev) {
-		console.log('fetch expenses for month', monthKey);
+		Logger.log('fetch expenses for month', monthKey);
 	}
 	const { year, month } = decodeMonthKey(monthKey);
 	const { from, to } = taiwanMonthBoundsISO(year, month);
@@ -135,7 +136,7 @@ export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseR
 }
 
 export async function deleteExpense(id: string): Promise<{ status: number }> {
-	console.log('Deleting expense', id);
+	Logger.log('Deleting expense', id);
 	const { error, status } = await supabase.from(TABLE).delete().eq('id', id);
 
 	if (error) {

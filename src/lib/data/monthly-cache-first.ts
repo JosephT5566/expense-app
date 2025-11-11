@@ -1,5 +1,6 @@
 // src/lib/data/monthly-cache-first.ts
 import { browser } from '$app/environment';
+import Logger from '$lib/utils/logger';
 import { getExpenseFromCache, setExpenseCache, isStale } from '$lib/cache/monthlyExpense';
 import { listExpensesMonthly } from '$lib/data/expenses.fetcher';
 
@@ -17,7 +18,7 @@ export async function getMonthlyFromCacheFirst(monthKey: string) {
 		}
 	}
 
-	console.log('monthly cache miss for', monthKey);
+	Logger.log('monthly cache miss for', monthKey);
 	// 沒命中 → 正式請求
 	const fresh = await listExpensesMonthly(monthKey);
 	if (browser) {
