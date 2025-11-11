@@ -185,10 +185,10 @@
 		};
 		Logger.log('Would submit payload:', payload);
 
-		// const saved = await upsertExpense(payload);
-		// // 更新到全域 expenses store
-		// upsertOne(saved);
-		// onSubmitFinish?.();
+		const saved = await upsertExpense(payload);
+		// 更新到全域 expenses store
+		upsertOne(saved);
+		onSubmitFinish?.();
 	}
 
 	async function handleDelete(expenseId: string) {

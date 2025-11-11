@@ -6,9 +6,12 @@ import type {
 	ShareEntry,
 	ExpenseScope,
 } from '$lib/types/expense';
+import * as expensesStore from '$lib/stores/expenses.store';
 import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
 import { isDev } from '$lib/utils/helpers';
 import Logger from '$lib/utils/logger';
+import { clearExpenseCacheForMonth } from '$lib/cache/monthlyExpense';
+import { getMonthlyFromCacheFirst } from './monthly-cache-first';
 
 const TABLE = 'expenses';
 
@@ -144,7 +147,7 @@ export async function deleteExpense(id: string): Promise<{ status: number }> {
 	}
 
 	return {
-		status
+		status,
 	};
 }
 
@@ -256,6 +259,21 @@ export async function fetchMonthlySummary(
 	const personal = total - household;
 
 	return { total, household, personal, count: res.items.length };
+}
+
+export async function forceRefetchMonthlyExpenses(monthKey: string) {
+	clearExpenseCacheForMonth(monthKey).catch((error) => {
+		Logger.error(monthKey, error);
+	});
+
+	try {
+		const newMonthExpense = await getMonthlyFromCacheFirst(monthKey);
+		expensesStore.setMoreItems(newMonthExpense);
+	} catch (error) {
+		Logger.error('Refetch monthly expenses failed:', monthKey, error);
+	}
+
+	// const today = toISODateOnly(new Date());
 }
 
 // 針對搜尋頁面的輔助函式（不另開檔案）

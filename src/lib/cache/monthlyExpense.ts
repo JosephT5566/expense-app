@@ -54,6 +54,15 @@ export async function clearAllExpensesCache() {
 	await Promise.all(all.map((k) => del(k)));
 }
 
+export async function clearExpenseCacheForMonth(monthKey: MonthKey) {
+	const key = getExpenseCacheKey(monthKey);
+	await del(key);
+
+	const m = get(mem);
+	m.delete(monthKey);
+	mem.set(m);
+}
+
 // 同月 upsert
 async function patchCacheUpsert(monthKey: MonthKey, row: ExpenseRow) {
 	const cached = await getExpenseFromCache(monthKey);

@@ -96,7 +96,7 @@
 	// 關閉月份 Dialog 時載入所選月份
 	async function handleCloseMonthSelector() {
 		showMonthPicker = false;
-		await fetchMonthlyExpenses()
+		await fetchMonthlyExpenses();
 	}
 
 	async function fetchMonthlyExpenses() {
@@ -106,9 +106,10 @@
 			return;
 		}
 
-		await getMonthlyFromCacheFirst(`${y}-${String(m).padStart(2, '0')}`).then((newMonthExpense) => {
-			expensesStore.setMoreItems(newMonthExpense);
-		});
+		const newMonthExpense = await getMonthlyFromCacheFirst(
+			`${y}-${String(m).padStart(2, '0')}`
+		);
+		expensesStore.setMoreItems(newMonthExpense);
 	}
 
 	onDestroy(() => {
