@@ -169,7 +169,8 @@
 			note: expenseData.note,
 			amount: Number(expenseData.amount),
 			currency: 'TWD',
-			payer_email: userEmail,
+			payer_email:
+				expenseData.scope === 'personal' ? userEmail : expenseData.payer_email || userEmail,
 			scope: expenseData.scope,
 			shares_json,
 			category_id: expenseData.category_id || '',
@@ -230,7 +231,7 @@
 
 <form class="flex flex-col gap-3" onsubmit={handleSubmit}>
 	<div>
-		<label class="block text-sm mb-1" for="date-input">日期</label>
+		<label class="block text-sm mb-1 font-semibold" for="date-input">日期</label>
 		<input
 			id="date-input"
 			type="date"
@@ -242,7 +243,7 @@
 	</div>
 
 	<div>
-		<label class="block text-sm mb-1" for="amount-input">金額</label>
+		<label class="block text-sm mb-1 font-semibold" for="amount-input">金額</label>
 		<div class="join w-full rounded-lg relative">
 			<input
 				class="w-full p-3 rounded-lg border border-black/10"
@@ -268,8 +269,8 @@
 		</div>
 	</div>
 
-	<div>
-		<div class="block text-sm mb-1">類別</div>
+	<fieldset class="fieldset">
+		<legend class="fieldset-legend text-sm">類別</legend>
 		{#if $expenseOptions.length > 0}
 			{#snippet children(page: unknown, i: number)}
 				<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
@@ -320,10 +321,10 @@
 		{:else}
 			<p class="opacity-60">載入類別中…</p>
 		{/if}
-	</div>
+	</fieldset>
 
-	<div>
-		<div class="block text-sm mb-1">範圍</div>
+	<fieldset class="fieldset">
+		<legend class="fieldset-legend text-sm">類別</legend>
 		<div class="flex gap-2 mb-2">
 			<label
 				class="flex items-center gap-2 p-2 rounded-lg border border-black/10 cursor-pointer"
@@ -343,6 +344,16 @@
 			>
 		</div>
 		{#if expenseData?.scope === 'household'}
+			<fieldset class="fieldset">
+				<legend class="fieldset-legend text-sm">付款人</legend>
+				<select class="select w-full" bind:value={expenseData.payer_email}>
+					{#each $allowedUsers as email (email)}
+						<option value={email} selected={email === expenseData.payer_email}>
+							{$allowedUserInfo[email].name ?? email}
+						</option>
+					{/each}
+				</select>
+			</fieldset>
 			<fieldset
 				class="fieldset bg-base-200 border-base-300 rounded-box w-full border px-4 pt-0 pb-2"
 			>
@@ -391,9 +402,9 @@
 				<label for="settled-input" class="text-sm"> 已結清 </label>
 			</div>
 		{/if}
-	</div>
+	</fieldset>
 
-	<label class="block text-sm mb-1" for="content-input">帳目內容</label>
+	<label class="block text-sm mb-1 font-semibold" for="content-input">帳目內容</label>
 	<input
 		id="content-input"
 		class="w-full p-3 rounded-lg border border-black/10"

@@ -103,7 +103,7 @@
 				bind:this={container}
 				class={classNames(
 					'drag-anchor',
-					'sticky w-full p-3 top-0 bg-white'
+					'sticky w-full p-3 top-0 bg-white z-10'
 					// 'mx-auto h-1 w-12 rounded-full bg-black/20 mb-2 sticky'
 				)}
 				aria-hidden="true"

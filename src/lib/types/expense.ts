@@ -32,6 +32,7 @@ export class NewExpense implements Partial<ExpenseRow> {
 	is_settled: boolean;
 	shares_json: ShareEntry;
 	ts: string;
+	payer_email?: string;
 
 	constructor() {
 		this.currency = 'TWD';

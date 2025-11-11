@@ -37,7 +37,6 @@
 	}
 	let selectedMonth = $state(toYearMonth(today));
 	let showMonthPicker = $state(false);
-	let wasMonthPickerOpen = $state(false);
 
 	let drawerOpen = $state(false);
 	let expenseId = $state('');
