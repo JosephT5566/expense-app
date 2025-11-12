@@ -178,10 +178,7 @@
 			updated_at: editMode ? now.toISOString() : undefined,
 			// 新增：傳入是否結清
 			is_settled: expenseData.is_settled,
-			ts:
-				editMode && selectedDate !== originTs
-					? new Date(selectedDate).toISOString()
-					: undefined,
+			ts: selectedDate !== originTs ? new Date(selectedDate).toISOString() : undefined,
 		};
 		Logger.log('Would submit payload:', payload);
 
