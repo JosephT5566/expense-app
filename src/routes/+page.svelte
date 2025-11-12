@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { Dialog } from 'bits-ui';
 	import _isEmpty from 'lodash/isEmpty';
+	import Logger from '$lib/utils/logger';
 
 	import type { ExpenseRow } from '$lib/types/expense';
 
@@ -14,6 +15,8 @@
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import { getIsMobile } from '$lib/utils/detect-device';
+	import Icon from '@iconify/svelte';
+	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
 
 	const isMobile = getIsMobile();
 	let drawerOpen = $state(false);
@@ -22,6 +25,9 @@
 	let expenseId = $state('');
 	const today = new Date();
 	let selectedDate = $state(toDateOnlyStr(today));
+	const [selectedYear, selectedMonth] = $derived(selectedDate.split('-').map(Number));
+	const monthKey = $derived(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
+
 	let showDatePicker = $state(false);
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
@@ -34,12 +40,9 @@
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	$effect(() => {
 		// when state selectedDate changes
-		const [y, m] = selectedDate.split('-').map(Number);
-		const key = `${y}-${String(m).padStart(2, '0')}`;
-
 		// check if we have any item in this month in the expenses store
-		if (!expensesStore.hasMonthExpenses(y, m)) {
-			getMonthlyFromCacheFirst(key).then((newMonthExpense) => {
+		if (!expensesStore.hasMonthExpenses(selectedYear, selectedMonth)) {
+			getMonthlyFromCacheFirst(monthKey).then((newMonthExpense) => {
 				if (_isEmpty(newMonthExpense)) {
 					return;
 				}
@@ -109,7 +112,15 @@
 	ontouchmove={onTouchMove}
 	ontouchend={onTouchEnd}
 >
-	<div class="flex items-center justify-center">
+	<div class="flex items-center justify-center relative">
+		<button
+			class="absolute left-0 text-[var(--c-primary)] p-1"
+			onclick={() => {
+				forceRefetchMonthlyExpenses(monthKey);
+			}}
+		>
+			<Icon icon="solar:restart-bold" width="20" height="20" />
+		</button>
 		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
 
 		{#if $isMobile}

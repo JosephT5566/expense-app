@@ -261,7 +261,20 @@ export async function fetchMonthlySummary(
 	return { total, household, personal, count: res.items.length };
 }
 
+/**
+ * Clean up monthly expense cache and refetch the latest data from the server.
+ *
+ * @async
+ * @function forceRefetchMonthlyExpenses
+ * @param {string} monthKey - month key, the format is 'YYYY-MM' (eg, '2025-10')
+ * @returns {Promise<void>}
+**/
 export async function forceRefetchMonthlyExpenses(monthKey: string) {
+	if (!monthKey) {
+		Logger.warn('forceRefetchMonthlyExpenses called with empty monthKey');
+		return;
+	}
+
 	clearExpenseCacheForMonth(monthKey).catch((error) => {
 		Logger.error(monthKey, error);
 	});
