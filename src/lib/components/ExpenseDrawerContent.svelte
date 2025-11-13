@@ -146,7 +146,9 @@
 		return '';
 	}
 
-	async function handleSubmit() {
+	async function handleSubmit(e: Event) {
+		e.preventDefault(); // prevent page reload
+		
 		const err = validateForm();
 		if (err) {
 			alert(err);
@@ -182,9 +184,13 @@
 		};
 		Logger.log('Would submit payload:', payload);
 
-		const saved = await upsertExpense(payload);
-		// 更新到全域 expenses store
-		upsertOne(saved);
+		try {
+			const saved = await upsertExpense(payload);
+			// 更新到全域 expenses store
+			upsertOne(saved);
+		} catch (error) {
+			Logger.error('Upsert expense error:', error);
+		}
 		onSubmitFinish?.();
 	}
 
