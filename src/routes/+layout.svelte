@@ -73,7 +73,7 @@
 </svelte:head>
 
 <Header />
-<main class="p-4 space-y-3 h-[calc(100dvh-var(--nav-height))] overflow-auto">
+<main class="p-4 space-y-3 h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto">
 	{@render children?.()}
 </main>
 <BottomNav />
