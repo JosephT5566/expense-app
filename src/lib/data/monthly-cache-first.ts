@@ -18,7 +18,7 @@ export async function getMonthlyFromCacheFirst(monthKey: string) {
 		}
 	}
 
-	Logger.log('monthly cache miss for', monthKey);
+	Logger.log('monthly cache miss, fetch from supabase. key:', monthKey);
 	// 沒命中 → 正式請求
 	const fresh = await listExpensesMonthly(monthKey);
 	if (browser) {

@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Dialog } from 'bits-ui';
 	import _isEmpty from 'lodash/isEmpty';
-	import Logger from '$lib/utils/logger';
 
 	import type { ExpenseRow } from '$lib/types/expense';
 
@@ -15,8 +14,7 @@
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import { getIsMobile } from '$lib/utils/detect-device';
-	import Icon from '@iconify/svelte';
-	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
+	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
 
 	const isMobile = getIsMobile();
 	let drawerOpen = $state(false);
@@ -113,14 +111,7 @@
 	ontouchend={onTouchEnd}
 >
 	<div class="flex items-center justify-center relative">
-		<button
-			class="absolute left-0 text-[var(--c-primary)] p-1"
-			onclick={() => {
-				forceRefetchMonthlyExpenses(monthKey);
-			}}
-		>
-			<Icon icon="solar:restart-bold" width="20" height="20" />
-		</button>
+		<RetrieveExpenseButton className="absolute left-0 text-[var(--c-primary)]" {monthKey} />
 		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
 
 		{#if $isMobile}
@@ -157,7 +148,7 @@
 			categoryIconMap={$categoryIconMap}
 			onEdit={openEdit}
 		/>
-		<div class="mt-3"><button class="btn w-full" onclick={openCreate}>新增項目</button></div>
+		<div class="mt-3"><button class="btn btn-primary w-full" onclick={openCreate}>新增項目</button></div>
 	{/if}
 </section>
 

@@ -8,7 +8,6 @@ import type {
 } from '$lib/types/expense';
 import * as expensesStore from '$lib/stores/expenses.store';
 import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
-import { isDev } from '$lib/utils/helpers';
 import Logger from '$lib/utils/logger';
 import { clearExpenseCacheForMonth } from '$lib/cache/monthlyExpense';
 import { getMonthlyFromCacheFirst } from './monthly-cache-first';
@@ -16,9 +15,7 @@ import { getMonthlyFromCacheFirst } from './monthly-cache-first';
 const TABLE = 'expenses';
 
 export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseRow>> {
-	if (isDev) {
-		Logger.log('fetch expenses');
-	}
+	Logger.log('fetch expenses');
 
 	const limit = q.limit ?? 50;
 
@@ -88,9 +85,8 @@ export async function listExpensesMonthly(
 	monthKey: string,
 	q: Omit<ExpenseQuery, 'from' | 'to'> = {}
 ): Promise<PageResult<ExpenseRow>> {
-	if (isDev) {
-		Logger.log('fetch expenses for month', monthKey);
-	}
+	Logger.log('fetch expenses for month', monthKey);
+
 	const { year, month } = decodeMonthKey(monthKey);
 	const { from, to } = taiwanMonthBoundsISO(year, month);
 	// 設定一個較合理的預設頁大小；也可沿用呼叫端提供的 q.limit
@@ -267,20 +263,34 @@ export async function fetchMonthlySummary(
  * @async
  * @function forceRefetchMonthlyExpenses
  * @param {string} monthKey - month key, the format is 'YYYY-MM' (eg, '2025-10')
+ * @param {number} [minTimerMs] - Minimum time to wait before returning (in milliseconds).
  * @returns {Promise<void>}
-**/
-export async function forceRefetchMonthlyExpenses(monthKey: string) {
+ **/
+export async function forceRefetchMonthlyExpenses(
+	monthKey: string,
+	minTimerMs?: number
+): Promise<void> {
 	if (!monthKey) {
 		Logger.warn('forceRefetchMonthlyExpenses called with empty monthKey');
 		return;
 	}
 
+	const startTime = Date.now();
+
 	clearExpenseCacheForMonth(monthKey).catch((error) => {
 		Logger.error(monthKey, error);
+		throw error;
 	});
 
 	try {
 		const newMonthExpense = await getMonthlyFromCacheFirst(monthKey);
+		const endTime = Date.now();
+		const elapsed = endTime - startTime;
+		Logger.log('elapsed time for refetch:', elapsed, 'ms');
+		if (minTimerMs && elapsed < minTimerMs) {
+			await new Promise((resolve) => setTimeout(resolve, minTimerMs - elapsed));
+		}
+
 		expensesStore.setMoreItems(newMonthExpense);
 	} catch (error) {
 		Logger.error('Refetch monthly expenses failed:', monthKey, error);
