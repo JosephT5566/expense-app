@@ -136,6 +136,7 @@
 			▶
 		</button>
 	</div>
+
 	{#if $expensesLoading && dayItems().length === 0}
 		<p class="mt-3 opacity-70">載入中…</p>
 	{:else if dayItems().length === 0}
@@ -147,8 +148,11 @@
 			items={dayItems()}
 			categoryIconMap={$categoryIconMap}
 			onEdit={openEdit}
+			showSum={true}
 		/>
-		<div class="mt-3"><button class="btn btn-primary w-full" onclick={openCreate}>新增項目</button></div>
+		<div class="mt-3">
+			<button class="btn btn-primary w-full" onclick={openCreate}>新增項目</button>
+		</div>
 	{/if}
 </section>
 

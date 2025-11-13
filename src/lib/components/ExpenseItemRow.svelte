@@ -2,6 +2,7 @@
 	import Icon from '@iconify/svelte';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { getTaiwanDate } from '$lib/utils/dates';
+	import { user } from '$lib/stores/session.store';
 
 	// export let expense: ExpenseRow;
 	// export let icon: string | null = null;
@@ -70,14 +71,20 @@
 			>{expense.note}</span
 		>
 		<span
-			class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-primary)]/50"
+			class="text-xs w-[20px] h-[20px] rounded-full leading-[20px] text-center bg-[var(--c-accent)]/50"
 		>
 			{expense.scope === 'household' ? 'H' : 'P'}
 		</span>
 	</div>
-	<div class="text-right tabular-nums font-semibold">{expense.amount}</div>
+	<div class="text-right tabular-nums font-semibold">
+		{expense.scope === 'personal' ? expense.amount : expense.shares_json[$user?.email ?? '']}
+	</div>
 	{#if showEdit}
-		<button class="p-1 ml-2 text-[var(--c-primary)] hover:opacity-100" aria-label="Edit" onclick={handleEdit}>
+		<button
+			class="p-1 ml-2 text-[var(--c-primary)] hover:opacity-100"
+			aria-label="Edit"
+			onclick={handleEdit}
+		>
 			<Icon icon="solar:pen-new-square-bold-duotone" width="20" height="20" />
 		</button>
 	{/if}

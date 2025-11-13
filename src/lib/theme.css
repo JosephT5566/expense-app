@@ -14,7 +14,7 @@ html[data-theme='sunset'] {
 	--c-primary: #d97d55; /* 按鈕、連結、重點元素 */
 	--c-bg: #f4e9d7; /* App 全局背景、卡片底色 */
 	--c-muted: #b8c4a9; /* 次要文字、分隔線、disabled 狀態 */
-	--c-accent: #6fa4af; /* 次要強調、hover 狀態、資訊或中性訊息 */
+	--c-accent: #6fa4af; /* 次要強調、hover 狀態、資訊或中性訊息 （非按鈕、連結） */
 	--c-text: #1f2937; /* 主要文字顏色（通常深灰或近黑） */
 	--c-text-muted: #6b7280; /* 次文字（灰藍調）*/
 	--c-card: #ffffff; /* 元件背景色（比 --c-bg 稍深或稍淺） */
