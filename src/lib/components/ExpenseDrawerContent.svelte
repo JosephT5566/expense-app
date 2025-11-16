@@ -15,7 +15,7 @@
 	import Carousel from '$lib/components/ui/Carousel.svelte';
 	import { derived } from 'svelte/store';
 	import { toTaiwanDateString } from '$lib/utils/dates';
-	import { withMinimumLoading } from '$lib/utils/loading';
+	import { withMinimumLoading, withTemporaryFlag } from '$lib/utils/loading';
 	import Logger from '$lib/utils/logger';
 	type CategoryCard = { id: string; name: string; icon: string };
 
@@ -36,6 +36,7 @@
 	);
 
 	const today = new Date();
+	const FINISHED_DURATION_MS = 1500;
 
 	let calculatorModal: HTMLDialogElement | null = $state(null);
 	let calculatorRef = $state<ReturnType<typeof Calculator>>();
@@ -85,15 +86,19 @@
 	let previousExpense = $state.snapshot(expenseData);
 	let isUpdated = $state(false);
 	$effect(() => {
-		if (JSON.stringify(previousExpense) !== JSON.stringify(expenseData)) {
+		const currentSnapshot = $state.snapshot(expenseData);
+		if (JSON.stringify(previousExpense) !== JSON.stringify(currentSnapshot)) {
 			Logger.log('data changed');
 			isUpdated = true;
+			// resetFinished();
+			previousExpense = currentSnapshot;
 			// Logger.log('expenseData', $state.snapshot(expenseData));
 		}
 	});
 	$effect(() => {
 		if (selectedDate !== toTaiwanDateString(expenseData.ts)) {
 			isUpdated = true;
+			// resetFinished();
 		}
 	});
 
@@ -123,6 +128,35 @@
 
 	let isLoading = $state(false);
 	let loadingAction = $state<'submit' | 'delete' | null>(null);
+	let isFinished = $state(false);
+	let finishedAction = $state<'submit' | 'delete' | null>(null);
+	let clearFinishedTimeout: (() => void) | null = null;
+
+	function resetFinished() {
+		if (clearFinishedTimeout) {
+			clearFinishedTimeout();
+			clearFinishedTimeout = null;
+		} else if (isFinished) {
+			isFinished = false;
+		}
+		finishedAction = null;
+	}
+
+	function markFinished(action: 'submit' | 'delete') {
+		resetFinished();
+		finishedAction = action;
+		clearFinishedTimeout = withTemporaryFlag(
+			(value) => {
+				isFinished = value;
+				if (!value) {
+					finishedAction = null;
+					clearFinishedTimeout = null;
+				}
+			},
+			FINISHED_DURATION_MS
+		);
+	}
+
 	function validateForm() {
 		if (
 			!expenseData.amount ||
@@ -151,7 +185,8 @@
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault(); // prevent page reload
-		
+		resetFinished();
+
 		const err = validateForm();
 		if (err) {
 			alert(err);
@@ -197,6 +232,7 @@
 				},
 				(value) => (isLoading = value)
 			);
+			markFinished('submit');
 		} catch (error) {
 			Logger.error('Upsert expense error:', error);
 		} finally {
@@ -211,6 +247,7 @@
 			return;
 		}
 
+		resetFinished();
 		loadingAction = 'delete';
 		try {
 			await withMinimumLoading(
@@ -224,6 +261,8 @@
 			);
 
 			deleteOne(expenseId);
+			markFinished('delete');
+			alert('刪除完成');
 		} catch (error) {
 			alert('刪除失敗，請稍後再試。');
 			Logger.error('Delete expense error:', error);
@@ -434,9 +473,15 @@
 		placeholder="例如：午餐便當"
 	/>
 
-	<button type="submit" class="btn btn-primary w-full" disabled={!isUpdated || isLoading}>
+	<button
+		type="submit"
+		class="btn btn-primary w-full"
+		disabled={!isUpdated || isLoading || (isFinished && finishedAction === 'submit')}
+	>
 		{#if isLoading && loadingAction === 'submit'}
 			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
+		{:else if isFinished && finishedAction === 'submit'}
+			Done
 		{:else}
 			{editMode ? '更新' : '新增'}
 		{/if}
@@ -445,13 +490,15 @@
 {#if editMode}
 	<button
 		class="btn btn-primary w-full mt-3"
-		disabled={isLoading}
+		disabled={isLoading || (isFinished && finishedAction === 'delete')}
 		onclick={() => {
 			handleDelete(expenseId);
 		}}
 	>
 		{#if isLoading && loadingAction === 'delete'}
 			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
+		{:else if isFinished && finishedAction === 'delete'}
+			Done
 		{:else}
 			刪除
 		{/if}

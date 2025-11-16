@@ -9,7 +9,7 @@
 export async function withMinimumLoading<T>(
 	action: () => Promise<T>,
 	setLoading: (value: boolean) => void,
-	minDuration = 1500
+	minDuration = 400
 ): Promise<T> {
 	const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 	const start = now();
@@ -32,4 +32,34 @@ export async function withMinimumLoading<T>(
 	} finally {
 		setLoading(false);
 	}
+}
+
+/**
+ * Temporarily toggles a flag to true and then resets it after `duration`
+ * milliseconds. Returns a cleanup function that cancels the pending reset and
+ * immediately sets the flag back to false.
+ */
+export function withTemporaryFlag(
+	setFlag: (value: boolean) => void,
+	duration = 1200
+): () => void {
+	let active = true;
+	setFlag(true);
+
+	const timeout = setTimeout(() => {
+		if (!active) {
+			return;
+		}
+		active = false;
+		setFlag(false);
+	}, duration);
+
+	return () => {
+		if (!active) {
+			return;
+		}
+		active = false;
+		clearTimeout(timeout);
+		setFlag(false);
+	};
 }
