@@ -117,9 +117,17 @@
 		{#if $isMobile}
 			<input
 				type="date"
-				bind:value={selectedDate}
+				value={selectedDate}
 				class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
 				max={toDateOnlyStr(today)}
+				oninput={(e) => {
+					const target = e.target as HTMLInputElement;
+					if (!target.value) {
+						selectedDate = toDateOnlyStr(today);
+						return;
+					}
+					selectedDate = target.value;
+				}}
 			/>
 		{:else}
 			<button

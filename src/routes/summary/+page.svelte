@@ -32,6 +32,7 @@
 		const m = String(d.getMonth() + 1).padStart(2, '0');
 		return `${y}-${m}`;
 	}
+
 	function formatYM(ym: string) {
 		const [y, m] = ym.split('-');
 		return `${y}/${Number(m)}`;
@@ -147,10 +148,17 @@
 		{#if $isMobile}
 			<input
 				type="month"
-				bind:value={selectedMonth}
+				value={selectedMonth}
 				class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
 				max={toYearMonth(today)}
-				oninput={() => {
+				oninput={(e) => {
+					const target = e.target as HTMLInputElement;
+					if (!target.value) {
+						selectedMonth = toYearMonth(today);
+						fetchMonthlyExpenses();
+						return;
+					}
+					selectedMonth = target.value;
 					fetchMonthlyExpenses();
 				}}
 			/>

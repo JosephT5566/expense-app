@@ -16,7 +16,7 @@
 		isLoading = true;
 
 		Logger.log('Refresh expenses for monthKey:', monthKey);
-		await forceRefetchMonthlyExpenses(monthKey, 3000);
+		await forceRefetchMonthlyExpenses(monthKey, 2000);
 
 		isLoading = false;
 	}
