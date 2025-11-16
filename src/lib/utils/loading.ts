@@ -9,7 +9,7 @@
 export async function withMinimumLoading<T>(
 	action: () => Promise<T>,
 	setLoading: (value: boolean) => void,
-	minDuration = 400
+	minDuration = 2000
 ): Promise<T> {
 	const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 	const start = now();

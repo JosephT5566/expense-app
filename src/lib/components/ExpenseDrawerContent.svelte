@@ -90,7 +90,7 @@
 		if (JSON.stringify(previousExpense) !== JSON.stringify(currentSnapshot)) {
 			Logger.log('data changed');
 			isUpdated = true;
-			// resetFinished();
+			resetFinished();
 			previousExpense = currentSnapshot;
 			// Logger.log('expenseData', $state.snapshot(expenseData));
 		}
@@ -98,7 +98,7 @@
 	$effect(() => {
 		if (selectedDate !== toTaiwanDateString(expenseData.ts)) {
 			isUpdated = true;
-			// resetFinished();
+			resetFinished();
 		}
 	});
 
@@ -131,30 +131,46 @@
 	let isFinished = $state(false);
 	let finishedAction = $state<'submit' | 'delete' | null>(null);
 	let clearFinishedTimeout: (() => void) | null = null;
+	let resolveFinished: (() => void) | null = null;
+
+	function finalizeFinished() {
+		if (!resolveFinished) {
+			return;
+		}
+		resolveFinished();
+		resolveFinished = null;
+	}
 
 	function resetFinished() {
 		if (clearFinishedTimeout) {
 			clearFinishedTimeout();
 			clearFinishedTimeout = null;
-		} else if (isFinished) {
+		}
+		if (isFinished) {
 			isFinished = false;
 		}
 		finishedAction = null;
+		finalizeFinished();
 	}
 
-	function markFinished(action: 'submit' | 'delete') {
+	function markFinished(action: 'submit' | 'delete'): Promise<void> {
 		resetFinished();
 		finishedAction = action;
-		clearFinishedTimeout = withTemporaryFlag(
-			(value) => {
-				isFinished = value;
-				if (!value) {
-					finishedAction = null;
-					clearFinishedTimeout = null;
-				}
-			},
-			FINISHED_DURATION_MS
-		);
+
+		return new Promise<void>((resolve) => {
+			resolveFinished = resolve;
+			clearFinishedTimeout = withTemporaryFlag(
+				(value) => {
+					isFinished = value;
+					if (!value) {
+						clearFinishedTimeout = null;
+						finishedAction = null;
+						finalizeFinished();
+					}
+				},
+				FINISHED_DURATION_MS
+			);
+		});
 	}
 
 	function validateForm() {
@@ -232,9 +248,11 @@
 				},
 				(value) => (isLoading = value)
 			);
-			markFinished('submit');
+			await markFinished('submit');
 		} catch (error) {
 			Logger.error('Upsert expense error:', error);
+			resetFinished();
+			return;
 		} finally {
 			loadingAction = null;
 			onSubmitFinish?.();
@@ -261,10 +279,11 @@
 			);
 
 			deleteOne(expenseId);
-			markFinished('delete');
-			alert('刪除完成');
+			await markFinished('delete');
+			// alert('刪除完成');
 		} catch (error) {
-			alert('刪除失敗，請稍後再試。');
+			resetFinished();
+			// alert('刪除失敗，請稍後再試。'); // TODO: Set a toast notification
 			Logger.error('Delete expense error:', error);
 			return;
 		} finally {
@@ -481,7 +500,7 @@
 		{#if isLoading && loadingAction === 'submit'}
 			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
 		{:else if isFinished && finishedAction === 'submit'}
-			Done
+			done
 		{:else}
 			{editMode ? '更新' : '新增'}
 		{/if}
@@ -498,7 +517,7 @@
 		{#if isLoading && loadingAction === 'delete'}
 			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
 		{:else if isFinished && finishedAction === 'delete'}
-			Done
+			done
 		{:else}
 			刪除
 		{/if}
