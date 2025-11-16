@@ -15,7 +15,7 @@
 	import Carousel from '$lib/components/ui/Carousel.svelte';
 	import { derived } from 'svelte/store';
 	import { toTaiwanDateString } from '$lib/utils/dates';
-	import { withMinimumLoading, withTemporaryFlag } from '$lib/utils/loading';
+	import { useAsyncAction } from '$lib/utils/loading';
 	import Logger from '$lib/utils/logger';
 	type CategoryCard = { id: string; name: string; icon: string };
 
@@ -36,7 +36,8 @@
 	);
 
 	const today = new Date();
-	const FINISHED_DURATION_MS = 1500;
+	// const LOADING_MIN_DURATION_MS = 400;
+	// const FINISHED_DURATION_MS = 1500;
 
 	let calculatorModal: HTMLDialogElement | null = $state(null);
 	let calculatorRef = $state<ReturnType<typeof Calculator>>();
@@ -90,7 +91,6 @@
 		if (JSON.stringify(previousExpense) !== JSON.stringify(currentSnapshot)) {
 			Logger.log('data changed');
 			isUpdated = true;
-			resetFinished();
 			previousExpense = currentSnapshot;
 			// Logger.log('expenseData', $state.snapshot(expenseData));
 		}
@@ -98,7 +98,6 @@
 	$effect(() => {
 		if (selectedDate !== toTaiwanDateString(expenseData.ts)) {
 			isUpdated = true;
-			resetFinished();
 		}
 	});
 
@@ -126,52 +125,8 @@
 		}
 	});
 
-	let isLoading = $state(false);
-	let loadingAction = $state<'submit' | 'delete' | null>(null);
-	let isFinished = $state(false);
-	let finishedAction = $state<'submit' | 'delete' | null>(null);
-	let clearFinishedTimeout: (() => void) | null = null;
-	let resolveFinished: (() => void) | null = null;
-
-	function finalizeFinished() {
-		if (!resolveFinished) {
-			return;
-		}
-		resolveFinished();
-		resolveFinished = null;
-	}
-
-	function resetFinished() {
-		if (clearFinishedTimeout) {
-			clearFinishedTimeout();
-			clearFinishedTimeout = null;
-		}
-		if (isFinished) {
-			isFinished = false;
-		}
-		finishedAction = null;
-		finalizeFinished();
-	}
-
-	function markFinished(action: 'submit' | 'delete'): Promise<void> {
-		resetFinished();
-		finishedAction = action;
-
-		return new Promise<void>((resolve) => {
-			resolveFinished = resolve;
-			clearFinishedTimeout = withTemporaryFlag(
-				(value) => {
-					isFinished = value;
-					if (!value) {
-						clearFinishedTimeout = null;
-						finishedAction = null;
-						finalizeFinished();
-					}
-				},
-				FINISHED_DURATION_MS
-			);
-		});
-	}
+	const { run: submitRun, isLoading: submitIsLoading, isDone: submitIsDone } = useAsyncAction();
+	const { run: deleteRun, isLoading: deleteIsLoading, isDone: deleteIsDone } = useAsyncAction();
 
 	function validateForm() {
 		if (
@@ -201,7 +156,6 @@
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault(); // prevent page reload
-		resetFinished();
 
 		const err = validateForm();
 		if (err) {
@@ -238,23 +192,18 @@
 		};
 		Logger.log('Would submit payload:', payload);
 
-		loadingAction = 'submit';
 		try {
-			await withMinimumLoading(
-				async () => {
-					const savedExpense = await upsertExpense(payload);
-					// 更新到全域 expenses store
-					upsertOne(savedExpense);
-				},
-				(value) => (isLoading = value)
-			);
-			await markFinished('submit');
+			await submitRun(async () => {
+				Logger.log('Submitting expense...');
+				const savedExpense = await upsertExpense(payload);
+				// 更新到全域 expenses store
+				upsertOne(savedExpense);
+			});
 		} catch (error) {
 			Logger.error('Upsert expense error:', error);
-			resetFinished();
 			return;
 		} finally {
-			loadingAction = null;
+			console.log('Submit finally');
 			onSubmitFinish?.();
 		}
 	}
@@ -265,29 +214,20 @@
 			return;
 		}
 
-		resetFinished();
-		loadingAction = 'delete';
+		// loadingAction = 'delete';
 		try {
-			await withMinimumLoading(
-				async () => {
-					const { status } = await deleteExpense(expenseId);
-					if (status !== 204) {
-						throw new Error(`Failed to delete expense, status code: ${status}`);
-					}
-				},
-				(value) => (isLoading = value)
-			);
-
-			deleteOne(expenseId);
-			await markFinished('delete');
-			// alert('刪除完成');
+			await deleteRun(async () => {
+				const { status } = await deleteExpense(expenseId);
+				if (status !== 204) {
+					throw new Error(`Failed to delete expense, status code: ${status}`);
+				}
+				deleteOne(expenseId);
+			});
 		} catch (error) {
-			resetFinished();
 			// alert('刪除失敗，請稍後再試。'); // TODO: Set a toast notification
 			Logger.error('Delete expense error:', error);
 			return;
 		} finally {
-			loadingAction = null;
 			onSubmitFinish?.();
 		}
 	}
@@ -495,12 +435,17 @@
 	<button
 		type="submit"
 		class="btn btn-primary w-full"
-		disabled={!isUpdated || isLoading || (isFinished && finishedAction === 'submit')}
+		disabled={!isUpdated || $submitIsLoading || $submitIsDone}
 	>
-		{#if isLoading && loadingAction === 'submit'}
-			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
-		{:else if isFinished && finishedAction === 'submit'}
-			done
+		{#if $submitIsLoading}
+			<Icon
+				icon="svg-spinners:90-ring-with-bg"
+				width="20"
+				height="20"
+				class="text-base-100"
+			/>
+		{:else if $submitIsDone}
+			Done
 		{:else}
 			{editMode ? '更新' : '新增'}
 		{/if}
@@ -509,15 +454,20 @@
 {#if editMode}
 	<button
 		class="btn btn-primary w-full mt-3"
-		disabled={isLoading || (isFinished && finishedAction === 'delete')}
+		disabled={$deleteIsLoading || $deleteIsDone}
 		onclick={() => {
 			handleDelete(expenseId);
 		}}
 	>
-		{#if isLoading && loadingAction === 'delete'}
-			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
-		{:else if isFinished && finishedAction === 'delete'}
-			done
+		{#if $deleteIsLoading}
+			<Icon
+				icon="svg-spinners:90-ring-with-bg"
+				width="20"
+				height="20"
+				class="text-base-100"
+			/>
+		{:else if $deleteIsDone}
+			Done
 		{:else}
 			刪除
 		{/if}

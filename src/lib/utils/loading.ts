@@ -1,65 +1,50 @@
-/**
- * Runs the provided async action while toggling a loading state and ensuring
- * the indicator stays visible for at least `minDuration` milliseconds.
- *
- * @param action Async function to execute.
- * @param setLoading Callback invoked with the loading state.
- * @param minDuration Minimum time in milliseconds to keep the loading state true.
- */
-export async function withMinimumLoading<T>(
-	action: () => Promise<T>,
-	setLoading: (value: boolean) => void,
-	minDuration = 2000
-): Promise<T> {
-	const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
-	const start = now();
+import { writable } from 'svelte/store';
 
-	const ensureMinimumDuration = async () => {
-		const elapsed = now() - start;
-		if (elapsed < minDuration) {
-			await new Promise((resolve) => setTimeout(resolve, minDuration - elapsed));
-		}
-	};
-
-	setLoading(true);
-	try {
-		const result = await action();
-		await ensureMinimumDuration();
-		return result;
-	} catch (error) {
-		await ensureMinimumDuration();
-		throw error;
-	} finally {
-		setLoading(false);
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const ensureMinimumDuration = async (start: number, loadingMinMs: number) => {
+	const elapsed = now() - start;
+	if (elapsed < loadingMinMs) {
+		await new Promise((resolve) => setTimeout(resolve, loadingMinMs - elapsed));
 	}
-}
+};
 
-/**
- * Temporarily toggles a flag to true and then resets it after `duration`
- * milliseconds. Returns a cleanup function that cancels the pending reset and
- * immediately sets the flag back to false.
- */
-export function withTemporaryFlag(
-	setFlag: (value: boolean) => void,
-	duration = 1200
-): () => void {
-	let active = true;
-	setFlag(true);
+type useAsyncActionProps = {
+	loadingMinMs?: number;
+	doneMinMs?: number;
+};
 
-	const timeout = setTimeout(() => {
-		if (!active) {
-			return;
+export function useAsyncAction<T>({
+	loadingMinMs = 2000,
+	doneMinMs = 800,
+}: useAsyncActionProps = {}) {
+	const isLoading = writable(false);
+	const isDone = writable(false);
+
+	async function run(action: () => Promise<T>) {
+		isLoading.set(true);
+		isDone.set(false);
+
+		const start = now();
+
+		try {
+			await action();
+			await ensureMinimumDuration(start, loadingMinMs);
+		} finally {
+			isLoading.set(false);
+
+			isDone.set(true);
+			await new Promise((res) =>
+				setTimeout(() => {
+					isDone.set(false);
+					res("action done");
+				}, doneMinMs)
+			);
 		}
-		active = false;
-		setFlag(false);
-	}, duration);
+	}
 
-	return () => {
-		if (!active) {
-			return;
-		}
-		active = false;
-		clearTimeout(timeout);
-		setFlag(false);
+	return {
+		run,
+		isLoading,
+		isDone,
 	};
 }
