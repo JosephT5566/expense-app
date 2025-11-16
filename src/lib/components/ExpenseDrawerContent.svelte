@@ -87,11 +87,9 @@
 	let previousExpense = $state.snapshot(expenseData);
 	let isUpdated = $state(false);
 	$effect(() => {
-		const currentSnapshot = $state.snapshot(expenseData);
-		if (JSON.stringify(previousExpense) !== JSON.stringify(currentSnapshot)) {
+		if (JSON.stringify(previousExpense) !== JSON.stringify(expenseData)) {
 			Logger.log('data changed');
 			isUpdated = true;
-			previousExpense = currentSnapshot;
 			// Logger.log('expenseData', $state.snapshot(expenseData));
 		}
 	});
@@ -203,7 +201,6 @@
 			Logger.error('Upsert expense error:', error);
 			return;
 		} finally {
-			console.log('Submit finally');
 			onSubmitFinish?.();
 		}
 	}
@@ -214,7 +211,6 @@
 			return;
 		}
 
-		// loadingAction = 'delete';
 		try {
 			await deleteRun(async () => {
 				const { status } = await deleteExpense(expenseId);
