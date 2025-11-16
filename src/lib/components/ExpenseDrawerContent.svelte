@@ -15,6 +15,7 @@
 	import Carousel from '$lib/components/ui/Carousel.svelte';
 	import { derived } from 'svelte/store';
 	import { toTaiwanDateString } from '$lib/utils/dates';
+	import { withMinimumLoading } from '$lib/utils/loading';
 	import Logger from '$lib/utils/logger';
 	type CategoryCard = { id: string; name: string; icon: string };
 
@@ -120,6 +121,8 @@
 		}
 	});
 
+	let isLoading = $state(false);
+	let loadingAction = $state<'submit' | 'delete' | null>(null);
 	function validateForm() {
 		if (
 			!expenseData.amount ||
@@ -184,14 +187,22 @@
 		};
 		Logger.log('Would submit payload:', payload);
 
+		loadingAction = 'submit';
 		try {
-			const saved = await upsertExpense(payload);
-			// 更新到全域 expenses store
-			upsertOne(saved);
+			await withMinimumLoading(
+				async () => {
+					const savedExpense = await upsertExpense(payload);
+					// 更新到全域 expenses store
+					upsertOne(savedExpense);
+				},
+				(value) => (isLoading = value)
+			);
 		} catch (error) {
 			Logger.error('Upsert expense error:', error);
+		} finally {
+			loadingAction = null;
+			onSubmitFinish?.();
 		}
-		onSubmitFinish?.();
 	}
 
 	async function handleDelete(expenseId: string) {
@@ -199,19 +210,26 @@
 		if (!confirmDelete) {
 			return;
 		}
-		try {
-			const { status } = await deleteExpense(expenseId);
-			if (status !== 204) {
-				throw new Error(`Failed to delete expense, status code: ${status}`);
-			}
 
-			alert('刪除完成');
+		loadingAction = 'delete';
+		try {
+			await withMinimumLoading(
+				async () => {
+					const { status } = await deleteExpense(expenseId);
+					if (status !== 204) {
+						throw new Error(`Failed to delete expense, status code: ${status}`);
+					}
+				},
+				(value) => (isLoading = value)
+			);
+
 			deleteOne(expenseId);
 		} catch (error) {
 			alert('刪除失敗，請稍後再試。');
 			Logger.error('Delete expense error:', error);
 			return;
 		} finally {
+			loadingAction = null;
 			onSubmitFinish?.();
 		}
 	}
@@ -416,18 +434,27 @@
 		placeholder="例如：午餐便當"
 	/>
 
-	<button type="submit" class="btn btn-primary w-full" disabled={!isUpdated}>
-		{editMode ? '更新' : '新增'}
+	<button type="submit" class="btn btn-primary w-full" disabled={!isUpdated || isLoading}>
+		{#if isLoading && loadingAction === 'submit'}
+			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
+		{:else}
+			{editMode ? '更新' : '新增'}
+		{/if}
 	</button>
 </form>
 {#if editMode}
 	<button
 		class="btn btn-primary w-full mt-3"
+		disabled={isLoading}
 		onclick={() => {
 			handleDelete(expenseId);
 		}}
 	>
-		刪除
+		{#if isLoading && loadingAction === 'delete'}
+			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" class="text-base-100" />
+		{:else}
+			刪除
+		{/if}
 	</button>
 {/if}
 
