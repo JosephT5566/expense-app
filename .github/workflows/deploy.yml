@@ -35,7 +35,7 @@ jobs:
           PUBLIC_SUPABASE_URL: ${{ vars.PUBLIC_SUPABASE_URL }}
           PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
           PUBLIC_EMAIL_NAME_MAPPING: ${{ vars.PUBLIC_EMAIL_NAME_MAPPING }}
-          BASE_PATH: '/${{ github.event.repository.name }}'
+          BASE_PATH: /${{ github.event.repository.name }}
         run: npm run build
 
       - name: Add .nojekyll
