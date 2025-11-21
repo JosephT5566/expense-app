@@ -38,6 +38,9 @@ jobs:
           BASE_PATH: /${{ github.event.repository.name }}
         run: npm run build
 
+      - name: List build files
+        run: ls -R build
+
       - name: Add .nojekyll
         run: touch build/.nojekyll
 
