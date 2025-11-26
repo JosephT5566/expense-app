@@ -3,6 +3,7 @@ import {
 	loading as sessionLoading,
 	reset as resetUser,
 	setFromLoad as setUser,
+	user as currentUser,
 } from '$lib/stores/session.store';
 import { base } from '$app/paths';
 import { page } from '$app/state';
@@ -92,23 +93,20 @@ export function isStoredSessionExpired(durationOverrideMs?: number) {
 	return Date.now() >= expiresAt;
 }
 
-export function startAuthListener(opts?: {
-	// onLogin?: (params: { user: { id: string; email: string } }) => Promise<void> | void;
-	autoSignOutMs?: number;
-}) {
-	const autoSignOutMs = opts?.autoSignOutMs ?? DEFAULT_AUTO_SIGN_OUT_MS;
+export function startAuthListener() {
+	// Events are emitted across tabs to keep application's UI up-to-date
+	const { data: sub } = supabase.auth.onAuthStateChange(async (event, session) => {
+		// note:
+		// Once we sign in/page loaded, event = INITIAL_SESSION.
+		// If the page is focused again, event = SIGNED_IN.
+		// Once we click on Sign Out button, event will be changed to SIGNED_OUT
+		if (event === 'SIGNED_OUT' || !session?.user) {
+			// is logged out
+			clearSignInTracking();
+			resetUser();
+		}
 
-	const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
-		const event = _event;
-
-		if (session?.user) {
-			// is logged in
-			if (event === 'SIGNED_IN') {
-				persistSignInTimestamp(autoSignOutMs);
-			} else if (!getStoredSignInInfo()) {
-				persistSignInTimestamp(autoSignOutMs);
-			}
-
+		if (session?.user && !currentUser) {
 			const u = session.user;
 			setUser({
 				id: u.id,
@@ -116,10 +114,6 @@ export function startAuthListener(opts?: {
 				display_name: u.user_metadata?.name ?? null,
 				photo_url: u.user_metadata?.avatar_url ?? null,
 			});
-		} else {
-			// is logged out
-			clearSignInTracking();
-			resetUser();
 		}
 	});
 	return () => sub.subscription.unsubscribe();
@@ -156,6 +150,10 @@ export async function signIn() {
 		provider: 'google',
 		options: { redirectTo },
 	});
+
+	const autoSignOutMs = DEFAULT_AUTO_SIGN_OUT_MS;
+	persistSignInTimestamp(autoSignOutMs);
+
 	sessionLoading.set(false);
 }
 
