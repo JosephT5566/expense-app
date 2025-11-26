@@ -7,16 +7,20 @@
 	import { resolve } from '$app/paths';
 	import type { AppUser } from '$lib/types/user';
 
-	import { setFromLoad as setSessionStore, startAuthListener } from '$lib/stores/session.store';
+	import { setFromLoad as setSessionStore, user as currentUser } from '$lib/stores/session.store';
 	import { setFromLoad as setCategoriesStore } from '$lib/stores/categories.store';
 	import { setFromLoad as setAppSettingStore } from '$lib/stores/appSetting.store';
-	import * as expensesStore from '$lib/stores/expenses.store';
-	import { setMonthlyItemsFromLoad, items as expenseItems } from '$lib/stores/expenses.store';
+	import {
+		setMonthlyItemsFromLoad,
+		items as expenseItems,
+		clearAll as clearAllExpenses,
+	} from '$lib/stores/expenses.store';
 	import '$lib/theme.css';
 	import Header from '$lib/components/ui/Header.svelte';
 	import BottomNav from '$lib/components/ui/BottomNav.svelte';
 	import AuthModal from '$lib/components/ui/AuthModal.svelte';
 	import { isDev } from '$lib/utils/helpers';
+	import { startAuthListener } from '$lib/supabase/auth';
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
 	import Logger from '$lib/utils/logger';
 
@@ -48,22 +52,25 @@
 				})
 			: null;
 
-		const unsubAuthListener = startAuthListener({
-			onLogout: async () => {
-				Logger.log('🚀 User logged out');
-				expensesStore.clearAll();
+		const unsubAuthListener = startAuthListener();
+
+		const unsubUser = currentUser.subscribe(($user) => {
+			Logger.log('Signin user changed:', $user);
+			if (!$user) {
+				// callback logout handler
+				clearAllExpenses();
 				clearAllExpensesCache();
-				goto(resolve('/')); // redirect to home
-			},
-			onLogin: async () => {
+				goto(resolve('/'));
+			} else {
 				// trigger load in the layout.ts to refetch data
-				await invalidateAll();
-			},
+				invalidateAll();
+			}
 		});
 
 		return () => {
 			unsubExpenseStore?.();
 			unsubAuthListener?.();
+			unsubUser?.();
 		};
 	});
 </script>
