@@ -1,5 +1,9 @@
 import { supabase } from '$lib/supabase/supabaseClient';
-import { loading as sessionLoading } from '$lib/stores/session.store';
+import {
+	loading as sessionLoading,
+	reset as resetUser,
+	setFromLoad as setUser,
+} from '$lib/stores/session.store';
 import { base } from '$app/paths';
 import { page } from '$app/state';
 
@@ -88,6 +92,39 @@ export function isStoredSessionExpired(durationOverrideMs?: number) {
 	return Date.now() >= expiresAt;
 }
 
+export function startAuthListener(opts?: {
+	// onLogin?: (params: { user: { id: string; email: string } }) => Promise<void> | void;
+	autoSignOutMs?: number;
+}) {
+	const autoSignOutMs = opts?.autoSignOutMs ?? DEFAULT_AUTO_SIGN_OUT_MS;
+
+	const { data: sub } = supabase.auth.onAuthStateChange(async (_event, session) => {
+		const event = _event;
+
+		if (session?.user) {
+			// is logged in
+			if (event === 'SIGNED_IN') {
+				persistSignInTimestamp(autoSignOutMs);
+			} else if (!getStoredSignInInfo()) {
+				persistSignInTimestamp(autoSignOutMs);
+			}
+
+			const u = session.user;
+			setUser({
+				id: u.id,
+				email: u.email ?? '',
+				display_name: u.user_metadata?.name ?? null,
+				photo_url: u.user_metadata?.avatar_url ?? null,
+			});
+		} else {
+			// is logged out
+			clearSignInTracking();
+			resetUser();
+		}
+	});
+	return () => sub.subscription.unsubscribe();
+}
+
 /**
  * Signs the current user out if the session is expired.
  *
@@ -113,7 +150,7 @@ export async function signOutIfExpired(durationOverrideMs?: number) {
 export async function signIn() {
 	const pageUrl = page.url;
 	const redirectTo = `${pageUrl.origin}${base}/`;
-	
+
 	sessionLoading.set(true);
 	await supabase.auth.signInWithOAuth({
 		provider: 'google',
