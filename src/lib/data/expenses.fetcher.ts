@@ -7,15 +7,18 @@ import type {
 	ExpenseScope,
 } from '$lib/types/expense';
 import * as expensesStore from '$lib/stores/expenses.store';
+import { user as currentUser } from '$lib/stores/session.store';
 import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
 import Logger from '$lib/utils/logger';
 import { clearExpenseCacheForMonth } from '$lib/cache/monthlyExpense';
 import { getMonthlyFromCacheFirst } from './monthly-cache-first';
+import { get } from 'svelte/store';
 
 const TABLE = 'expenses';
 
 export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseRow>> {
-	Logger.log('fetch expenses');
+	const currentUserEmail = get(currentUser)?.email ?? '';
+	Logger.log('fetch expenses', currentUserEmail);
 
 	const limit = q.limit ?? 50;
 
@@ -23,6 +26,7 @@ export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseR
 	let query = supabase
 		.from(TABLE)
 		.select('*') // ← 不用 returns<T>()，之後在函式出口做型別斷言
+		.or(`and(scope.eq.personal,payer_email.eq.${currentUserEmail}),` + `scope.neq.personal`)
 		.order('ts', { ascending: false })
 		.order('id', { ascending: false })
 		.limit(limit + 1);
@@ -100,7 +104,7 @@ export async function listExpensesMonthly(
 	});
 }
 
-export async function getExpense(id: string): Promise<ExpenseRow | null> {
+export async function getExpenseById(id: string): Promise<ExpenseRow | null> {
 	const { data, error } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle(); // ← 這個 API 仍可用
 
 	if (error) {
