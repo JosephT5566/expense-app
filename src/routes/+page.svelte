@@ -37,6 +37,10 @@
 
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	$effect(() => {
+		if (selectedDate === toDateOnlyStr(today)) {
+			return;
+		}
+
 		// when state selectedDate changes
 		// check if we have any item in this month in the expenses store
 		if (!expensesStore.hasMonthExpenses(selectedYear, selectedMonth)) {
