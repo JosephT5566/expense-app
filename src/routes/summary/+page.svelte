@@ -20,7 +20,7 @@
 	import { getIsMobile } from '$lib/utils/detect-device';
 	import Logger from '$lib/utils/logger';
 
-	let scope = $state<ExpenseScope>('personal');
+	let selectedScope = $state<ExpenseScope>('personal');
 	const { user } = sessionStore;
 	const isMobile = getIsMobile();
 
@@ -66,21 +66,24 @@
 		const [y, m] = selectedMonth.split('-').map(Number);
 		const rows = expensesStore.getMonthExpenses(y, m);
 
-		const list = scope === 'personal' ? rows : rows.filter((e) => e.scope === scope);
+		const list =
+			selectedScope === 'personal' ? rows : rows.filter((e) => e.scope === selectedScope);
 		const mapObj: Record<string, { id: string; amount: number; items: ExpenseRow[] }> = {};
-		for (const r of list) {
-			const id = r.category_id ?? 'uncategorized';
+
+		for (const exp of list) {
+			const id = exp.category_id ?? 'uncategorized';
 			if (!mapObj[id]) {
 				mapObj[id] = { id, amount: 0, items: [] };
 			}
 
-			if (r.scope === 'personal') {
-				mapObj[id].amount += r.shares_json?.[$user?.email ?? ''] ?? 0;
-			} else if (r.scope === 'household') {
-				mapObj[id].amount += r.amount;
+			if (exp.scope === 'personal') {
+				mapObj[id].amount += exp.amount;
+			} else if (exp.scope === 'household') {
+				mapObj[id].amount += exp.shares_json?.[$user?.email ?? ''] ?? 0;
 			}
-			mapObj[id].items.push(r);
+			mapObj[id].items.push(exp);
 		}
+
 		const groups = Object.values(mapObj);
 		groups.sort((a, b) => b.amount - a.amount);
 		return groups;
@@ -123,9 +126,9 @@
 	<div class="flex items-center justify-center gap-2 mb-3">
 		<button
 			class="px-3 py-1 rounded-md border border-black/10 data-[active=true]:bg-[var(--c-bg)]"
-			data-active={scope === 'personal'}
+			data-active={selectedScope === 'personal'}
 			onclick={() => {
-				scope = 'personal';
+				selectedScope = 'personal';
 				categoryGroups = groupByCategory();
 			}}
 		>
@@ -133,9 +136,9 @@
 		</button>
 		<button
 			class="px-3 py-1 rounded-md border border-black/10 data-[active=true]:bg-[var(--c-bg)]"
-			data-active={scope === 'household'}
+			data-active={selectedScope === 'household'}
 			onclick={() => {
-				scope = 'household';
+				selectedScope = 'household';
 				categoryGroups = groupByCategory();
 			}}
 		>
