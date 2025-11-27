@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { type LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
+	// eslint-disable-next-line @typescript-eslint/no-unused-vars
 	import { goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { AppUser } from '$lib/types/user';
@@ -22,6 +23,7 @@
 	import { isDev } from '$lib/utils/helpers';
 	import { startAuthListener } from '$lib/supabase/auth';
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
+	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import Logger from '$lib/utils/logger';
 
 	let {
@@ -31,7 +33,7 @@
 		children: Snippet;
 		data: LayoutData;
 	} = $props();
-	const { user, categories, allowedEmails, monthlyData } = data ?? {};
+	const { user, categories, allowedEmails, month } = data ?? {};
 
 	// 1) 直接 set，不要在 component 內再發請求
 	setSessionStore(user as AppUser | null);
@@ -41,8 +43,16 @@
 	if (allowedEmails) {
 		setAppSettingStore(allowedEmails);
 	}
-	if (monthlyData) {
-		setMonthlyItemsFromLoad(monthlyData);
+
+	// Try to fetch expenses after the user value is set successfully.
+	if (month) {
+		getMonthlyFromCacheFirst(month).then((monthlyData) => {
+			Logger.log('User signed in, the first time we fetch month data for:', month);
+
+			if (monthlyData) {
+				setMonthlyItemsFromLoad(monthlyData);
+			}
+		});
 	}
 
 	onMount(() => {
@@ -54,16 +64,16 @@
 
 		const unsubAuthListener = startAuthListener();
 
-		const unsubUser = currentUser.subscribe(($user) => {
-			Logger.log('Signin user changed:', $user);
+		const unsubUser = currentUser.subscribe(async ($user) => {
+			Logger.log('User changed:', $user?.email);
 			if (!$user) {
 				// callback logout handler
 				clearAllExpenses();
 				clearAllExpensesCache();
 				goto(resolve('/'));
 			} else {
-				// trigger load in the layout.ts to refetch data
-				invalidateAll();
+				// User sign in. Trigger load in the layout.ts to refetch data
+				// invalidateAll();
 			}
 		});
 

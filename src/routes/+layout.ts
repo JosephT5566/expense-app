@@ -5,7 +5,6 @@ import { browser } from '$app/environment';
 
 import { listCategories } from '$lib/data/categories.fetcher';
 import { listAppSetting } from '$lib/data/appSetting.fetcher';
-import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 import { getTaiwanMonthKey } from '$lib/utils/dates';
 import { LOAD_DEP_KEYS } from '$lib/utils/const';
 import { signOutIfExpired } from '$lib/supabase/auth';
@@ -51,15 +50,11 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 	const appSettings = await listAppSetting();
 	const allowedEmails: string[] = appSettings?.[0]?.allowed_emails ?? [];
 
-	// 4) 取當月帳目 (cached)
-	const monthlyData = await getMonthlyFromCacheFirst(monthKey); // PageResult 或整月陣列，依你實作
-
 	return {
 		month: monthKey,
 		user,
 		categories,
 		allowedEmails,
-		monthlyData,
 		depKeys: LOAD_DEP_KEYS, // 給子層寫入後好用 invalidate(depKeys.xxx)
 	};
 };

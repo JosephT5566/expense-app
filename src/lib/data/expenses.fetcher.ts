@@ -18,7 +18,7 @@ const TABLE = 'expenses';
 
 export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseRow>> {
 	const currentUserEmail = get(currentUser)?.email ?? '';
-	Logger.log('fetch expenses', currentUserEmail);
+	Logger.log('fetch expenses with current user', currentUserEmail);
 
 	const limit = q.limit ?? 50;
 
