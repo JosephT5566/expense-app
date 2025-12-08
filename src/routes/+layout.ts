@@ -23,7 +23,9 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 	depends(LOAD_DEP_KEYS.appSettings);
 	depends(LOAD_DEP_KEYS.expenses);
 
-	await signOutIfExpired();
+	await signOutIfExpired({
+		isDisable: true, // cancel the auto sign-out. It used to be auto sign-out every 8 hours.
+	});
 
 	// 1) 取登入使用者（在 ssr=false 下可安全呼叫）
 	const { data: u } = await supabase.auth.getUser();

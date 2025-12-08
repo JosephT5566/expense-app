@@ -122,13 +122,22 @@ export function startAuthListener() {
 /**
  * Signs the current user out if the session is expired.
  *
- * @param durationOverrideMs - Optional override that supersedes the stored TTL.
+ * @param options.durationOverrideMs - Optional override that supersedes the stored TTL.
+ * @param options.isDisable - When `true`, skips the auto sign-out logic entirely.
  * @returns Resolves to `true` when a sign-out occurred, otherwise `false`.
  */
-export async function signOutIfExpired(durationOverrideMs?: number) {
+export async function signOutIfExpired(options?: {
+	durationOverrideMs?: number;
+	isDisable?: boolean;
+}) {
 	if (typeof window === 'undefined') {
 		return false;
 	}
+	if (options?.isDisable) {
+		return false;
+	}
+
+	const { durationOverrideMs } = options ?? {};
 	if (!isStoredSessionExpired(durationOverrideMs)) {
 		return false;
 	}
