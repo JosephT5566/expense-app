@@ -75,6 +75,25 @@
 		>
 			{expense.scope === 'household' ? 'H' : 'P'}
 		</span>
+		{#if expense.scope === 'household'}
+			<div class="tooltip" data-tip={expense.is_settled ? '已結算' : '未結算'}>
+				{#if expense.is_settled}
+					<Icon
+						icon="solar:check-circle-bold"
+						class="text-emerald-400"
+						width="15"
+						height="15"
+					/>
+				{:else}
+					<Icon
+						icon="solar:close-circle-bold"
+						class="text-red-400"
+						width="15"
+						height="15"
+					/>
+				{/if}
+			</div>
+		{/if}
 	</div>
 	<div class="text-right tabular-nums font-semibold">
 		{expense.scope === 'personal' ? expense.amount : expense.shares_json[$user?.email ?? '']}
