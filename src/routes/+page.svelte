@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { Dialog } from 'bits-ui';
 	import _isEmpty from 'lodash/isEmpty';
 
 	import type { ExpenseRow } from '$lib/types/expense';
@@ -13,10 +12,8 @@
 
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
-	import { getIsMobile } from '$lib/utils/detect-device';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
 
-	const isMobile = getIsMobile();
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
 
@@ -26,7 +23,6 @@
 	const [selectedYear, selectedMonth] = $derived(selectedDate.split('-').map(Number));
 	const monthKey = $derived(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
 
-	let showDatePicker = $state(false);
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
 	const expensesLoading = expensesStore.loading;
@@ -118,28 +114,20 @@
 		<RetrieveExpenseButton className="absolute left-0 text-[var(--c-primary)]" {monthKey} />
 		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
 
-		{#if $isMobile}
-			<input
-				type="date"
-				value={selectedDate}
-				class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
-				max={toDateOnlyStr(today)}
-				oninput={(e) => {
-					const target = e.target as HTMLInputElement;
-					if (!target.value) {
-						selectedDate = toDateOnlyStr(today);
-						return;
-					}
-					selectedDate = target.value;
-				}}
-			/>
-		{:else}
-			<button
-				class="px-3 py-1 rounded-md bg-[var(--c-bg)] hover:bg-black/5"
-				onclick={() => (showDatePicker = true)}
-				>{isToday(selectedDate) ? 'Today' : selectedDate}</button
-			>
-		{/if}
+		<input
+			type="date"
+			value={selectedDate}
+			class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
+			max={toDateOnlyStr(today)}
+			oninput={(e) => {
+				const target = e.target as HTMLInputElement;
+				if (!target.value) {
+					selectedDate = toDateOnlyStr(today);
+					return;
+				}
+				selectedDate = target.value;
+			}}
+		/>
 		<button
 			class="px-2 py-1 disabled:opacity-40"
 			disabled={isToday(selectedDate)}
@@ -167,26 +155,6 @@
 		</div>
 	{/if}
 </section>
-
-<Dialog.Root bind:open={showDatePicker}>
-	<Dialog.Portal>
-		<Dialog.Overlay class="fixed inset-0 bg-black/40" />
-		<Dialog.Content class="card fixed inset-x-6 top-[25vh] p-5">
-			<Dialog.Title class="font-semibold">選擇日期</Dialog.Title>
-			<input
-				type="date"
-				bind:value={selectedDate}
-				class="mt-2 w-full"
-				max={toDateOnlyStr(today)}
-			/>
-			<div class="mt-4 flex justify-end">
-				<button class="btn btn-primary" onclick={() => (showDatePicker = false)}
-					>完成</button
-				>
-			</div>
-		</Dialog.Content>
-	</Dialog.Portal>
-</Dialog.Root>
 
 <SwipeDrawer bind:open={drawerOpen} title={editMode ? '編輯項目' : '新增項目'}>
 	<ExpenseDrawerContent
