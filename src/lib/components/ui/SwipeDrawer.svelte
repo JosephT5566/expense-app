@@ -81,7 +81,7 @@
 		return () => {
 			container?.removeEventListener('swiping', onSwiping);
 			container?.removeEventListener('swipe', onSwipe);
-			listener.off();
+			listener();
 		};
 	});
 </script>
