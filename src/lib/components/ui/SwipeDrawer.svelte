@@ -102,12 +102,17 @@
 				bind:this={container}
 				class={classNames(
 					'drag-anchor',
-					'sticky w-full p-3 top-0 bg-white z-10'
+					'sticky w-full p-3 top-0 bg-white z-10',
 					// 'mx-auto h-1 w-12 rounded-full bg-black/20 mb-2 sticky'
 				)}
 				aria-hidden="true"
 			></div>
-			<div class="swipe-drawer-content__container p-4 pt-2 overflow-y-auto">
+			<div
+				class={classNames(
+					'swipe-drawer-content__container p-4 pt-2 overflow-y-auto',
+					'max-w-screen-md m-auto',
+				)}
+			>
 				{#if title}
 					<div class="flex items-center justify-between mb-2">
 						<h3 class="font-semibold">{title}</h3>

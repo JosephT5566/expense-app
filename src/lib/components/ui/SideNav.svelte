@@ -27,16 +27,16 @@
 
 <nav
 	class={classNames(
-		'md:hidden', // Display only on small screens
-		'fixed bottom-0 inset-x-0 safe-bottom bg-white border-t border-black/10 z-20',
+		'hidden md:block', // Display only on medium and larger screens
+		'w-64 p-4 border-r border-black/10',
 	)}
 >
-	<ul class="grid grid-cols-3">
+	<ul class="space-y-2">
 		{#each items as it (it.key)}
 			{#if it.path}
 				<li>
 					<a
-						class="w-full py-3 text-sm flex flex-col items-center gap-1 text-[var(--c-muted)]"
+						class="w-full px-4 py-3 text-sm flex items-center gap-3 rounded-lg text-[var(--c-secondary)]"
 						class:selected={activeTab === it.key}
 						href={resolve(it.path)}
 						target="_self"
@@ -52,10 +52,8 @@
 
 <style>
 	a.selected {
-		color: var(--c-primary);
+		background: var(--c-primary);
+		color: var(--c-card);
 		font-weight: 600;
-	}
-	nav {
-		background: var(--c-card);
 	}
 </style>
