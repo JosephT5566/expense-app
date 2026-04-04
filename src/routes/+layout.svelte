@@ -25,6 +25,7 @@
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import Logger from '$lib/utils/logger';
+	import SideNav from '$lib/components/ui/SideNav.svelte';
 
 	let {
 		data,
@@ -89,9 +90,16 @@
 	<title>Welcome to PJ's Ledger</title>
 </svelte:head>
 
-<Header />
-<main class="p-4 space-y-3 h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto">
-	{@render children?.()}
-</main>
-<BottomNav />
+<div class="md:flex md:h-dvh">
+	<SideNav />
+	<div class="flex flex-col flex-1">
+		<Header />
+		<main
+			class="p-4 space-y-3 h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto md:h-full md:pb-4"
+		>
+			{@render children?.()}
+		</main>
+		<BottomNav />
+	</div>
+</div>
 <AuthModal />
