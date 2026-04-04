@@ -26,6 +26,7 @@
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import Logger from '$lib/utils/logger';
 	import SideNav from '$lib/components/ui/SideNav.svelte';
+	import classNames from 'classnames';
 
 	let {
 		data,
@@ -95,7 +96,10 @@
 	<div class="flex flex-col flex-1">
 		<Header />
 		<main
-			class="p-4 space-y-3 h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto md:h-full md:pb-4"
+			class={classNames(
+				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto',
+				'md:h-full md:pb-4 md:max-w-screen-md md:mx-auto',
+			)}
 		>
 			{@render children?.()}
 		</main>
