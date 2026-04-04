@@ -88,11 +88,11 @@
 </script>
 
 <svelte:head>
-	<title>Welcome to PJ's Ledger</title>
+	<title>Welcome to JoPie</title>
 </svelte:head>
 
 <div class="flex flex-col flex-1">
-	<Header />
+	<Header appName="JoPie" />
 	<div class="md:flex md:h-dvh">
 		<SideNav />
 		<main
