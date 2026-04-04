@@ -88,7 +88,7 @@
 </script>
 
 <svelte:head>
-	<title>Welcome to JoPie</title>
+	<title>JoPie</title>
 </svelte:head>
 
 <div class="flex flex-col flex-1">
