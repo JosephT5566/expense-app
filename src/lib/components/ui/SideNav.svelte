@@ -36,7 +36,7 @@
 			{#if it.path}
 				<li>
 					<a
-						class="w-full px-4 py-3 text-sm flex items-center gap-3 rounded-lg text-[var(--c-muted)]"
+						class="w-full px-4 py-3 text-sm flex items-center gap-3 rounded-lg text-[var(--c-secondary)]"
 						class:selected={activeTab === it.key}
 						href={resolve(it.path)}
 						target="_self"
@@ -53,7 +53,7 @@
 <style>
 	a.selected {
 		background: var(--c-primary);
-		color: var(--c-on-primary);
+		color: var(--c-card);
 		font-weight: 600;
 	}
 </style>
