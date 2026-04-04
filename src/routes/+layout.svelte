@@ -91,10 +91,10 @@
 	<title>Welcome to PJ's Ledger</title>
 </svelte:head>
 
-<div class="md:flex md:h-dvh">
-	<SideNav />
-	<div class="flex flex-col flex-1">
-		<Header />
+<div class="flex flex-col flex-1">
+	<Header />
+	<div class="md:flex md:h-dvh">
+		<SideNav />
 		<main
 			class={classNames(
 				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto',
