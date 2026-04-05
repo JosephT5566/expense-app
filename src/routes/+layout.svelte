@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import { pwaInfo } from 'virtual:pwa-info';
 	import { onMount } from 'svelte';
 	import { type LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
@@ -27,6 +28,8 @@
 	import Logger from '$lib/utils/logger';
 	import SideNav from '$lib/components/ui/SideNav.svelte';
 	import classNames from 'classnames';
+
+	const webManifestLink = $derived(pwaInfo ? pwaInfo.webManifest.linkTag : '');
 
 	let {
 		data,
@@ -89,6 +92,8 @@
 
 <svelte:head>
 	<title>JoPie</title>
+	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+	{@html webManifestLink}
 </svelte:head>
 
 <div class="flex flex-col flex-1">
