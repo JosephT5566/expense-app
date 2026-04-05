@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import * as sessionStore from '$lib/stores/session.store';
 	import { theme } from '$lib/stores/theme.store';
 	import { get } from 'svelte/store';
@@ -15,7 +16,7 @@
 	class="flex items-center justify-between px-4 py-3 sticky top-0 z-20 backdrop-blur supports-[backdrop-filter]:bg-white/60"
 >
 	<div class="flex items-center gap-2">
-		<img src="/icon-192.png" class="w-8 h-8" alt="JoPie" width="32" height="32" />
+		<img src="{base}/icon-192.png" class="w-8 h-8" alt="JoPie" width="32" height="32" />
 		<h1 class="font-semibold tracking-tight">{appName}</h1>
 	</div>
 	<div class="flex items-center gap-3">
