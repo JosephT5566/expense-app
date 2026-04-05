@@ -22,6 +22,12 @@ const config = {
 		},
 		// SPA：不預先產生各 route 的靜態檔，只輸出 index.html 作為 fallback
 		// prerender: { entries: [] }
+		serviceWorker: {
+			// Disable automatic registration of the service worker,
+			// allowing the virtual:pwa-info virtual module to fully take over
+			// the registration and management process of the service worker
+			register: false,
+		},
 	}
 };
 
