@@ -40,9 +40,6 @@ export async function listExpenses(q: ExpenseQuery): Promise<PageResult<ExpenseR
 	if (q.scope && q.scope !== 'all') {
 		query = query.eq('scope', q.scope);
 	}
-	if (q.search) {
-		query = query.ilike('title', `%${q.search}%`);
-	}
 
 	if (q.settled === 'only_settled') {
 		query = query.eq('is_settled', true);
@@ -309,11 +306,15 @@ export async function searchExpenses(params: {
 	scope?: ExpenseQuery['scope'];
 	settled?: ExpenseQuery['settled'];
 	limit?: number;
+	startDate?: string;
+	endDate?: string;
 }): Promise<PageResult<ExpenseRow>> {
 	return listExpenses({
 		search: params.text,
 		scope: params.scope ?? 'all',
 		settled: params.settled ?? 'all',
 		limit: params.limit ?? 50,
+		from: params.startDate,
+		to: params.endDate
 	});
 }

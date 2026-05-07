@@ -22,17 +22,21 @@
 	let {
 		expenseId = '',
 		editMode = false,
-		selectedDate = '',
+		selectedDate: selectedDateProp = '',
 		onSubmitFinish,
 	}: {
 		expenseId?: string;
 		editMode?: boolean;
-		selectedDate: string;
+		selectedDate?: string;
 		onSubmitFinish?: () => void;
 	} = $props();
 
 	let expenseData = $state(
-		expenseId ? getExpenseById(expenseId) : Object.assign({}, new NewExpense()) // transfer a Class to an Object.
+		expenseId ? getExpenseById(expenseId) : Object.assign({}, new NewExpense()), // transfer a Class to an Object.
+	);
+
+	let selectedDate = $derived(
+		selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : ''),
 	);
 
 	const today = new Date();
@@ -44,7 +48,9 @@
 
 	// handle and update shares state
 	let shares = $state(
-		expenseData.scope === 'personal' || !expenseData?.shares_json ? {} : expenseData.shares_json
+		expenseData.scope === 'personal' || !expenseData?.shares_json
+			? {}
+			: expenseData.shares_json,
 	);
 	$effect(() => {
 		if (expenseData.scope === 'personal' || !expenseData?.shares_json) {
@@ -59,7 +65,7 @@
 
 	// 轉為卡片資料並分頁（每頁 8 個）
 	const categoryCards = derived([expenseOptions, categoryIconMap], ([opts, iconMap]) =>
-		opts.map((o) => ({ id: o.value, name: o.label, icon: iconMap[o.value] }))
+		opts.map((o) => ({ id: o.value, name: o.label, icon: iconMap[o.value] })),
 	);
 	const categoryPages = derived(categoryCards, (cards): CategoryCard[][] => {
 		const pageSize = 8;
@@ -295,7 +301,7 @@
 							type="button"
 							class={classNames(
 								'flex flex-col items-center gap-1 p-2 rounded-lg shadow-md',
-								'bg-white data-[selected=true]:bg-[var(--c-bg)]'
+								'bg-white data-[selected=true]:bg-[var(--c-bg)]',
 							)}
 							data-selected={expenseData.category_id === cat.id}
 							onclick={() => (expenseData.category_id = cat.id)}
@@ -303,7 +309,7 @@
 							<div
 								class={classNames(
 									'size-12 grid place-items-center rounded-xl',
-									'text-[var(--c-accent)]'
+									'text-[var(--c-accent)]',
 								)}
 								data-selected={expenseData.category_id === cat.id}
 							>
@@ -312,7 +318,7 @@
 							<div
 								class={classNames(
 									'text-xs truncate max-w-16',
-									'text-[var(--c-accent)]'
+									'text-[var(--c-accent)]',
 								)}
 								data-selected={expenseData.category_id === cat.id}
 							>

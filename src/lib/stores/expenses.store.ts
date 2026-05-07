@@ -166,6 +166,22 @@ export function upsertOne(row: ExpenseRow) {
 	});
 }
 
+/** 以多筆結果更新 store：若存在則覆蓋，否則插入 */
+export function upsertMany(rows: ExpenseRow[]) {
+	const oldRows: ExpenseRow[] = [];
+	items.update((prev) => {
+		const map = new Map(prev.map((r) => [r.id, r]));
+		for (const row of rows) {
+			const existing = map.get(row.id);
+			if (existing) {
+				oldRows.push(existing);
+			}
+			map.set(row.id, row);
+		}
+		return Array.from(map.values());
+	});
+}
+
 export function deleteOne(id: string) {
 	let removed: ExpenseRow | null = null;
 	items.update((prev) => {
