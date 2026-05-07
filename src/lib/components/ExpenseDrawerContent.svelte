@@ -455,7 +455,7 @@
 </form>
 {#if editMode}
 	<button
-		class="btn btn-primary w-full mt-3"
+		class="btn btn-primary w-full"
 		disabled={$deleteIsLoading || $deleteIsDone}
 		onclick={() => {
 			handleDelete(expenseId);

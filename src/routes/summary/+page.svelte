@@ -2,7 +2,7 @@
 	import PieChart from '$lib/components/ui/PieChart.svelte';
 	import type { PieDatum } from '$lib/components/ui/PieChart.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
-	import SwipeDrawer from '$lib/components/ui/SwipeDrawer.svelte';
+	import * as ShadcnDialog from '$lib/components/shadcn/dialog';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 
 	import * as expensesStore from '$lib/stores/expenses.store';
@@ -267,16 +267,21 @@
 	</Dialog.Portal>
 </Dialog.Root>
 
-<SwipeDrawer bind:open={drawerOpen} title="編輯項目">
-	<ExpenseDrawerContent
-		{expenseId}
-		{selectedDate}
-		editMode={true}
-		onSubmitFinish={() => {
-			drawerOpen = false;
-		}}
-	/>
-</SwipeDrawer>
+<ShadcnDialog.Root bind:open={drawerOpen}>
+	<ShadcnDialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]">
+		<ShadcnDialog.Header>
+			<ShadcnDialog.Title>編輯項目</ShadcnDialog.Title>
+		</ShadcnDialog.Header>
+		<ExpenseDrawerContent
+			{expenseId}
+			{selectedDate}
+			editMode={true}
+			onSubmitFinish={() => {
+				drawerOpen = false;
+			}}
+		/>
+	</ShadcnDialog.Content>
+</ShadcnDialog.Root>
 
 <style>
 	button[data-active='true'] {

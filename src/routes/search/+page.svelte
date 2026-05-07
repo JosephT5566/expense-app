@@ -5,7 +5,7 @@
 
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
-	import SwipeDrawer from '$lib/components/ui/SwipeDrawer.svelte';
+	import * as Dialog from '$lib/components/shadcn/dialog';
 	import DateRangePicker from '$lib/components/ui/DateRangePicker.svelte';
 
 	import { getCategoryIcon } from '$lib/utils/category-icons';
@@ -114,10 +114,15 @@
 	{/if}
 </section>
 
-<SwipeDrawer bind:open={drawerOpen} title="編輯項目">
-	<ExpenseDrawerContent
-		expenseId={editingExpenseId}
-		editMode={true}
-		onSubmitFinish={handleSubmit}
-	/>
-</SwipeDrawer>
+<Dialog.Root bind:open={drawerOpen}>
+	<Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]">
+		<Dialog.Header>
+			<Dialog.Title>編輯項目</Dialog.Title>
+		</Dialog.Header>
+		<ExpenseDrawerContent
+			expenseId={editingExpenseId}
+			editMode={true}
+			onSubmitFinish={handleSubmit}
+		/>
+	</Dialog.Content>
+</Dialog.Root>
