@@ -12,7 +12,7 @@
 	import * as categoriesStore from '$lib/stores/categories.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
 
-	import { searchExpenses, upsertExpense } from '$lib/data/expenses.fetcher';
+	import { searchExpenses } from '$lib/data/expenses.fetcher';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { Button } from '$lib/components/shadcn/button';
 	import { Input } from '$lib/components/shadcn/input';
@@ -28,18 +28,13 @@
 
 	// 編輯抽屜狀態
 	let drawerOpen = $state(false);
-	let selected: ExpenseRow | null = $state(null);
-	let amount = $state('');
-	let content = $state('');
-	let categoryId = $state('');
-	let isSettled = $state(false);
+	let editingExpenseId = $state('');
 
 	// 類別 icon 對應
 	const categoryIconMap = derived(categoriesStore.items, (itemsArr) => {
 		const entries = itemsArr.map((c) => [c.id, getCategoryIcon(c.name)] as const);
 		return Object.fromEntries(entries) as Record<string, string>;
 	});
-	const expenseOptions = categoriesStore.expenseOptions;
 
 	async function runSearch() {
 		try {
@@ -55,41 +50,22 @@
 				endDate: dateRange?.end?.toDate(getLocalTimeZone()).toISOString()
 			});
 			rows = page.items;
+			// Save all expenses to the store
+			expensesStore.upsertMany(page.items);
 		} finally {
 			loading = false;
 		}
 	}
 
 	function openEdit(e: ExpenseRow) {
-		selected = e;
-		amount = String(e.amount);
-		content = e.note;
-		categoryId = e.category_id ?? '';
-		isSettled = e.is_settled;
+		editingExpenseId = e.id;
 		drawerOpen = true;
 	}
 
-	async function submit() {
-		if (!selected) {
-			return;
-		}
-		const payload = {
-			id: selected.id,
-			note: content,
-			amount: Number(amount),
-			currency: selected.currency,
-			payer_email: selected.payer_email,
-			scope: selected.scope,
-			shares_json: selected.shares_json,
-			category_id: categoryId || selected.category_id || '',
-			is_settled: isSettled,
-			ts: selected.ts,
-			updated_at: new Date().toISOString()
-		};
-		const saved = await upsertExpense(payload);
-		rows = rows.map((r) => (r.id === saved.id ? saved : r));
-		expensesStore.upsertOne(saved);
+	async function handleSubmit() {
 		drawerOpen = false;
+		// Refresh the search results to reflect the updated expense
+		await runSearch();
 	}
 </script>
 
@@ -140,14 +116,8 @@
 
 <SwipeDrawer bind:open={drawerOpen} title="編輯項目">
 	<ExpenseDrawerContent
-		bind:amount
-		bind:content
-		bind:categoryId
-		bind:isSettled
-		categoryOptions={$expenseOptions}
-		noteLabel="備註"
-		submitLabel="儲存"
-		onSubmit={submit}
-		onCancel={() => (drawerOpen = false)}
+		expenseId={editingExpenseId}
+		editMode={true}
+		onSubmitFinish={handleSubmit}
 	/>
 </SwipeDrawer>
