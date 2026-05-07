@@ -103,7 +103,30 @@
 	export function resetCal () {
 		calcExpr = String(amountNum);
 	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		const { key } = e;
+
+		if (key >= '0' && key <= '9') {
+			e.preventDefault();
+			tapKey(key);
+		} else if (['+', '-', '*', '/', '.', '(', ')'].includes(key)) {
+			e.preventDefault();
+			tapKey(key);
+		} else if (key === 'Enter' || key === '=') {
+			e.preventDefault();
+			tapKey('=');
+		} else if (key === 'Backspace') {
+			e.preventDefault();
+			tapKey('<-');
+		} else if (key.toLowerCase() === 'c') {
+			e.preventDefault();
+			tapKey('C');
+		}
+	}
 </script>
+
+<svelte:window on:keydown={handleKeydown} />
 
 <div class="card p-3">
 	<div class="mb-2 text-sm opacity-80">計算機</div>
