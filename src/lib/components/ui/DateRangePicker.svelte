@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { Calendar as CalendarIcon } from "lucide-svelte";
-	import { DateFormatter, getLocalTimeZone, type DateValue } from "@internationalized/date";
+	import { DateFormatter, getLocalTimeZone, today, type DateValue } from "@internationalized/date";
 	import { RangeCalendar } from "$lib/components/shadcn/range-calendar";
 	import * as Popover from "$lib/components/shadcn/popover";
 	import { Button } from "$lib/components/shadcn/button";
 	import { cn } from "$lib/utils";
 	import { Label } from "$lib/components/shadcn/label";
-	// import type { DateRange } from '@internationalized/date';
 
 	type Props = {
 		title?: string;
@@ -55,6 +54,7 @@
 			<RangeCalendar
 				bind:value
 				numberOfMonths={2}
+				maxValue={today(getLocalTimeZone())}
 				onValueChange={() => {
 					// Optionally close the popover when a range is selected
 					if (value?.start && value?.end) {
