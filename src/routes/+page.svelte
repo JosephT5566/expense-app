@@ -6,7 +6,7 @@
 	import * as expensesStore from '$lib/stores/expenses.store';
 	import { categoryIconMap } from '$lib/stores/categories.store';
 
-	import SwipeDrawer from '$lib/components/ui/SwipeDrawer.svelte';
+	import * as Dialog from '$lib/components/shadcn/dialog';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
@@ -156,16 +156,21 @@
 	{/if}
 </section>
 
-<SwipeDrawer bind:open={drawerOpen} title={editMode ? '編輯項目' : '新增項目'}>
-	<ExpenseDrawerContent
-		expenseId={editMode ? expenseId : undefined}
-		{selectedDate}
-		{editMode}
-		onSubmitFinish={() => {
-			drawerOpen = false;
-		}}
-	/>
-</SwipeDrawer>
+<Dialog.Root bind:open={drawerOpen}>
+	<Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]">
+		<Dialog.Header>
+			<Dialog.Title>{editMode ? '編輯項目' : '新增項目'}</Dialog.Title>
+		</Dialog.Header>
+		<ExpenseDrawerContent
+			expenseId={editMode ? expenseId : undefined}
+			{selectedDate}
+			{editMode}
+			onSubmitFinish={() => {
+				drawerOpen = false;
+			}}
+		/>
+	</Dialog.Content>
+</Dialog.Root>
 
 <style>
 </style>
