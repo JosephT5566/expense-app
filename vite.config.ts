@@ -5,6 +5,9 @@ import { defineConfig } from 'vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
 
 export default defineConfig({
+	optimizeDeps: {
+		exclude: ['@internationalized/date']
+	},
 	plugins: [
 		tailwindcss(),
 		sveltekit(),

@@ -277,7 +277,7 @@
 
 <section class="card p-4 mb-[10vh] flex flex-col gap-3">
 	<!-- 範圍 + 開關 -->
-	<DateRangePicker title="選擇計算範圍" bind:dateRange />
+	<DateRangePicker title="選擇計算範圍" bind:value={dateRange} />
 
 	<!-- 列表 -->
 	{#if fetchLoading}
