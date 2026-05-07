@@ -11,6 +11,7 @@
 	import { expenseOptions, categoryIconMap } from '$lib/stores/categories.store';
 	import { getExpenseById, upsertOne, deleteOne } from '$lib/stores/expenses.store';
 	import { user as currentUser } from '$lib/stores/session.store';
+	import * as Dialog from '$lib/components/shadcn/dialog';
 	import Calculator from '$lib/components/ui/Calculator.svelte';
 	import Carousel from '$lib/components/ui/Carousel.svelte';
 	import { derived } from 'svelte/store';
@@ -43,7 +44,7 @@
 	// const LOADING_MIN_DURATION_MS = 400;
 	// const FINISHED_DURATION_MS = 1500;
 
-	let calculatorModal: HTMLDialogElement | null = $state(null);
+	let calculatorDialogOpen = $state(false);
 	let calculatorRef = $state<ReturnType<typeof Calculator>>();
 
 	// handle and update shares state
@@ -74,19 +75,6 @@
 			pages.push(cards.slice(i, i + pageSize));
 		}
 		return pages;
-	});
-
-	onMount(() => {
-		if (!calculatorModal) {
-			return;
-		}
-
-		calculatorModal.addEventListener('click', (e) => {
-			if (e.target === calculatorModal) {
-				e.stopPropagation();
-				(calculatorModal as HTMLDialogElement).close();
-			}
-		});
 	});
 
 	// Check if the expense data has been updated
@@ -235,21 +223,18 @@
 	}
 </script>
 
-<dialog
-	bind:this={calculatorModal}
-	id="calculator_modal"
-	class="modal"
-	closedby="any"
-	onclose={() => {
-		if (calculatorRef) {
-			calculatorRef.resetCal();
-		}
-	}}
->
-	<div class="modal-box w-11/12 max-w-5xl">
+<Dialog.Root bind:open={calculatorDialogOpen}>
+	<Dialog.Content
+		class="w-11/12 max-w-5xl"
+		onCloseAutoFocus={() => {
+			if (calculatorRef) {
+				calculatorRef.resetCal();
+			}
+		}}
+	>
 		<Calculator bind:this={calculatorRef} bind:amountNum={expenseData.amount} />
-	</div>
-</dialog>
+	</Dialog.Content>
+</Dialog.Root>
 
 <form class="flex flex-col gap-3" onsubmit={handleSubmit}>
 	<div>
@@ -283,7 +268,7 @@
 				type="button"
 				class="btn btn-primary h-full join-item absolute right-0 rounded-l-[0px]!"
 				onclick={() => {
-					calculatorModal?.showModal();
+					calculatorDialogOpen = true;
 				}}
 			>
 				<Icon icon="solar:calculator-bold-duotone" width="24" height="24" />
