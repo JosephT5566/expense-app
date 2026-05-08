@@ -1,13 +1,11 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
 	import { resolve } from '$app/paths';
-	import { page } from '$app/state';
-	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
 	import classNames from 'classnames';
 
 	type Tab = 'add' | 'summary' | 'setting';
 	type NavPath = '/' | '/summary' | '/setting';
-	let activeTab = $state<Tab>('add');
 
 	const items: { key: Tab; label: string; path?: NavPath; icon: string }[] = [
 		{ key: 'add', label: '新增', path: '/', icon: 'solar:document-add-bold-duotone' },
@@ -20,9 +18,9 @@
 		},
 	];
 
-	onMount(() => {
-		activeTab = items.find((it) => it.path === page.url.pathname)?.key || 'add';
-	});
+	let activeTab: Tab = $derived(
+		items.find((it) => it.path === $page.url.pathname)?.key || 'add',
+	);
 </script>
 
 <nav

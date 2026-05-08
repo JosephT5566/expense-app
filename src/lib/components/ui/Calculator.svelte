@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
+	import { Button } from '$lib/components/shadcn/button';
 	let { amountNum = $bindable(0) } = $props();
 
 	let calcExpr = $state('');
@@ -136,8 +137,9 @@
 	{/if}
 	<div class="grid grid-cols-4 gap-2">
 		{#each KEYS as k (k)}
-			<button
-				class="p-3 rounded-lg border border-black/10 flex items-center justify-center"
+			<Button
+				variant="outline"
+				class="p-4 text-lg touch-manipulation"
 				onclick={() => tapKey(k)}
 				aria-label={k}
 			>
@@ -146,9 +148,10 @@
 				{:else}
 					{k}
 				{/if}
-			</button>
+			</Button>
 		{/each}
-		<button class="col-span-4 btn btn-primary" onclick={() => tapKey('=')}>=</button>
+		<Button class="col-span-4 touch-manipulation" onclick={() => tapKey('=')}>=</Button>
 	</div>
 	<div class="text-xs mt-2 opacity-70">按 = 將結果填入「金額」。</div>
 </div>
+

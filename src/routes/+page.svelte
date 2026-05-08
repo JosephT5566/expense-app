@@ -157,7 +157,7 @@
 </section>
 
 <Dialog.Root bind:open={drawerOpen}>
-	<Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]">
+	<Dialog.Content class="max-h-[75vh] overflow-y-auto sm:max-w-[425px]">
 		<Dialog.Header>
 			<Dialog.Title>{editMode ? '編輯項目' : '新增項目'}</Dialog.Title>
 		</Dialog.Header>
