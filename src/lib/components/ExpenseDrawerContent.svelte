@@ -2,7 +2,6 @@
 	export type CategoryOption = { value: string; label: string };
 	import { type ExpenseRow, NewExpense } from '$lib/types/expense';
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
-	import { onMount } from 'svelte';
 	import type { ShareEntry } from '$lib/types/expense';
 	import { upsertExpense, deleteExpense } from '$lib/data/expenses.fetcher';
 	import Icon from '@iconify/svelte';
@@ -18,6 +17,14 @@
 	import { toTaiwanDateString } from '$lib/utils/dates';
 	import { useAsyncAction } from '$lib/utils/loading';
 	import Logger from '$lib/utils/logger';
+	import { Label } from '$lib/components/shadcn/label';
+	import { Input } from '$lib/components/shadcn/input';
+	import { Button } from '$lib/components/shadcn/button';
+	import { ButtonGroup } from '$lib/components/shadcn/button-group';
+	import { Checkbox } from '$lib/components/shadcn/checkbox';
+	import * as RadioGroup from '$lib/components/shadcn/radio-group';
+	import * as Select from '$lib/components/shadcn/select';
+
 	type CategoryCard = { id: string; name: string; icon: string };
 
 	let {
@@ -236,80 +243,69 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<form class="flex flex-col gap-3" onsubmit={handleSubmit}>
-	<div>
-		<label class="block text-sm mb-1 font-semibold" for="date-input">日期</label>
-		<input
+<form class="flex flex-col gap-4" onsubmit={handleSubmit}>
+	<div class="grid gap-2">
+		<Label for="date-input">日期</Label>
+		<Input
 			id="date-input"
 			type="date"
-			class="w-full p-3 rounded-lg border border-black/10 disabled:text-[var(--c-muted)]"
 			bind:value={selectedDate}
 			disabled={!editMode}
 			max={toTaiwanDateString(today)}
 		/>
 	</div>
 
-	<div>
-		<label class="block text-sm mb-1 font-semibold" for="amount-input">金額</label>
-		<div class="join w-full rounded-lg relative">
-			<input
-				class="w-full p-3 rounded-lg border border-black/10"
-				id="amount-input"
-				inputmode="decimal"
-				type="number"
-				value={expenseData.amount === 0 ? '' : expenseData.amount}
-				oninput={(e) => {
-					const target = e.target as HTMLInputElement;
-					expenseData.amount = Number(target.value);
-				}}
-				placeholder="Enter a number"
-			/>
-			<button
-				type="button"
-				class="btn btn-primary h-full join-item absolute right-0 rounded-l-[0px]!"
-				onclick={() => {
-					calculatorDialogOpen = true;
-				}}
-			>
-				<Icon icon="solar:calculator-bold-duotone" width="24" height="24" />
-			</button>
+	<div class="grid gap-2">
+		<Label for="amount-input">金額</Label>
+		<div class="relative">
+			<ButtonGroup class="w-full">
+				<Input
+					id="amount-input"
+					type="number"
+					inputmode="decimal"
+					placeholder="輸入金額"
+					value={expenseData.amount === 0 ? '' : expenseData.amount}
+					oninput={(e) => {
+						const target = e.target as HTMLInputElement;
+						expenseData.amount = Number(target.value);
+					}}
+				/>
+				<Button
+					type="button"
+					variant="outline"
+					size="icon"
+					onclick={() => {
+						calculatorDialogOpen = true;
+					}}
+				>
+					<Icon icon="solar:calculator-bold-duotone" width="20" height="20" />
+				</Button>
+			</ButtonGroup>
 		</div>
 	</div>
 
-	<fieldset class="fieldset">
-		<legend class="fieldset-legend text-sm">類別</legend>
+	<fieldset>
+		<legend class="text-sm font-semibold mb-2">類別</legend>
 		{#if $expenseOptions.length > 0}
 			{#snippet children(page: unknown, i: number)}
 				<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
 					{#each page as CategoryCard[] as cat (cat.id)}
-						<button
+						<Button
 							type="button"
+							variant="outline"
 							class={classNames(
-								'flex flex-col items-center gap-1 p-2 rounded-lg shadow-md',
-								'bg-white data-[selected=true]:bg-[var(--c-bg)]',
+								'h-auto flex flex-col gap-1 p-2',
+								'bg-white text-secondary shadow-sm',
+								'data-[selected=true]:text-primary data-[selected=true]:ring-2',
 							)}
 							data-selected={expenseData.category_id === cat.id}
 							onclick={() => (expenseData.category_id = cat.id)}
 						>
-							<div
-								class={classNames(
-									'size-12 grid place-items-center rounded-xl',
-									'text-[var(--c-accent)]',
-								)}
-								data-selected={expenseData.category_id === cat.id}
-							>
-								<Icon icon={cat.icon} width={32} height={32} />
+							<div class="size-12 grid place-items-center rounded-lg">
+								<Icon icon={cat.icon} class="size-8" width={32} height={32} />
 							</div>
-							<div
-								class={classNames(
-									'text-xs truncate max-w-16',
-									'text-[var(--c-accent)]',
-								)}
-								data-selected={expenseData.category_id === cat.id}
-							>
-								{cat.name}
-							</div>
-						</button>
+							<div class="text-xs truncate max-w-16">{cat.name}</div>
+						</Button>
 					{/each}
 				</div>
 			{/snippet}
@@ -330,139 +326,128 @@
 		{/if}
 	</fieldset>
 
-	<fieldset class="fieldset">
-		<legend class="fieldset-legend text-sm">類別</legend>
-		<div class="flex gap-2 mb-2">
-			<label
-				class="flex items-center gap-2 p-2 rounded-lg border border-black/10 cursor-pointer"
-				class:selected={expenseData?.scope === 'personal'}
-				><input type="radio" name="scope" value="personal" bind:group={expenseData.scope} />
-				個人</label
-			><label
-				class="flex items-center gap-2 p-2 rounded-lg border border-black/10 cursor-pointer"
-				class:selected={expenseData?.scope === 'household'}
-				><input
-					type="radio"
-					name="scope"
-					value="household"
-					bind:group={expenseData.scope}
-				/>
-				家庭</label
-			>
-		</div>
-		{#if expenseData?.scope === 'household'}
-			<fieldset class="fieldset">
-				<legend class="fieldset-legend text-sm">付款人</legend>
-				<select class="select w-full" bind:value={expenseData.payer_email}>
-					{#each $allowedUsers as email (email)}
-						<option value={email} selected={email === expenseData.payer_email}>
-							{$allowedUserInfo[email].name ?? email}
-						</option>
-					{/each}
-				</select>
-			</fieldset>
-			<fieldset
-				class="fieldset bg-base-200 border-base-300 rounded-box w-full border px-4 pt-0 pb-2"
-			>
-				<legend class="fieldset-legend text-sm">分帳</legend>
-				{#if $allowedUsers.length === 0}
-					<p class="opacity-60 text-sm">尚未設定家庭成員</p>
-				{:else}
-					<div class="flex flex-col gap-2">
-						{#each $allowedUsers as email (email)}
-							<div class="flex items-center gap-2">
-								<div class="flex-1 text-sm truncate">
-									{$allowedUserInfo[email].name ?? email}
-								</div>
-								<input
-									class="p-2 rounded-lg border border-black/10 text-right"
-									name={email}
-									type="number"
-									inputmode="decimal"
-									value={shares[email] == 0 ? '' : shares[email]}
-									oninput={(e) => {
-										const target = e.target as HTMLInputElement;
-										shares[email] = Number(target.value);
-									}}
-									placeholder="Enter a number"
-								/>
-							</div>
-						{/each}
-					</div>
-					<div class="mt-2 text-xs">
-						合計：{sharesTotal} / 金額：{expenseData.amount}
-						{#if expenseData.amount && !sharesValid}
-							<span class="text-red-600 ml-2">不相符</span>
-						{/if}
-					</div>
-				{/if}
-			</fieldset>
+	<fieldset class="grid gap-2">
+		<legend class="text-sm font-semibold">範圍</legend>
+		<RadioGroup.Root bind:value={expenseData.scope}>
+			<div class="flex gap-2">
+				<Label
+					for="scope-personal"
+					class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer flex-1 justify-center {expenseData.scope ===
+					'personal'
+						? 'bg-primary text-primary-foreground'
+						: ''}"
+				>
+					<RadioGroup.Item value="personal" id="scope-personal" />
+					個人
+				</Label>
+				<Label
+					for="scope-household"
+					class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer flex-1 justify-center {expenseData.scope ===
+					'household'
+						? 'bg-primary text-primary-foreground'
+						: ''}"
+				>
+					<RadioGroup.Item value="household" id="scope-household" />
+					家庭
+				</Label>
+			</div>
+		</RadioGroup.Root>
 
-			<div class="flex items-center gap-2 mt-2">
-				<input
-					id="settled-input"
-					type="checkbox"
-					bind:checked={expenseData.is_settled}
-					disabled={expenseData?.scope !== 'household'}
-					class="size-4"
-				/>
-				<label for="settled-input" class="text-sm"> 已結清 </label>
+		{#if expenseData?.scope === 'household'}
+			<div class="grid gap-4 mt-2">
+				<div class="grid gap-2">
+					<Label>付款人</Label>
+					<Select.Root type="single" bind:value={expenseData.payer_email}>
+						<Select.Trigger class="w-full">
+							<Select.Value placeholder="選擇付款人" />
+						</Select.Trigger>
+						<Select.Content>
+							{#each $allowedUsers as email (email)}
+								<Select.Item value={email}
+									>{$allowedUserInfo[email].name ?? email}</Select.Item
+								>
+							{/each}
+						</Select.Content>
+					</Select.Root>
+				</div>
+
+				<fieldset class="fieldset bg-base-200 border-base-300 rounded-lg w-full border px-4 pt-0 pb-2">
+					<legend class="text-sm font-semibold mb-2">分帳</legend>
+					{#if $allowedUsers.length === 0}
+						<p class="opacity-60 text-sm">尚未設定家庭成員</p>
+					{:else}
+						<div class="flex flex-col gap-2">
+							{#each $allowedUsers as email (email)}
+								<div class="flex items-center gap-2">
+									<Label class="flex-1 truncate"
+										>{$allowedUserInfo[email].name ?? email}</Label
+									>
+									<Input
+										class="w-32 text-right"
+										name={email}
+										type="number"
+										inputmode="decimal"
+										placeholder="0"
+										value={shares[email] == 0 ? '' : shares[email]}
+										oninput={(e) => {
+											const target = e.target as HTMLInputElement;
+											shares[email] = Number(target.value);
+										}}
+									/>
+								</div>
+							{/each}
+						</div>
+						<div class="mt-2 text-xs text-right">
+							合計：{sharesTotal} / 金額：{expenseData.amount}
+							{#if expenseData.amount && !sharesValid}
+								<span class="text-destructive ml-2">不相符</span>
+							{/if}
+						</div>
+					{/if}
+				</fieldset>
+
+				<div class="flex items-center gap-2 mt-2">
+					<Checkbox
+						id="settled-input"
+						bind:checked={expenseData.is_settled}
+						disabled={expenseData?.scope !== 'household'}
+					/>
+					<Label for="settled-input" class="text-sm">已結清</Label>
+				</div>
 			</div>
 		{/if}
 	</fieldset>
 
-	<label class="block text-sm mb-1 font-semibold" for="content-input">帳目內容</label>
-	<input
-		id="content-input"
-		class="w-full p-3 rounded-lg border border-black/10"
-		bind:value={expenseData.note}
-		placeholder="例如：午餐便當"
-	/>
+	<div class="grid gap-2">
+		<Label for="content-input">帳目內容</Label>
+		<Input id="content-input" bind:value={expenseData.note} placeholder="例如：午餐便當" />
+	</div>
 
-	<button
-		type="submit"
-		class="btn btn-primary w-full"
-		disabled={!isUpdated || $submitIsLoading || $submitIsDone}
-	>
+	<Button type="submit" class="w-full" disabled={!isUpdated || $submitIsLoading || $submitIsDone}>
 		{#if $submitIsLoading}
-			<Icon
-				icon="svg-spinners:90-ring-with-bg"
-				width="20"
-				height="20"
-				class="text-base-100"
-			/>
+			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" />
 		{:else if $submitIsDone}
-			Done
+			完成
 		{:else}
 			{editMode ? '更新' : '新增'}
 		{/if}
-	</button>
+	</Button>
 </form>
 {#if editMode}
-	<button
-		class="btn btn-primary w-full"
+	<Button
+		variant="destructive"
+		class="w-full mt-2"
 		disabled={$deleteIsLoading || $deleteIsDone}
 		onclick={() => {
 			handleDelete(expenseId);
 		}}
 	>
 		{#if $deleteIsLoading}
-			<Icon
-				icon="svg-spinners:90-ring-with-bg"
-				width="20"
-				height="20"
-				class="text-base-100"
-			/>
+			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" />
 		{:else if $deleteIsDone}
-			Done
+			完成
 		{:else}
 			刪除
 		{/if}
-	</button>
+	</Button>
 {/if}
-
-<style>
-	form :global(.select) {
-		min-height: 3rem;
-	}
-</style>
