@@ -249,6 +249,7 @@
 		<Input
 			id="date-input"
 			type="date"
+			class="w-auto"
 			bind:value={selectedDate}
 			disabled={!editMode}
 			max={toTaiwanDateString(today)}

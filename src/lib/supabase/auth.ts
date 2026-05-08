@@ -157,7 +157,12 @@ export async function signIn() {
 	sessionLoading.set(true);
 	await supabase.auth.signInWithOAuth({
 		provider: 'google',
-		options: { redirectTo },
+		options: {
+			redirectTo,
+			queryParams: {
+				prompt: 'select_account'
+			}
+		},
 	});
 
 	const autoSignOutMs = DEFAULT_AUTO_SIGN_OUT_MS;
