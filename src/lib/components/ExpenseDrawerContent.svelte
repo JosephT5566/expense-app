@@ -436,7 +436,7 @@
 {#if editMode}
 	<Button
 		variant="destructive"
-		class="w-full mt-2"
+		class="w-full"
 		disabled={$deleteIsLoading || $deleteIsDone}
 		onclick={() => {
 			handleDelete(expenseId);

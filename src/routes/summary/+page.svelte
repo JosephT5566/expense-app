@@ -268,7 +268,7 @@
 </Dialog.Root>
 
 <ShadcnDialog.Root bind:open={drawerOpen}>
-	<ShadcnDialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]">
+	<ShadcnDialog.Content class="max-h-[75vh] overflow-y-auto sm:max-w-[425px]">
 		<ShadcnDialog.Header>
 			<ShadcnDialog.Title>編輯項目</ShadcnDialog.Title>
 		</ShadcnDialog.Header>
