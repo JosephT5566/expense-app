@@ -7,12 +7,19 @@
 	import { categoryIconMap } from '$lib/stores/categories.store';
 
 	import * as Dialog from '$lib/components/shadcn/dialog';
+	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
+
+	import { PUBLIC_GOOGLE_AI_GCF, PUBLIC_SUPABASE_URL } from '$env/static/public';
+	import { supabase } from '$lib/supabase/supabaseClient';
+	import Logger from '$lib/utils/logger';
+	import * as jose from 'jose';
+	import { Sparkles, Upload, Image as ImageIcon } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -82,6 +89,71 @@
 		drawerOpen = true;
 	}
 
+	async function callAIGCF() {
+		const {
+			data: { session },
+		} = await supabase.auth.getSession();
+		const accessToken = session?.access_token;
+		if (!accessToken) {
+			console.error('No access token found');
+			return;
+		}
+
+		// verify if the access token is valid using jose and jwks
+		try {
+			const JWKS = jose.createRemoteJWKSet(
+				new URL(`${PUBLIC_SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+			);
+			const { payload } = await jose.jwtVerify(accessToken, JWKS);
+			Logger.log('Access token verified using jose:', payload);
+		} catch (error) {
+			console.error('Token verification failed:', error);
+			return;
+		}
+
+		try {
+			const response = await fetch(`${PUBLIC_GOOGLE_AI_GCF}?action=get_upload_url`, {
+				headers: {
+					Authorization: `Bearer ${accessToken}`,
+				},
+			});
+			const signedUrl = await response.json();
+			Logger.log('Received signed URL from GCF:', signedUrl);
+		} catch (error) {
+			console.error('Error calling AI GCF:', error);
+		}
+	}
+
+	let aiDialogOpen = $state(false);
+	let selectedFile = $state<File | null>(null);
+	let isDragging = $state(false);
+	let fileInput: HTMLInputElement;
+
+	function handleFileChange(e: Event) {
+		const input = e.target as HTMLInputElement;
+		if (input.files && input.files[0]) {
+			selectedFile = input.files[0];
+		}
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		isDragging = false;
+		if (e.dataTransfer?.files && e.dataTransfer.files[0]) {
+			selectedFile = e.dataTransfer.files[0];
+		}
+	}
+
+	async function handleUpload() {
+		if (!selectedFile) {
+			return;
+		}
+		await callAIGCF();
+		// Signed URL logged in callAIGCF
+		aiDialogOpen = false;
+		selectedFile = null;
+	}
+
 	let startX = 0,
 		dx = 0;
 	const SWIPE = 60;
@@ -139,19 +211,22 @@
 
 	{#if $expensesLoading && dayItems().length === 0}
 		<p class="mt-3 opacity-70">載入中…</p>
-	{:else if dayItems().length === 0}
-		<div class="mt-3">
-			<button class="btn btn-primary w-full" onclick={openCreate}>輸入今日第一筆記帳</button>
-		</div>
 	{:else}
-		<ExpenseListSection
-			items={dayItems()}
-			categoryIconMap={$categoryIconMap}
-			onEdit={openEdit}
-			showSum={true}
-		/>
-		<div class="mt-3">
-			<button class="btn btn-primary w-full" onclick={openCreate}>新增項目</button>
+		{#if dayItems().length !== 0}
+			<ExpenseListSection
+				items={dayItems()}
+				categoryIconMap={$categoryIconMap}
+				onEdit={openEdit}
+				showSum={true}
+			/>
+		{/if}
+		<div class="mt-3 flex gap-2">
+			<Button class="grow" onclick={openCreate}
+				>{dayItems().length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
+			>
+			<Button class="text-primary" variant="outline" onclick={() => (aiDialogOpen = true)}>
+				<Sparkles class="w-5 h-5 bolder" />
+			</Button>
 		</div>
 	{/if}
 </section>
@@ -169,6 +244,57 @@
 				drawerOpen = false;
 			}}
 		/>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={aiDialogOpen}>
+	<Dialog.Content class="sm:max-w-[425px]">
+		<Dialog.Header>
+			<Dialog.Title>AI 記帳 - 上傳收據</Dialog.Title>
+		</Dialog.Header>
+		<div
+			class="mt-4 border-2 border-dashed rounded-lg p-8 flex flex-col items-center justify-center transition-colors {isDragging
+				? 'border-primary bg-primary/10'
+				: 'border-muted'}"
+			role="button"
+			tabindex="0"
+			onpointerenter={() => (isDragging = true)}
+			onpointerleave={() => (isDragging = false)}
+			ondragover={(e) => {
+				e.preventDefault();
+				isDragging = true;
+			}}
+			ondragleave={() => (isDragging = false)}
+			ondrop={handleDrop}
+			onclick={() => fileInput?.click()}
+			onkeydown={(e) => e.key === 'Enter' && fileInput?.click()}
+		>
+			<input
+				type="file"
+				accept="image/*"
+				class="hidden"
+				bind:this={fileInput}
+				onchange={handleFileChange}
+			/>
+			{#if selectedFile}
+				<div class="flex flex-col items-center">
+					<ImageIcon class="w-12 h-12 text-primary mb-2" />
+					<p class="text-sm font-medium">{selectedFile.name}</p>
+					<p class="text-xs text-muted-foreground">
+						{(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+					</p>
+				</div>
+			{:else}
+				<Upload class="w-12 h-12 text-muted-foreground mb-2" />
+				<p class="text-sm">點擊或拖曳圖片至此</p>
+				<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG 格式</p>
+			{/if}
+		</div>
+		<Dialog.Footer class="mt-4">
+			<button class="btn btn-primary w-full" disabled={!selectedFile} onclick={handleUpload}>
+				開始上傳
+			</button>
+		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
 
