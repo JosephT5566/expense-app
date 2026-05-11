@@ -19,7 +19,7 @@
 	import { supabase } from '$lib/supabase/supabaseClient';
 	import Logger from '$lib/utils/logger';
 	import * as jose from 'jose';
-	import { Sparkles, Upload, Image as ImageIcon } from 'lucide-svelte';
+	import { Sparkles, Upload } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -89,6 +89,38 @@
 		drawerOpen = true;
 	}
 
+	let aiDialogOpen = $state(false);
+	let aiUploading = $state(false);
+	let selectedFile = $state<File | null>(null);
+	let previewUrl = $state<string | null>(null);
+	let isDragging = $state(false);
+	let fileInput: HTMLInputElement;
+
+	$effect(() => {
+		if (selectedFile) {
+			const url = URL.createObjectURL(selectedFile);
+			previewUrl = url;
+			return () => URL.revokeObjectURL(url);
+		} else {
+			previewUrl = null;
+		}
+	});
+
+	function handleFileChange(e: Event) {
+		const input = e.target as HTMLInputElement;
+		if (input.files && input.files[0]) {
+			selectedFile = input.files[0];
+		}
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		isDragging = false;
+		if (e.dataTransfer?.files && e.dataTransfer.files[0]) {
+			selectedFile = e.dataTransfer.files[0];
+		}
+	}
+
 	async function callAIGCF(fileName: string, contentType: string) {
 		const {
 			data: { session }
@@ -124,39 +156,10 @@
 			});
 			const signedUrl = await response.json();
 			Logger.log('Received signed URL from GCF:', signedUrl);
+			return signedUrl;
 		} catch (error) {
 			console.error('Error calling AI GCF:', error);
-		}
-	}
-
-	let aiDialogOpen = $state(false);
-	let selectedFile = $state<File | null>(null);
-	let previewUrl = $state<string | null>(null);
-	let isDragging = $state(false);
-	let fileInput: HTMLInputElement;
-
-	$effect(() => {
-		if (selectedFile) {
-			const url = URL.createObjectURL(selectedFile);
-			previewUrl = url;
-			return () => URL.revokeObjectURL(url);
-		} else {
-			previewUrl = null;
-		}
-	});
-
-	function handleFileChange(e: Event) {
-		const input = e.target as HTMLInputElement;
-		if (input.files && input.files[0]) {
-			selectedFile = input.files[0];
-		}
-	}
-
-	function handleDrop(e: DragEvent) {
-		e.preventDefault();
-		isDragging = false;
-		if (e.dataTransfer?.files && e.dataTransfer.files[0]) {
-			selectedFile = e.dataTransfer.files[0];
+			return null;
 		}
 	}
 
@@ -164,10 +167,34 @@
 		if (!selectedFile) {
 			return;
 		}
-		await callAIGCF(selectedFile.name, selectedFile.type || 'image/jpeg');
-		// Signed URL logged in callAIGCF
-		aiDialogOpen = false;
-		selectedFile = null;
+		aiUploading = true;
+		try {
+			const contentType = selectedFile.type || 'image/jpeg';
+			const signedUrlData = await callAIGCF(selectedFile.name, contentType);
+
+			if (signedUrlData?.upload_url) {
+				const uploadRes = await fetch(signedUrlData.upload_url, {
+					method: 'PUT',
+					body: selectedFile,
+					headers: {
+						'Content-Type': contentType
+					}
+				});
+
+				if (uploadRes.ok) {
+					Logger.log('File uploaded to GCS successfully');
+					// TODO: Trigger AI analysis with signedUrlData.file_path
+					aiDialogOpen = false;
+					selectedFile = null;
+				} else {
+					console.error('GCS Upload failed:', uploadRes.statusText);
+				}
+			}
+		} catch (err) {
+			console.error('Error in handleUpload:', err);
+		} finally {
+			aiUploading = false;
+		}
 	}
 
 	let startX = 0,
@@ -312,9 +339,22 @@
 			{/if}
 		</div>
 		<Dialog.Footer class="mt-4">
-			<button class="btn btn-primary w-full" disabled={!selectedFile} onclick={handleUpload}>
-				開始上傳
-			</button>
+			<Button
+				class="w-full"
+				disabled={!selectedFile || aiUploading}
+				onclick={handleUpload}
+			>
+				{#if aiUploading}
+					<div class="flex items-center gap-2">
+						<div
+							class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+						></div>
+						上傳中...
+					</div>
+				{:else}
+					開始上傳
+				{/if}
+			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
