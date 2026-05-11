@@ -33,7 +33,7 @@
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
 	const expensesLoading = expensesStore.loading;
-	const dayItems = $derived(() => {
+	const dayItems = $derived.by(() => {
 		const { from, to } = taiwanDayBoundsISO(selectedDate);
 		return ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to);
 	});
@@ -89,9 +89,9 @@
 		drawerOpen = true;
 	}
 
-	async function callAIGCF() {
+	async function callAIGCF(fileName: string, contentType: string) {
 		const {
-			data: { session },
+			data: { session }
 		} = await supabase.auth.getSession();
 		const accessToken = session?.access_token;
 		if (!accessToken) {
@@ -102,7 +102,7 @@
 		// verify if the access token is valid using jose and jwks
 		try {
 			const JWKS = jose.createRemoteJWKSet(
-				new URL(`${PUBLIC_SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+				new URL(`${PUBLIC_SUPABASE_URL}/auth/v1/.well-known/jwks.json`)
 			);
 			const { payload } = await jose.jwtVerify(accessToken, JWKS);
 			Logger.log('Access token verified using jose:', payload);
@@ -112,10 +112,15 @@
 		}
 
 		try {
-			const response = await fetch(`${PUBLIC_GOOGLE_AI_GCF}?action=get_upload_url`, {
+			const url = new URL(PUBLIC_GOOGLE_AI_GCF);
+			url.searchParams.set('action', 'get_upload_url');
+			url.searchParams.set('file_name', fileName);
+			url.searchParams.set('content_type', contentType);
+
+			const response = await fetch(url.toString(), {
 				headers: {
-					Authorization: `Bearer ${accessToken}`,
-				},
+					Authorization: `Bearer ${accessToken}`
+				}
 			});
 			const signedUrl = await response.json();
 			Logger.log('Received signed URL from GCF:', signedUrl);
@@ -126,8 +131,19 @@
 
 	let aiDialogOpen = $state(false);
 	let selectedFile = $state<File | null>(null);
+	let previewUrl = $state<string | null>(null);
 	let isDragging = $state(false);
 	let fileInput: HTMLInputElement;
+
+	$effect(() => {
+		if (selectedFile) {
+			const url = URL.createObjectURL(selectedFile);
+			previewUrl = url;
+			return () => URL.revokeObjectURL(url);
+		} else {
+			previewUrl = null;
+		}
+	});
 
 	function handleFileChange(e: Event) {
 		const input = e.target as HTMLInputElement;
@@ -148,7 +164,7 @@
 		if (!selectedFile) {
 			return;
 		}
-		await callAIGCF();
+		await callAIGCF(selectedFile.name, selectedFile.type || 'image/jpeg');
 		// Signed URL logged in callAIGCF
 		aiDialogOpen = false;
 		selectedFile = null;
@@ -178,6 +194,7 @@
 
 <section
 	class="card p-4"
+	role="presentation"
 	ontouchstart={onTouchStart}
 	ontouchmove={onTouchMove}
 	ontouchend={onTouchEnd}
@@ -209,12 +226,12 @@
 		</button>
 	</div>
 
-	{#if $expensesLoading && dayItems().length === 0}
+	{#if $expensesLoading && dayItems.length === 0}
 		<p class="mt-3 opacity-70">載入中…</p>
 	{:else}
-		{#if dayItems().length !== 0}
+		{#if dayItems.length !== 0}
 			<ExpenseListSection
-				items={dayItems()}
+				items={dayItems}
 				categoryIconMap={$categoryIconMap}
 				onEdit={openEdit}
 				showSum={true}
@@ -222,10 +239,10 @@
 		{/if}
 		<div class="mt-3 flex gap-2">
 			<Button class="grow" onclick={openCreate}
-				>{dayItems().length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
+				>{dayItems.length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
 			>
 			<Button class="text-primary" variant="outline" onclick={() => (aiDialogOpen = true)}>
-				<Sparkles class="w-5 h-5 bolder" />
+				<Sparkles class="w-5 h-5" />
 			</Button>
 		</div>
 	{/if}
@@ -253,7 +270,7 @@
 			<Dialog.Title>AI 記帳 - 上傳收據</Dialog.Title>
 		</Dialog.Header>
 		<div
-			class="mt-4 border-2 border-dashed rounded-lg p-8 flex flex-col items-center justify-center transition-colors {isDragging
+			class="mt-4 border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center transition-colors {isDragging
 				? 'border-primary bg-primary/10'
 				: 'border-muted'}"
 			role="button"
@@ -271,15 +288,19 @@
 		>
 			<input
 				type="file"
-				accept="image/*"
+				accept="image/jpeg,image/png,image/heic,image/heif"
 				class="hidden"
 				bind:this={fileInput}
 				onchange={handleFileChange}
 			/>
-			{#if selectedFile}
-				<div class="flex flex-col items-center">
-					<ImageIcon class="w-12 h-12 text-primary mb-2" />
-					<p class="text-sm font-medium">{selectedFile.name}</p>
+			{#if selectedFile && previewUrl}
+				<div class="flex flex-col items-center w-full">
+					<img
+						src={previewUrl}
+						alt="Preview"
+						class="max-h-48 w-full object-contain mb-2 rounded shadow-sm"
+					/>
+					<p class="text-sm font-medium truncate max-w-full">{selectedFile.name}</p>
 					<p class="text-xs text-muted-foreground">
 						{(selectedFile.size / 1024 / 1024).toFixed(2)} MB
 					</p>
@@ -287,7 +308,7 @@
 			{:else}
 				<Upload class="w-12 h-12 text-muted-foreground mb-2" />
 				<p class="text-sm">點擊或拖曳圖片至此</p>
-				<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG 格式</p>
+				<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG, HEIC 格式</p>
 			{/if}
 		</div>
 		<Dialog.Footer class="mt-4">
