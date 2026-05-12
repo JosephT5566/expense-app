@@ -59,6 +59,7 @@
 		"@iconify/svelte": "^5.0.2",
 		"@supabase/supabase-js": "^2.74.0",
 		"classnames": "^2.5.1",
+		"heic2any": "^0.0.4",
 		"idb-keyval": "^6.2.2",
 		"is-mobile": "^5.0.0",
 		"jose": "^6.2.3",

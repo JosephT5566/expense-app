@@ -20,6 +20,7 @@
 	import Logger from '$lib/utils/logger';
 	import * as jose from 'jose';
 	import { Sparkles, Upload } from 'lucide-svelte';
+	import { browser } from '$app/environment';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -91,6 +92,7 @@
 
 	let aiDialogOpen = $state(false);
 	let aiUploading = $state(false);
+	let aiConverting = $state(false);
 	let selectedFile = $state<File | null>(null);
 	let previewUrl = $state<string | null>(null);
 	let isDragging = $state(false);
@@ -107,10 +109,42 @@
 		}
 	});
 
+	async function processFile(file: File) {
+		if (!browser) {
+			return;
+		}
+
+		const isHeic = file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic';
+		if (isHeic) {
+			aiConverting = true;
+			try {
+				// Dynamically import heic2any to avoid SSR issues
+				const heic2any = (await import('heic2any')).default;
+				const convertedBlob = await heic2any({
+					blob: file,
+					toType: 'image/jpeg',
+					quality: 0.7
+				});
+				const blob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
+				selectedFile = new File([blob], file.name.replace(/\.heic$/i, '.jpg'), {
+					type: 'image/jpeg'
+				});
+				Logger.log('HEIC converted to JPEG successfully');
+			} catch (err) {
+				console.error('HEIC conversion failed:', err);
+				selectedFile = file;
+			} finally {
+				aiConverting = false;
+			}
+		} else {
+			selectedFile = file;
+		}
+	}
+
 	function handleFileChange(e: Event) {
 		const input = e.target as HTMLInputElement;
 		if (input.files && input.files[0]) {
-			selectedFile = input.files[0];
+			processFile(input.files[0]);
 		}
 	}
 
@@ -118,7 +152,7 @@
 		e.preventDefault();
 		isDragging = false;
 		if (e.dataTransfer?.files && e.dataTransfer.files[0]) {
-			selectedFile = e.dataTransfer.files[0];
+			processFile(e.dataTransfer.files[0]);
 		}
 	}
 
@@ -357,7 +391,14 @@
 				bind:this={fileInput}
 				onchange={handleFileChange}
 			/>
-			{#if selectedFile && previewUrl}
+			{#if aiConverting}
+				<div class="flex flex-col items-center gap-2">
+					<div
+						class="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"
+					></div>
+					<p class="text-sm">轉換 HEIC 中...</p>
+				</div>
+			{:else if selectedFile && previewUrl}
 				<div class="flex flex-col items-center w-full">
 					<img
 						src={previewUrl}
@@ -376,7 +417,11 @@
 			{/if}
 		</div>
 		<Dialog.Footer class="mt-4 flex flex-col gap-2">
-			<Button class="w-full" disabled={!selectedFile || aiUploading} onclick={handleUpload}>
+			<Button
+				class="w-full"
+				disabled={!selectedFile || aiUploading || aiConverting}
+				onclick={handleUpload}
+			>
 				{#if aiUploading}
 					<div class="flex items-center gap-2">
 						<div
