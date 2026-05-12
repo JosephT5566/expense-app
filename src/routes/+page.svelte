@@ -95,6 +95,7 @@
 	let previewUrl = $state<string | null>(null);
 	let isDragging = $state(false);
 	let fileInput: HTMLInputElement;
+	let lastUploadedFilePath = $state('');
 
 	$effect(() => {
 		if (selectedFile) {
@@ -163,6 +164,40 @@
 		}
 	}
 
+	async function callAnalyzeReceipt(filePath: string) {
+		if (!filePath) {
+			return;
+		}
+
+		const {
+			data: { session }
+		} = await supabase.auth.getSession();
+		const accessToken = session?.access_token;
+		if (!accessToken) {
+			console.error('No access token found');
+			return;
+		}
+
+		try {
+			const url = new URL(PUBLIC_GOOGLE_AI_GCF);
+			url.searchParams.set('action', 'analyze_receipt');
+			url.searchParams.set('file_path', filePath);
+
+			Logger.log('Triggering AI analysis for:', filePath);
+			const response = await fetch(url.toString(), {
+				headers: {
+					Authorization: `Bearer ${accessToken}`
+				}
+			});
+
+			const result = await response.json();
+			Logger.log('AI Analysis Result:', result);
+			return result;
+		} catch (error) {
+			console.error('Error calling analyze_receipt:', error);
+		}
+	}
+
 	async function handleUpload() {
 		if (!selectedFile) {
 			return;
@@ -183,7 +218,9 @@
 
 				if (uploadRes.ok) {
 					Logger.log('File uploaded to GCS successfully');
-					// TODO: Trigger AI analysis with signedUrlData.file_path
+					lastUploadedFilePath = signedUrlData.file_path;
+					// Trigger AI analysis automatically
+					await callAnalyzeReceipt(lastUploadedFilePath);
 					aiDialogOpen = false;
 					selectedFile = null;
 				} else {
@@ -338,12 +375,8 @@
 				<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG, HEIC 格式</p>
 			{/if}
 		</div>
-		<Dialog.Footer class="mt-4">
-			<Button
-				class="w-full"
-				disabled={!selectedFile || aiUploading}
-				onclick={handleUpload}
-			>
+		<Dialog.Footer class="mt-4 flex flex-col gap-2">
+			<Button class="w-full" disabled={!selectedFile || aiUploading} onclick={handleUpload}>
 				{#if aiUploading}
 					<div class="flex items-center gap-2">
 						<div
@@ -355,6 +388,16 @@
 					開始上傳
 				{/if}
 			</Button>
+
+			{#if lastUploadedFilePath}
+				<Button
+					variant="secondary"
+					class="w-full"
+					onclick={() => callAnalyzeReceipt(lastUploadedFilePath)}
+				>
+					重新分析最後一次上傳
+				</Button>
+			{/if}
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
