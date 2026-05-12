@@ -135,6 +135,21 @@ export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseR
 	return data as ExpenseRow;
 }
 
+/**
+ * 批次新增或更新多筆支出項目。
+ * @param {UpsertExpenseInput[]} inputs - 要新增或更新的項目清單。
+ * @returns {Promise<ExpenseRow[]>} 成功後的資料列。
+ */
+export async function upsertExpenses(inputs: UpsertExpenseInput[]): Promise<ExpenseRow[]> {
+	const { data, error } = await supabase.from(TABLE).upsert(inputs).select();
+
+	if (error) {
+		throw error;
+	}
+
+	return data as ExpenseRow[];
+}
+
 export async function deleteExpense(id: string): Promise<{ status: number }> {
 	Logger.log('Deleting expense', id);
 	const { error, status } = await supabase.from(TABLE).delete().eq('id', id);
