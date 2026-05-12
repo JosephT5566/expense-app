@@ -19,7 +19,7 @@
 	import { supabase } from '$lib/supabase/supabaseClient';
 	import Logger from '$lib/utils/logger';
 	import * as jose from 'jose';
-	import { Sparkles, Upload } from 'lucide-svelte';
+	import { Sparkles, Upload, RotateCcw } from 'lucide-svelte';
 	import { browser } from '$app/environment';
 
 	let drawerOpen = $state(false);
@@ -92,12 +92,28 @@
 
 	let aiDialogOpen = $state(false);
 	let aiUploading = $state(false);
+	let aiAnalyzing = $state(false);
 	let aiConverting = $state(false);
 	let selectedFile = $state<File | null>(null);
 	let previewUrl = $state<string | null>(null);
 	let isDragging = $state(false);
 	let fileInput: HTMLInputElement;
 	let lastUploadedFilePath = $state('');
+	// uploads/4b39017c-3ebb-466a-8ed2-3cbbfc8340e2/20260512032836_IMG_4146.jpg
+
+	interface ReceiptItem {
+		name: string;
+		quantity: number;
+		price: number;
+	}
+	interface ReceiptResult {
+		store_name: string;
+		date: string;
+		total_amount: number;
+		currency: string;
+		items: ReceiptItem[];
+	}
+	let analysisResult = $state<ReceiptResult | null>(null);
 
 	$effect(() => {
 		if (selectedFile) {
@@ -202,6 +218,8 @@
 		if (!filePath) {
 			return;
 		}
+		aiAnalyzing = true;
+		analysisResult = null;
 
 		const {
 			data: { session }
@@ -209,6 +227,7 @@
 		const accessToken = session?.access_token;
 		if (!accessToken) {
 			console.error('No access token found');
+			aiAnalyzing = false;
 			return;
 		}
 
@@ -224,11 +243,15 @@
 				}
 			});
 
-			const result = await response.json();
-			Logger.log('AI Analysis Result:', result);
-			return result;
+			const data = await response.json();
+			if (data.status === 'success' && data.result) {
+				analysisResult = data.result;
+			}
+			Logger.log('AI Analysis Result:', data);
 		} catch (error) {
 			console.error('Error calling analyze_receipt:', error);
+		} finally {
+			aiAnalyzing = false;
 		}
 	}
 
@@ -255,8 +278,6 @@
 					lastUploadedFilePath = signedUrlData.file_path;
 					// Trigger AI analysis automatically
 					await callAnalyzeReceipt(lastUploadedFilePath);
-					aiDialogOpen = false;
-					selectedFile = null;
 				} else {
 					console.error('GCS Upload failed:', uploadRes.statusText);
 				}
@@ -363,87 +384,141 @@
 </Dialog.Root>
 
 <Dialog.Root bind:open={aiDialogOpen}>
-	<Dialog.Content class="sm:max-w-[425px]">
+	<Dialog.Content class="sm:max-w-[425px] {analysisResult ? 'max-h-[85vh] overflow-y-auto' : ''}">
 		<Dialog.Header>
 			<Dialog.Title>AI 記帳 - 上傳收據</Dialog.Title>
 		</Dialog.Header>
-		<div
-			class="mt-4 border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center transition-colors {isDragging
-				? 'border-primary bg-primary/10'
-				: 'border-muted'}"
-			role="button"
-			tabindex="0"
-			onpointerenter={() => (isDragging = true)}
-			onpointerleave={() => (isDragging = false)}
-			ondragover={(e) => {
-				e.preventDefault();
-				isDragging = true;
-			}}
-			ondragleave={() => (isDragging = false)}
-			ondrop={handleDrop}
-			onclick={() => fileInput?.click()}
-			onkeydown={(e) => e.key === 'Enter' && fileInput?.click()}
-		>
-			<input
-				type="file"
-				accept="image/jpeg,image/png,image/heic,image/heif"
-				class="hidden"
-				bind:this={fileInput}
-				onchange={handleFileChange}
-			/>
-			{#if aiConverting}
-				<div class="flex flex-col items-center gap-2">
-					<div
-						class="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"
-					></div>
-					<p class="text-sm">轉換 HEIC 中...</p>
-				</div>
-			{:else if selectedFile && previewUrl}
-				<div class="flex flex-col items-center w-full">
+
+		{#if analysisResult}
+			<div class="mt-4 space-y-4">
+				<div class="flex flex-col items-center">
 					<img
 						src={previewUrl}
-						alt="Preview"
-						class="max-h-48 w-full object-contain mb-2 rounded shadow-sm"
+						alt="Receipt"
+						class="max-h-32 object-contain rounded shadow-sm"
 					/>
-					<p class="text-sm font-medium truncate max-w-full">{selectedFile.name}</p>
-					<p class="text-xs text-muted-foreground">
-						{(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-					</p>
 				</div>
-			{:else}
-				<Upload class="w-12 h-12 text-muted-foreground mb-2" />
-				<p class="text-sm">點擊或拖曳圖片至此</p>
-				<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG, HEIC 格式</p>
-			{/if}
-		</div>
-		<Dialog.Footer class="mt-4 flex flex-col gap-2">
-			<Button
-				class="w-full"
-				disabled={!selectedFile || aiUploading || aiConverting}
-				onclick={handleUpload}
+				<div class="grid grid-cols-3 gap-2 text-sm border p-4 rounded-lg bg-muted/20">
+					<div class="text-muted-foreground text-xs uppercase">商店</div>
+					<div class="col-span-2 font-medium">{analysisResult.store_name}</div>
+					<div class="text-muted-foreground text-xs uppercase">日期</div>
+					<div class="col-span-2 font-medium">{analysisResult.date}</div>
+					<div class="text-muted-foreground text-xs uppercase">金額</div>
+					<div class="col-span-2 font-medium text-primary text-lg">
+						${analysisResult.total_amount}
+					</div>
+				</div>
+
+				{#if analysisResult.items && analysisResult.items.length > 0}
+					<div class="space-y-2">
+						<div class="text-xs font-semibold text-muted-foreground uppercase px-1">
+							項目明細
+						</div>
+						<div class="divide-y border rounded-lg overflow-hidden bg-muted/10">
+							{#each analysisResult.items as item, i (item.name + i)}
+								<div class="flex justify-between p-2 text-sm">
+									<div class="flex gap-2">
+										<span class="text-muted-foreground">x{item.quantity}</span>
+										<span>{item.name}</span>
+									</div>
+									<div class="font-medium">${item.price}</div>
+								</div>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
+				<div class="flex gap-2 pt-2">
+					<Button
+						variant="outline"
+						class="grow"
+						onclick={() => (analysisResult = null)}
+						disabled={aiAnalyzing}
+					>
+						<RotateCcw class="w-4 h-4 mr-2" /> 重新分析
+					</Button>
+				</div>
+			</div>
+		{:else}
+			<div
+				class="mt-4 border-2 border-dashed rounded-lg p-4 flex flex-col items-center justify-center transition-colors {isDragging
+					? 'border-primary bg-primary/10'
+					: 'border-muted'}"
+				role="button"
+				tabindex="0"
+				onpointerenter={() => (isDragging = true)}
+				onpointerleave={() => (isDragging = false)}
+				ondragover={(e) => {
+					e.preventDefault();
+					isDragging = true;
+				}}
+				ondragleave={() => (isDragging = false)}
+				ondrop={handleDrop}
+				onclick={() => fileInput?.click()}
+				onkeydown={(e) => e.key === 'Enter' && fileInput?.click()}
 			>
-				{#if aiUploading}
-					<div class="flex items-center gap-2">
+				<input
+					type="file"
+					accept="image/jpeg,image/png,image/heic,image/heif"
+					class="hidden"
+					bind:this={fileInput}
+					onchange={handleFileChange}
+				/>
+				{#if aiConverting}
+					<div class="flex flex-col items-center gap-2">
 						<div
-							class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+							class="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"
 						></div>
-						上傳中...
+						<p class="text-sm">轉換 HEIC 中...</p>
+					</div>
+				{:else if selectedFile && previewUrl}
+					<div class="flex flex-col items-center w-full">
+						<img
+							src={previewUrl}
+							alt="Preview"
+							class="max-h-48 w-full object-contain mb-2 rounded shadow-sm"
+						/>
+						<p class="text-sm font-medium truncate max-w-full">{selectedFile.name}</p>
+						<p class="text-xs text-muted-foreground">
+							{(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+						</p>
 					</div>
 				{:else}
-					開始上傳
+					<Upload class="w-12 h-12 text-muted-foreground mb-2" />
+					<p class="text-sm">點擊或拖曳圖片至此</p>
+					<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG, HEIC 格式</p>
 				{/if}
-			</Button>
-
-			{#if lastUploadedFilePath}
+			</div>
+			<Dialog.Footer class="mt-4 flex flex-col gap-2">
 				<Button
-					variant="secondary"
 					class="w-full"
-					onclick={() => callAnalyzeReceipt(lastUploadedFilePath)}
+					disabled={!selectedFile || aiUploading || aiConverting || aiAnalyzing}
+					onclick={handleUpload}
 				>
-					重新分析最後一次上傳
+					{#if aiUploading || aiAnalyzing}
+						<div class="flex items-center gap-2">
+							<div
+								class="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"
+							></div>
+							{aiUploading ? '上傳中...' : '分析中...'}
+						</div>
+					{:else}
+						開始上傳並分析
+					{/if}
 				</Button>
-			{/if}
-		</Dialog.Footer>
+
+				{#if lastUploadedFilePath}
+					<Button
+						variant="secondary"
+						class="w-full"
+						disabled={aiAnalyzing}
+						onclick={() => callAnalyzeReceipt(lastUploadedFilePath)}
+					>
+						重新分析最後一次上傳
+					</Button>
+				{/if}
+			</Dialog.Footer>
+		{/if}
 	</Dialog.Content>
 </Dialog.Root>
 
