@@ -1,6 +1,7 @@
 <script lang="ts">
-	import type { NewExpense } from '$lib/types/expense';
+	import type { ExpenseRow, Currency, PreviewExpense, PreviewGroupExpense } from '$lib/types/expense';
 	import * as Dialog from '$lib/components/shadcn/dialog';
+	import { Button } from '$lib/components/shadcn/button';
 	import { user } from '$lib/stores/session.store';
 	import { PUBLIC_GOOGLE_AI_GCF, PUBLIC_SUPABASE_URL } from '$env/static/public';
 	import { supabase } from '$lib/supabase/supabaseClient';
@@ -28,9 +29,7 @@
 	let aiConverting = $state(false);
 	let selectedFile = $state<File | null>(null);
 	let previewUrl = $state<string | null>(null);
-	let lastUploadedFilePath = $state(
-		'uploads/4b39017c-3ebb-466a-8ed2-3cbbfc8340e2/20260512032836_IMG_4146.jpg'
-	);
+	let lastUploadedFilePath = $state('');
 	// uploads/4b39017c-3ebb-466a-8ed2-3cbbfc8340e2/20260512032836_IMG_4146.jpg
 
 	interface ReceiptItem {
@@ -46,13 +45,6 @@
 		items: ReceiptItem[];
 	}
 	let analysisResult = $state<ReceiptResult | null>(null);
-	//{
-	//  "store_name": "春蘭割包",
-	//  "date": "2026-05-08",
-	//  "total_amount": 190,
-	//  "currency": "TWD",
-	//  "items": []
-	//}
 
 	const wizardSteps = [
 		{ id: 1, title: '上傳收據', icon: Upload },
@@ -60,23 +52,31 @@
 		{ id: 3, title: '確認匯入', icon: CircleCheckBig }
 	];
 
-	const previewExpenses = $derived.by(() => {
+	let previewExpenses = $state<PreviewExpense[]>([]);
+	let previewGroupExpenses = $state<PreviewGroupExpense>({});
+
+	$effect(() => {
 		if (!analysisResult) {
-			return [];
+			previewExpenses = [];
+			return;
 		}
-		return (analysisResult.items ?? []).map((item, i) => {
+		previewExpenses = (analysisResult.items ?? []).map((item, i) => {
 			return {
-				payer_email: '',
+				id: `preview-${i}-${Date.now()}`,
+				payer_email: $user?.email || '',
 				note: item.name || '',
 				amount: item.price || 0,
-				currency: (analysisResult?.currency as any) || 'TWD',
+				currency: (analysisResult?.currency as Currency) || 'TWD',
 				ts: analysisResult?.date
 					? new Date(analysisResult.date).toISOString()
 					: new Date().toISOString(),
 				scope: 'personal',
-				shares_json: {},
+				shares_json: { [$user?.email || '']: item.price || 0 },
 				is_settled: false,
-			} as Partial<NewExpense>;
+				category_id: '',
+				isGrouped: false,
+				groupId: undefined
+			} as PreviewExpense;
 		});
 	});
 
@@ -187,8 +187,8 @@
 		}
 	}
 
-	function handleConfirm() {
-		onImport?.(previewExpenses);
+	function handleConfirm(expenses: ExpenseRow[]) {
+		onImport?.(expenses);
 		open = false;
 	}
 </script>
@@ -202,6 +202,51 @@
 			{aiAnalyzing}
 			onBack={() => (aiStep -= 1)}
 		/>
+		<Button
+			variant="outline"
+			onclick={() => {
+				analysisResult = {
+					store_name: '好市多股份有限公司汐止分公司',
+					date: '2026-04-18',
+					total_amount: 2708,
+					currency: 'TWD',
+					items: [
+						{
+							name: '桂格有機燕麥片',
+							quantity: 1,
+							price: 415
+						},
+						{
+							name: 'IRISWOOZOO循環扇',
+							quantity: 1,
+							price: 1229
+						},
+						{
+							name: '蚵仔煎洋芋片',
+							quantity: 1,
+							price: 198
+						},
+						{
+							name: '北海鱈魚香絲600G',
+							quantity: 1,
+							price: 299
+						},
+						{
+							name: '富士山氣泡水檸檬',
+							quantity: 1,
+							price: 369
+						},
+						{
+							name: '黑標紅酒瓶售',
+							quantity: 1,
+							price: 198
+						}
+					]
+				};
+			}}
+		>
+			Load data
+		</Button>
 
 		<div class="flex-1 overflow-y-auto px-1">
 			{#if aiStep === 1}
@@ -228,7 +273,11 @@
 					onReset={() => (aiStep = 1)}
 				/>
 			{:else if aiStep === 3}
-				<ConfirmStep {previewExpenses} onConfirm={handleConfirm} />
+				<ConfirmStep
+					bind:previewExpenses
+					bind:previewGroupExpenses
+					onConfirm={handleConfirm}
+				/>
 			{/if}
 		</div>
 	</Dialog.Content>

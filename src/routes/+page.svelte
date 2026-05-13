@@ -90,9 +90,7 @@
 
 	function handleImport(expenses: ExpenseRow[]) {
 		Logger.log('Importing expenses:', expenses);
-		// TODO: Implement actual database persistence for the imported items
-		// For now, we can just close the dialog. 
-		// You might want to add them to the store or trigger a refresh.
+		expensesStore.setMoreItems(expenses);
 	}
 
 	let startX = 0,

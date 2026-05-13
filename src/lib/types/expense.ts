@@ -23,6 +23,13 @@ export interface ExpenseRow {
 	is_settled: boolean; // 是否已標記結清
 }
 
+export interface PreviewExpense extends Partial<ExpenseRow> {
+	isGrouped?: boolean;
+	groupId?: number;
+}
+
+export type PreviewGroupExpense = Record<number, PreviewExpense>;
+
 export class NewExpense implements Partial<ExpenseRow> {
 	currency: Currency;
 	amount: number;
