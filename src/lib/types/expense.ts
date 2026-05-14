@@ -23,6 +23,14 @@ export interface ExpenseRow {
 	is_settled: boolean; // 是否已標記結清
 }
 
+export interface PreviewExpense extends Partial<ExpenseRow> {
+	isGrouped?: boolean;
+	groupId?: number;
+	isHidden?: boolean;
+}
+
+export type PreviewGroupExpense = Record<number, PreviewExpense>;
+
 export class NewExpense implements Partial<ExpenseRow> {
 	currency: Currency;
 	amount: number;
@@ -60,4 +68,18 @@ export interface ExpenseQuery {
 export interface PageResult<T> {
 	items: T[];
 	nextCursor: string | null;
+}
+
+export interface ReceiptItem {
+	name: string;
+	quantity: number;
+	price: number;
+}
+
+export interface ReceiptResult {
+	store_name: string;
+	date: string;
+	total_amount: number;
+	currency: string;
+	items: ReceiptItem[];
 }

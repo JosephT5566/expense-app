@@ -7,12 +7,17 @@
 	import { categoryIconMap } from '$lib/stores/categories.store';
 
 	import * as Dialog from '$lib/components/shadcn/dialog';
+	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
 	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
+	import AIReceiptImportDialog from '$lib/components/AIReceiptImportDialog.svelte';
+
+	import Logger from '$lib/utils/logger';
+	import { Sparkles } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -26,7 +31,7 @@
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
 	const expensesLoading = expensesStore.loading;
-	const dayItems = $derived(() => {
+	const dayItems = $derived.by(() => {
 		const { from, to } = taiwanDayBoundsISO(selectedDate);
 		return ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to);
 	});
@@ -78,8 +83,14 @@
 	function openEdit(e: ExpenseRow) {
 		editMode = true;
 		expenseId = e.id;
-		// 初始化分帳
 		drawerOpen = true;
+	}
+
+	let aiDialogOpen = $state(false);
+
+	function handleImport(expenses: ExpenseRow[]) {
+		Logger.log('Importing expenses:', expenses);
+		expensesStore.setMoreItems(expenses);
 	}
 
 	let startX = 0,
@@ -106,6 +117,7 @@
 
 <section
 	class="card p-4"
+	role="presentation"
 	ontouchstart={onTouchStart}
 	ontouchmove={onTouchMove}
 	ontouchend={onTouchEnd}
@@ -137,21 +149,24 @@
 		</button>
 	</div>
 
-	{#if $expensesLoading && dayItems().length === 0}
+	{#if $expensesLoading && dayItems.length === 0}
 		<p class="mt-3 opacity-70">載入中…</p>
-	{:else if dayItems().length === 0}
-		<div class="mt-3">
-			<button class="btn btn-primary w-full" onclick={openCreate}>輸入今日第一筆記帳</button>
-		</div>
 	{:else}
-		<ExpenseListSection
-			items={dayItems()}
-			categoryIconMap={$categoryIconMap}
-			onEdit={openEdit}
-			showSum={true}
-		/>
-		<div class="mt-3">
-			<button class="btn btn-primary w-full" onclick={openCreate}>新增項目</button>
+		{#if dayItems.length !== 0}
+			<ExpenseListSection
+				items={dayItems}
+				categoryIconMap={$categoryIconMap}
+				onEdit={openEdit}
+				showSum={true}
+			/>
+		{/if}
+		<div class="mt-3 flex gap-2">
+			<Button class="grow" onclick={openCreate}
+				>{dayItems.length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
+			>
+			<Button class="text-primary" variant="outline" onclick={() => (aiDialogOpen = true)}>
+				<Sparkles class="w-5 h-5" />
+			</Button>
 		</div>
 	{/if}
 </section>
@@ -171,6 +186,8 @@
 		/>
 	</Dialog.Content>
 </Dialog.Root>
+
+<AIReceiptImportDialog bind:open={aiDialogOpen} onImport={handleImport} />
 
 <style>
 </style>

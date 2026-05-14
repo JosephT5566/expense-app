@@ -20,9 +20,9 @@
 		<h1 class="font-semibold tracking-tight">{appName}</h1>
 	</div>
 	<div class="flex items-center gap-3">
-		<button class="text-sm opacity-70" onclick={cycleTheme} aria-label="Switch theme"
-			>Theme</button
-		>
+		<button class="text-sm opacity-70" onclick={cycleTheme} aria-label="Switch theme">
+			Theme
+		</button>
 		{#if $user?.photo_url}
 			<img src={$user.photo_url} alt="avatar" class="w-8 h-8 rounded-full object-cover" />
 		{:else if $user}
