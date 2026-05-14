@@ -1,28 +1,17 @@
 <script lang="ts">
 	import { Button } from '$lib/components/shadcn/button';
 	import { RotateCcw, ArrowRight } from 'lucide-svelte';
-
-	interface ReceiptItem {
-		name: string;
-		quantity: number;
-		price: number;
-	}
-	interface ReceiptResult {
-		store_name: string;
-		date: string;
-		total_amount: number;
-		currency: string;
-		items: ReceiptItem[];
-	}
+	import { analyzeReceipt } from '$lib/data/ai-receipt.fetcher';
+	import type { ReceiptResult } from '$lib/types/expense';
+	import Logger from '$lib/utils/logger';
 
 	let {
 		aiStep = $bindable(),
 		aiUploading,
-		aiAnalyzing,
-		analysisResult,
+		aiAnalyzing = $bindable(),
+		analysisResult = $bindable(),
 		previewUrl,
 		lastUploadedFilePath,
-		callAnalyzeReceipt,
 		onReset
 	}: {
 		aiStep: number;
@@ -31,9 +20,28 @@
 		analysisResult: ReceiptResult | null;
 		previewUrl: string | null;
 		lastUploadedFilePath: string;
-		callAnalyzeReceipt: (filePath: string) => Promise<void>;
 		onReset: () => void;
 	} = $props();
+
+	async function handleReAnalyze() {
+		if (!lastUploadedFilePath) {
+			return;
+		}
+
+		aiAnalyzing = true;
+		analysisResult = null;
+		try {
+			const data = await analyzeReceipt(lastUploadedFilePath);
+			if (data.status === 'success' && data.result) {
+				analysisResult = data.result;
+			}
+			Logger.log('AI Analysis Result (Re-analyze):', data);
+		} catch (error) {
+			console.error('Error in handleReAnalyze:', error);
+		} finally {
+			aiAnalyzing = false;
+		}
+	}
 </script>
 
 {#if aiUploading || aiAnalyzing}
@@ -87,7 +95,7 @@
 			<Button
 				variant="outline"
 				class="flex-1"
-				onclick={() => callAnalyzeReceipt(lastUploadedFilePath)}
+				onclick={handleReAnalyze}
 				disabled={aiAnalyzing}
 			>
 				<RotateCcw class="w-4 h-4 mr-2" /> 重新分析

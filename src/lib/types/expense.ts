@@ -68,3 +68,17 @@ export interface PageResult<T> {
 	items: T[];
 	nextCursor: string | null;
 }
+
+export interface ReceiptItem {
+	name: string;
+	quantity: number;
+	price: number;
+}
+
+export interface ReceiptResult {
+	store_name: string;
+	date: string;
+	total_amount: number;
+	currency: string;
+	items: ReceiptItem[];
+}

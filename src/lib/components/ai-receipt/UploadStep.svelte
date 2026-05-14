@@ -3,17 +3,18 @@
 	import { Button } from '$lib/components/shadcn/button';
 	import { browser } from '$app/environment';
 	import Logger from '$lib/utils/logger';
+	import { getUploadUrl, analyzeReceipt } from '$lib/data/ai-receipt.fetcher';
+	import type { ReceiptResult } from '$lib/types/expense';
 
 	let {
 		aiStep = $bindable(),
 		aiUploading = $bindable(),
 		aiConverting = $bindable(),
-		aiAnalyzing,
+		aiAnalyzing = $bindable(),
 		selectedFile = $bindable(),
 		previewUrl,
 		lastUploadedFilePath = $bindable(),
-		callAIGCF,
-		callAnalyzeReceipt
+		analysisResult = $bindable()
 	}: {
 		aiStep: number;
 		aiUploading: boolean;
@@ -22,15 +23,16 @@
 		selectedFile: File | null;
 		previewUrl: string | null;
 		lastUploadedFilePath: string;
-		callAIGCF: (fileName: string, contentType: string) => Promise<any>;
-		callAnalyzeReceipt: (filePath: string) => Promise<void>;
+		analysisResult: ReceiptResult | null;
 	} = $props();
 
 	let isDragging = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
 
 	async function processFile(file: File) {
-		if (!browser) return;
+		if (!browser) {
+			return;
+		}
 
 		const isHeic = file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic';
 		if (isHeic) {
@@ -74,12 +76,14 @@
 	}
 
 	async function handleUpload() {
-		if (!selectedFile) return;
+		if (!selectedFile) {
+			return;
+		}
 		aiStep = 2;
 		aiUploading = true;
 		try {
 			const contentType = selectedFile.type || 'image/jpeg';
-			const signedUrlData = await callAIGCF(selectedFile.name, contentType);
+			const signedUrlData = await getUploadUrl(selectedFile.name, contentType);
 
 			if (signedUrlData?.upload_url) {
 				const uploadRes = await fetch(signedUrlData.upload_url, {
@@ -93,7 +97,15 @@
 				if (uploadRes.ok) {
 					Logger.log('File uploaded to GCS successfully');
 					lastUploadedFilePath = signedUrlData.file_path;
-					await callAnalyzeReceipt(lastUploadedFilePath);
+
+					// Start analysis immediately after upload
+					aiAnalyzing = true;
+					analysisResult = null;
+					const data = await analyzeReceipt(lastUploadedFilePath);
+					if (data.status === 'success' && data.result) {
+						analysisResult = data.result;
+					}
+					Logger.log('AI Analysis Result:', data);
 				} else {
 					console.error('GCS Upload failed:', uploadRes.statusText);
 					aiStep = 1;
@@ -104,6 +116,7 @@
 			aiStep = 1;
 		} finally {
 			aiUploading = false;
+			aiAnalyzing = false;
 		}
 	}
 </script>
