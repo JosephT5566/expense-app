@@ -26,6 +26,7 @@ export interface ExpenseRow {
 export interface PreviewExpense extends Partial<ExpenseRow> {
 	isGrouped?: boolean;
 	groupId?: number;
+	isHidden?: boolean;
 }
 
 export type PreviewGroupExpense = Record<number, PreviewExpense>;

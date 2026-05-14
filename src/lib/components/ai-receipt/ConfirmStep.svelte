@@ -10,7 +10,7 @@
 	} from '$lib/types/expense';
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
 	import { user as currentUser } from '$lib/stores/session.store';
-	import { Layers, Check, X, Ungroup } from 'lucide-svelte';
+	import { Group, Check, X, Ungroup, Eye, EyeOff } from 'lucide-svelte';
 	import { SvelteSet } from 'svelte/reactivity';
 
 	let {
@@ -69,6 +69,7 @@
 			const isManual = key.startsWith('manual-');
 			const groupId = isManual ? parseInt(key.replace('manual-', ''), 10) : index;
 			const color = items.length > 1 ? getGroupColor(groupId) : undefined;
+			const groupIsHidden = items.every((item) => item.isHidden);
 
 			// If it's a group, we might want a summary expense
 			let summaryExpense: PreviewExpense | null = null;
@@ -91,6 +92,11 @@
 						category_id: first.category_id || ''
 					};
 				}
+
+				// Sync hidden state to summary
+				if (summaryExpense && summaryExpense.isHidden !== groupIsHidden) {
+					summaryExpense = { ...summaryExpense, isHidden: groupIsHidden };
+				}
 			}
 
 			return {
@@ -98,7 +104,8 @@
 				items,
 				groupId,
 				color,
-				summaryExpense
+				summaryExpense,
+				isHidden: groupIsHidden
 			};
 		});
 	});
@@ -169,6 +176,26 @@
 		}
 	}
 
+	function handleToggleHideGroup(items: PreviewExpense[], groupId: number) {
+		const itemIds = new Set(items.map((i) => i.id));
+		const shouldHide = !items.every((item) => item.isHidden);
+
+		previewExpenses = previewExpenses.map((item) => {
+			if (item.id && itemIds.has(item.id)) {
+				return { ...item, isHidden: shouldHide };
+			}
+			return item;
+		});
+
+		// Sync hidden state to stored summary if it exists
+		if (previewGroupExpenses[groupId]) {
+			previewGroupExpenses[groupId] = {
+				...previewGroupExpenses[groupId],
+				isHidden: shouldHide
+			};
+		}
+	}
+
 	function isCompleteExpense(expense: PreviewExpense): expense is ExpenseRow {
 		if (!expense.note?.trim()) {
 			return false;
@@ -192,8 +219,10 @@
 		return true;
 	}
 
+	const visibleGroups = $derived(groupedItems.filter((g) => !g.isHidden));
+
 	const allValid = $derived(
-		groupedItems.every((group) => {
+		visibleGroups.every((group) => {
 			if (group.summaryExpense) {
 				return isCompleteExpense(group.summaryExpense);
 			}
@@ -225,7 +254,7 @@
 			return;
 		}
 
-		const payloads = groupedItems.map((group) => {
+		const payloads = visibleGroups.map((group) => {
 			if (group.summaryExpense) {
 				return buildUpsertPayload(group.summaryExpense);
 			}
@@ -249,7 +278,7 @@
 
 <div class="mt-4 space-y-4">
 	<div class="flex items-center justify-between px-1">
-		<p class="text-sm text-muted-foreground">將以下項目送出記帳：</p>
+		<p class="text-sm text-muted-foreground">整理項目並送出：</p>
 		{#if !isSelectionMode}
 			<Button
 				variant="ghost"
@@ -257,8 +286,8 @@
 				class="h-8 gap-1 text-xs"
 				onclick={() => (isSelectionMode = true)}
 			>
-				<Layers class="size-3" />
-				合併項目
+				<Group class="size-3" />
+				合併
 			</Button>
 		{:else}
 			<div class="flex gap-2">
@@ -287,23 +316,41 @@
 
 	<div class="space-y-4">
 		{#each groupedItems as group (group.id)}
-			<div class="space-y-2">
-				{#if group.items.length > 1 && !isSelectionMode}
-					<div class="flex items-center justify-end px-1">
+			<div class="flex gap-1">
+				{#if !isSelectionMode}
+					<div class="flex flex-col gap-1 pt-1 shrink-0">
 						<Button
 							variant="ghost"
-							size="sm"
-							class="h-6 px-2 text-[10px] text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
-							onclick={() => handleUngroup(group.items, group.id)}
+							size="icon"
+							class="h-6 w-6 text-muted-foreground transition-colors {group.isHidden
+								? 'text-primary'
+								: 'hover:text-destructive hover:bg-destructive/5'}"
+							onclick={() => handleToggleHideGroup(group.items, group.groupId)}
+							title={group.isHidden ? '恢復' : '排除'}
 						>
-							<Ungroup class="size-3 mr-1" />
-							解除合併
+							{#if group.isHidden}
+								<Eye class="size-4" />
+							{:else}
+								<EyeOff class="size-4" />
+							{/if}
 						</Button>
+
+						{#if group.items.length > 1 && !group.isHidden}
+							<Button
+								variant="ghost"
+								size="icon"
+								class="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/5 transition-colors"
+								onclick={() => handleUngroup(group.items, group.id)}
+								title="解除合併"
+							>
+								<Ungroup class="size-4" />
+							</Button>
+						{/if}
 					</div>
 				{/if}
 
 				<div
-					class="grid gap-3"
+					class="flex-1 grid gap-3"
 					class:grid-cols-[1fr_100px]={group.summaryExpense && !isSelectionMode}
 					class:grid-cols-1={!group.summaryExpense || isSelectionMode}
 				>
@@ -353,7 +400,7 @@
 			{#if isSubmitting}
 				處理中…
 			{:else}
-				確認並匯入項目 ({groupedItems.length})
+				確認並匯入項目 ({visibleGroups.length})
 			{/if}
 		</Button>
 	</div>

@@ -26,7 +26,11 @@
 	}: Props = $props();
 
 	let open = $state(false);
+	const isHidden = $derived(previewExpense.isHidden || false);
 	let isInvalid = $derived.by(() => {
+		if (isHidden) {
+			return false;
+		}
 		if (previewExpense.isGrouped && !isSummary) {
 			return false;
 		}
@@ -43,6 +47,9 @@
 
 	function handleCardClick() {
 		if (isSelectionMode) {
+			if (isHidden) {
+				return;
+			}
 			if (previewExpense.id) {
 				onSelect?.(previewExpense.id);
 			}
@@ -98,12 +105,15 @@
 		class:border-red-500={isInvalid && !isSelectionMode}
 		class:border-slate-200={!isInvalid || isSelectionMode}
 		class:bg-slate-50={previewExpense.isGrouped || isSummary}
+		class:opacity-40={isHidden}
+		class:grayscale={isHidden}
+		class:bg-slate-100={isHidden}
 		class:ring-2={isSelected}
 		class:ring-primary={isSelected}
 		class:cursor-pointer={true}
 		style={groupColor
 			? isSummary
-				? `background-color: ${groupColor}15;`
+				? `background-color: ${groupColor}15; border-right-width: 4px; border-right-color: ${groupColor}`
 				: `border-left-width: 4px; border-left-color: ${groupColor}`
 			: ''}
 		onclick={handleCardClick}
