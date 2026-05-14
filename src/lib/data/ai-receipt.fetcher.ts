@@ -14,7 +14,7 @@ async function getAccessToken() {
 	return accessToken;
 }
 
-export async function getUploadUrl(fileName: string, contentType: string) {
+export async function getUploadUrl(files: { file_name: string; content_type: string }[]) {
 	const accessToken = await getAccessToken();
 
 	try {
@@ -27,36 +27,45 @@ export async function getUploadUrl(fileName: string, contentType: string) {
 		throw error;
 	}
 
-	const url = new URL(PUBLIC_GOOGLE_AI_GCF);
-	url.searchParams.set('action', 'get_upload_url');
-	url.searchParams.set('file_name', fileName);
-	url.searchParams.set('content_type', contentType);
-
-	const response = await fetch(url.toString(), {
+	const response = await fetch(PUBLIC_GOOGLE_AI_GCF, {
+		method: 'POST',
 		headers: {
-			Authorization: `Bearer ${accessToken}`
-		}
+			Authorization: `Bearer ${accessToken}`,
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({
+			action: 'get_upload_url',
+			files
+		})
 	});
 
 	if (!response.ok) {
 		throw new Error(`Failed to get upload URL: ${response.statusText}`);
 	}
 
-	return await response.json();
+	return (await response.json()) as {
+		uploads: {
+			file_name: string;
+			upload_url: string;
+			file_path: string;
+		}[];
+	};
 }
 
-export async function analyzeReceipt(filePath: string) {
+export async function analyzeReceipt(filePaths: string[]) {
 	const accessToken = await getAccessToken();
 
-	const url = new URL(PUBLIC_GOOGLE_AI_GCF);
-	url.searchParams.set('action', 'analyze_receipt');
-	url.searchParams.set('file_path', filePath);
-
-	Logger.log('Triggering AI analysis for:', filePath);
-	const response = await fetch(url.toString(), {
+	Logger.log('Triggering AI analysis for:', filePaths);
+	const response = await fetch(PUBLIC_GOOGLE_AI_GCF, {
+		method: 'POST',
 		headers: {
-			Authorization: `Bearer ${accessToken}`
-		}
+			Authorization: `Bearer ${accessToken}`,
+			'Content-Type': 'application/json'
+		},
+		body: JSON.stringify({
+			action: 'analyze_receipt',
+			file_paths: filePaths
+		})
 	});
 
 	if (!response.ok) {

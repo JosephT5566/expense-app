@@ -30,9 +30,9 @@
 	let aiUploading = $state(false);
 	let aiAnalyzing = $state(false);
 	let aiConverting = $state(false);
-	let selectedFile = $state<File | null>(null);
-	let previewUrl = $state<string | null>(null);
-	let lastUploadedFilePath = $state('');
+	let selectedFiles = $state<File[]>([]);
+	let previewUrls = $state<string[]>([]);
+	let lastUploadedFilePaths = $state<string[]>([]);
 
 	let analysisResult = $state<ReceiptResult | null>(null);
 
@@ -72,7 +72,7 @@
 
 	function resetAIDialog() {
 		aiStep = 1;
-		selectedFile = null;
+		selectedFiles = [];
 		analysisResult = null;
 		aiUploading = false;
 		aiAnalyzing = false;
@@ -85,12 +85,12 @@
 	});
 
 	$effect(() => {
-		if (selectedFile) {
-			const url = URL.createObjectURL(selectedFile);
-			previewUrl = url;
-			return () => URL.revokeObjectURL(url);
+		if (selectedFiles.length > 0) {
+			const urls = selectedFiles.map((file) => URL.createObjectURL(file));
+			previewUrls = urls;
+			return () => urls.forEach((url) => URL.revokeObjectURL(url));
 		} else {
-			previewUrl = null;
+			previewUrls = [];
 		}
 	});
 
@@ -126,9 +126,9 @@
 					bind:aiUploading
 					bind:aiConverting
 					bind:aiAnalyzing
-					bind:selectedFile
-					{previewUrl}
-					bind:lastUploadedFilePath
+					bind:selectedFiles
+					{previewUrls}
+					bind:lastUploadedFilePaths
 					bind:analysisResult
 				/>
 			{:else if aiStep === 2}
@@ -137,8 +137,8 @@
 					{aiUploading}
 					bind:aiAnalyzing
 					bind:analysisResult
-					{previewUrl}
-					{lastUploadedFilePath}
+					{previewUrls}
+					{lastUploadedFilePaths}
 					onReset={() => (aiStep = 1)}
 				/>
 			{:else if aiStep === 3}

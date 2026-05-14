@@ -4,34 +4,35 @@
 	import { analyzeReceipt } from '$lib/data/ai-receipt.fetcher';
 	import type { ReceiptResult } from '$lib/types/expense';
 	import Logger from '$lib/utils/logger';
+	import * as Carousel from '$lib/components/shadcn/carousel';
 
 	let {
 		aiStep = $bindable(),
 		aiUploading,
 		aiAnalyzing = $bindable(),
 		analysisResult = $bindable(),
-		previewUrl,
-		lastUploadedFilePath,
+		previewUrls = [],
+		lastUploadedFilePaths,
 		onReset
 	}: {
 		aiStep: number;
 		aiUploading: boolean;
 		aiAnalyzing: boolean;
 		analysisResult: ReceiptResult | null;
-		previewUrl: string | null;
-		lastUploadedFilePath: string;
+		previewUrls: string[];
+		lastUploadedFilePaths: string[];
 		onReset: () => void;
 	} = $props();
 
 	async function handleReAnalyze() {
-		if (!lastUploadedFilePath) {
+		if (!lastUploadedFilePaths || lastUploadedFilePaths.length === 0) {
 			return;
 		}
 
 		aiAnalyzing = true;
 		analysisResult = null;
 		try {
-			const data = await analyzeReceipt(lastUploadedFilePath);
+			const data = await analyzeReceipt(lastUploadedFilePaths);
 			if (data.status === 'success' && data.result) {
 				analysisResult = data.result;
 			}
@@ -59,7 +60,37 @@
 {:else if analysisResult}
 	<div class="mt-4 space-y-4">
 		<div class="flex flex-col items-center">
-			<img src={previewUrl} alt="Receipt" class="max-h-32 object-contain rounded shadow-sm" />
+			{#if previewUrls.length > 1}
+				<Carousel.Root class="w-full max-w-[200px]">
+					<Carousel.Content>
+						{#each previewUrls as url, i (i)}
+							<Carousel.Item>
+								<div class="p-1 flex justify-center">
+									<img
+										src={url}
+										alt="Receipt {i + 1}"
+										class="max-h-32 object-contain rounded shadow-sm"
+									/>
+								</div>
+							</Carousel.Item>
+						{/each}
+					</Carousel.Content>
+					<Carousel.Previous class="-left-10" />
+					<Carousel.Next class="-right-10" />
+				</Carousel.Root>
+			{:else if previewUrls.length === 1}
+				<img
+					src={previewUrls[0]}
+					alt="Receipt"
+					class="max-h-32 object-contain rounded shadow-sm"
+				/>
+			{:else}
+				<div
+					class="h-32 w-full flex items-center justify-center bg-muted rounded border border-dashed"
+				>
+					<p class="text-xs text-muted-foreground">無預覽圖片</p>
+				</div>
+			{/if}
 		</div>
 		<div class="grid grid-cols-3 gap-2 text-sm border p-4 rounded-lg bg-muted/20">
 			<div class="text-muted-foreground text-xs uppercase">商店</div>
