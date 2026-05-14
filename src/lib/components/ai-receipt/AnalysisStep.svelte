@@ -51,7 +51,7 @@
 		></div>
 		<div class="text-center">
 			<p class="font-medium">
-				{aiUploading ? '上傳圖片中...' : 'AI 分析中...'}
+				{aiAnalyzing ? 'AI 分析中...' : '上傳圖片中...'}
 			</p>
 			<p class="text-xs text-muted-foreground mt-1">請稍候，這可能需要幾秒鐘</p>
 		</div>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Upload, ArrowRight } from 'lucide-svelte';
+	import { Upload, ArrowRight, Camera } from 'lucide-svelte';
 	import { Button } from '$lib/components/shadcn/button';
 	import { browser } from '$app/environment';
 	import Logger from '$lib/utils/logger';
@@ -28,6 +28,7 @@
 
 	let isDragging = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
+	let cameraInput = $state<HTMLInputElement | null>(null);
 
 	async function processFile(file: File) {
 		if (!browser) {
@@ -145,6 +146,14 @@
 		bind:this={fileInput}
 		onchange={handleFileChange}
 	/>
+	<input
+		type="file"
+		accept="image/*"
+		capture="environment"
+		class="hidden"
+		bind:this={cameraInput}
+		onchange={handleFileChange}
+	/>
 	{#if aiConverting}
 		<div class="flex flex-col items-center gap-2">
 			<div
@@ -169,16 +178,30 @@
 	{:else}
 		<Upload class="w-12 h-12 text-muted-foreground mb-2" />
 		<p class="text-sm font-medium">點擊或拖曳圖片至此</p>
-		<p class="text-xs text-muted-foreground mt-1">支援 JPG, PNG, HEIC 格式</p>
+		<p class="text-xs text-muted-foreground mt-1 text-center">支援 JPG, PNG, HEIC 格式</p>
 	{/if}
 </div>
 
 <div class="mt-6 flex flex-col gap-2">
-	<Button
-		class="w-full"
-		disabled={!selectedFile || aiUploading || aiConverting || aiAnalyzing}
-		onclick={handleUpload}
-	>
-		開始上傳並分析 <ArrowRight class="w-4 h-4 ml-2" />
-	</Button>
+	{#if !selectedFile}
+		<Button class="w-full flex md:hidden" onclick={() => cameraInput?.click()}>
+			<Camera class="w-4 h-4 mr-2" /> 拍照
+		</Button>
+	{:else}
+		<Button
+			class="w-full"
+			disabled={aiUploading || aiConverting || aiAnalyzing}
+			onclick={handleUpload}
+		>
+			開始上傳並分析 <ArrowRight class="w-4 h-4 ml-2" />
+		</Button>
+		<Button
+			variant="ghost"
+			class="w-full"
+			disabled={aiUploading || aiConverting || aiAnalyzing}
+			onclick={() => (selectedFile = null)}
+		>
+			重新選取
+		</Button>
+	{/if}
 </div>
