@@ -276,45 +276,50 @@
 	}
 </script>
 
-<div class="mt-4 space-y-4">
-	<div class="flex items-center justify-between px-1">
-		<p class="text-sm text-muted-foreground">整理項目並送出：</p>
-		{#if !isSelectionMode}
-			<Button
-				variant="ghost"
-				size="sm"
-				class="h-8 gap-1 text-xs"
-				onclick={() => (isSelectionMode = true)}
-			>
-				<Group class="size-3" />
-				合併
-			</Button>
-		{:else}
-			<div class="flex gap-2">
+<div class="flex flex-col min-h-full">
+	<!-- Sticky Header -->
+	<div class="sticky top-0 z-20 -mx-1 bg-popover/95 px-1 py-1 backdrop-blur-sm">
+		<div class="flex items-center justify-between">
+			<p class="text-sm font-medium text-muted-foreground">整理項目並送出：</p>
+			{#if !isSelectionMode}
 				<Button
-					variant="outline"
+					variant="ghost"
 					size="sm"
 					class="h-8 gap-1 text-xs"
-					onclick={handleCancelSelection}
+					onclick={() => (isSelectionMode = true)}
 				>
-					<X class="size-3" />
-					取消
+					<Group class="size-3" />
+					合併
 				</Button>
-				<Button
-					variant="default"
-					size="sm"
-					class="h-8 gap-1 text-xs"
-					disabled={selectedIds.size < 2}
-					onclick={handleMergeSelected}
-				>
-					<Check class="size-3" />
-					合併所選 ({selectedIds.size})
-				</Button>
-			</div>
-		{/if}
+			{:else}
+				<div class="flex gap-2">
+					<Button
+						variant="outline"
+						size="sm"
+						class="h-8 gap-1 text-xs"
+						onclick={handleCancelSelection}
+					>
+						<X class="size-3" />
+						取消
+					</Button>
+					<Button
+						variant="default"
+						size="sm"
+						class="h-8 gap-1 text-xs"
+						disabled={selectedIds.size < 2}
+						onclick={handleMergeSelected}
+					>
+						<Check class="size-3" />
+						合併所選 ({selectedIds.size})
+					</Button>
+				</div>
+			{/if}
+		</div>
+		<div class="absolute bottom-0 left-0 right-0 h-px bg-border/50"></div>
 	</div>
 
-	<div class="space-y-4">
+	<!-- Scrollable Content Area -->
+	<div class="flex-1 space-y-4 py-4">
 		{#each groupedItems as group (group.id)}
 			<div class="flex gap-1">
 				{#if !isSelectionMode}

@@ -7,9 +7,10 @@
 		ReceiptResult
 	} from '$lib/types/expense';
 	import * as Dialog from '$lib/components/shadcn/dialog';
-	// import { Button } from '$lib/components/shadcn/button';
+	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
+	import { Button } from '$lib/components/shadcn/button';
 	import { user } from '$lib/stores/session.store';
-	import { Sparkles, Upload, CircleCheckBig } from 'lucide-svelte';
+	import { Sparkles, Upload, CircleCheckBig, X } from 'lucide-svelte';
 
 	// Child components
 	import StepHeader from './ai-receipt/StepHeader.svelte';
@@ -33,6 +34,7 @@
 	let selectedFiles = $state<File[]>([]);
 	let previewUrls = $state<string[]>([]);
 	let lastUploadedFilePaths = $state<string[]>([]);
+	let showConfirmClose = $state(false);
 
 	let analysisResult = $state<ReceiptResult | null>(null);
 
@@ -101,7 +103,33 @@
 </script>
 
 <Dialog.Root bind:open>
-	<Dialog.Content class="sm:max-w-[425px] max-h-[90vh] overflow-hidden flex flex-col">
+	<Dialog.Content
+		class="sm:max-w-[425px] max-h-[90vh] overflow-hidden flex flex-col"
+		onInteractOutside={(e) => {
+			if (aiStep > 1) {
+				e.preventDefault();
+				showConfirmClose = true;
+			}
+		}}
+		onEscapeKeydown={(e) => {
+			if (aiStep > 1) {
+				e.preventDefault();
+				showConfirmClose = true;
+			}
+		}}
+		showCloseButton={aiStep === 1}
+	>
+		{#if aiStep > 1}
+			<Button
+				variant="ghost"
+				class="absolute right-2 top-2 h-8 w-8 p-0"
+				onclick={() => (showConfirmClose = true)}
+			>
+				<X class="h-4 w-4" />
+				<span class="sr-only">Close</span>
+			</Button>
+		{/if}
+
 		<StepHeader
 			{aiStep}
 			{wizardSteps}
@@ -151,3 +179,25 @@
 		</div>
 	</Dialog.Content>
 </Dialog.Root>
+
+<AlertDialog.Root bind:open={showConfirmClose}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>確認取消匯入？</AlertDialog.Title>
+			<AlertDialog.Description>
+				目前的進度將會遺失，且上傳的收據將不會被儲存。
+			</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>繼續匯入</AlertDialog.Cancel>
+			<AlertDialog.Action
+				onclick={() => {
+					open = false;
+					showConfirmClose = false;
+				}}
+			>
+				確認取消
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

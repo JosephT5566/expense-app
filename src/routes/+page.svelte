@@ -7,6 +7,8 @@
 	import { categoryIconMap } from '$lib/stores/categories.store';
 
 	import * as Dialog from '$lib/components/shadcn/dialog';
+	import * as Carousel from '$lib/components/shadcn/carousel';
+	import type { CarouselAPI } from '$lib/components/shadcn/carousel/context';
 	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
@@ -17,7 +19,7 @@
 	import AIReceiptImportDialog from '$lib/components/AIReceiptImportDialog.svelte';
 
 	import Logger from '$lib/utils/logger';
-	import { Sparkles } from 'lucide-svelte';
+	import { Sparkles, TreePalm } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -31,10 +33,6 @@
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
 	const expensesLoading = expensesStore.loading;
-	const dayItems = $derived.by(() => {
-		const { from, to } = taiwanDayBoundsISO(selectedDate);
-		return ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to);
-	});
 
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	$effect(() => {
@@ -63,17 +61,6 @@
 	function isToday(dateStr: string) {
 		return dateStr === toDateOnlyStr(today);
 	}
-	function shiftDay(delta: number) {
-		if (delta > 0 && isToday(selectedDate)) {
-			return;
-		}
-		const [y, m, d] = selectedDate.split('-').map(Number);
-		const next = toDateOnlyStr(new Date(y, m - 1, d + delta));
-		if (delta > 0 && next > toDateOnlyStr(today)) {
-			return;
-		}
-		selectedDate = next;
-	}
 
 	function openCreate() {
 		editMode = false;
@@ -93,83 +80,136 @@
 		expensesStore.setMoreItems(expenses);
 	}
 
-	let startX = 0,
-		dx = 0;
-	const SWIPE = 60;
-	function onTouchStart(e: TouchEvent) {
-		startX = e.touches[0].clientX;
-		dx = 0;
-	}
-	function onTouchMove(e: TouchEvent) {
-		dx = e.touches[0].clientX - startX;
-	}
-	function onTouchEnd() {
-		if (dx < -SWIPE) {
-			shiftDay(+1);
+	// Carousel sync logic
+	let carouselApi = $state<CarouselAPI>();
+	let initialized = $state(false);
+
+	const dateList = $derived.by(() => {
+		const list = [];
+		const start = new Date(today);
+		start.setDate(start.getDate() - 60);
+		for (let i = 0; i <= 60; i++) {
+			const d = new Date(start);
+			d.setDate(d.getDate() + i);
+			list.push(toDateOnlyStr(d));
 		}
-		if (dx > SWIPE) {
-			shiftDay(-1);
+		return list;
+	});
+
+	$effect(() => {
+		if (carouselApi && selectedDate) {
+			const index = dateList.indexOf(selectedDate);
+			if (index !== -1 && index !== carouselApi.selectedScrollSnap()) {
+				carouselApi.scrollTo(index, !initialized);
+				initialized = true;
+			}
 		}
-		startX = 0;
-		dx = 0;
-	}
+	});
+
+	$effect(() => {
+		if (carouselApi) {
+			const onSelect = () => {
+				const index = carouselApi!.selectedScrollSnap();
+				const newDate = dateList[index];
+				if (newDate && newDate !== selectedDate) {
+					selectedDate = newDate;
+				}
+			};
+			carouselApi.on('select', onSelect);
+			return () => carouselApi!.off('select', onSelect);
+		}
+	});
 </script>
 
-<section
-	class="card p-4"
-	role="presentation"
-	ontouchstart={onTouchStart}
-	ontouchmove={onTouchMove}
-	ontouchend={onTouchEnd}
->
-	<div class="flex items-center justify-center relative">
-		<RetrieveExpenseButton className="absolute left-0 text-[var(--c-primary)]" {monthKey} />
-		<button class="px-2 py-1" onclick={() => shiftDay(-1)}>◀</button>
+<div class="py-2">
+	<div class="flex items-center justify-between px-4 py-3 mb-4 bg-card/50 backdrop-blur-sm rounded-2xl border border-border/50 shadow-sm">
+		<div class="flex items-center gap-4">
+			<div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20">
+				<RetrieveExpenseButton {monthKey} />
+			</div>
+			<div class="flex flex-col">
+				<span class="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/60">
+					{isToday(selectedDate) ? 'Today' : 'History'}
+				</span>
+				<div class="relative flex items-center">
+					<input
+						type="date"
+						value={selectedDate}
+						class="bg-transparent border-none p-0 text-base font-black tracking-tight focus:ring-0 cursor-pointer appearance-none"
+						max={toDateOnlyStr(today)}
+						oninput={(e) => {
+							const target = e.target as HTMLInputElement;
+							if (!target.value) {
+								selectedDate = toDateOnlyStr(today);
+								return;
+							}
+							selectedDate = target.value;
+						}}
+					/>
+				</div>
+			</div>
+		</div>
 
-		<input
-			type="date"
-			value={selectedDate}
-			class="px-3 py-1 rounded-md bg-[var(--c-bg)]"
-			max={toDateOnlyStr(today)}
-			oninput={(e) => {
-				const target = e.target as HTMLInputElement;
-				if (!target.value) {
-					selectedDate = toDateOnlyStr(today);
-					return;
-				}
-				selectedDate = target.value;
-			}}
-		/>
-		<button
-			class="px-2 py-1 disabled:opacity-40"
-			disabled={isToday(selectedDate)}
-			onclick={() => shiftDay(+1)}
-		>
-			▶
-		</button>
+		<div class="flex items-center gap-2">
+			{#if !isToday(selectedDate)}
+				<Button 
+					variant="secondary" 
+					size="sm" 
+					class="h-8 rounded-full px-4 text-[10px] font-black uppercase tracking-widest shadow-sm transition-all hover:scale-105 active:scale-95"
+					onclick={() => selectedDate = toDateOnlyStr(today)}
+				>
+					Today
+				</Button>
+			{/if}
+		</div>
 	</div>
 
-	{#if $expensesLoading && dayItems.length === 0}
-		<p class="mt-3 opacity-70">載入中…</p>
-	{:else}
-		{#if dayItems.length !== 0}
-			<ExpenseListSection
-				items={dayItems}
-				categoryIconMap={$categoryIconMap}
-				onEdit={openEdit}
-				showSum={true}
-			/>
-		{/if}
-		<div class="mt-3 flex gap-2">
-			<Button class="grow" onclick={openCreate}
-				>{dayItems.length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
-			>
-			<Button class="text-primary" variant="outline" onclick={() => (aiDialogOpen = true)}>
-				<Sparkles class="w-5 h-5" />
-			</Button>
-		</div>
-	{/if}
-</section>
+	<Carousel.Root
+		setApi={(api) => (carouselApi = api)}
+		opts={{ align: 'center', containScroll: false }}
+		class="w-full"
+	>
+		<Carousel.Content class="items-start">
+			{#each dateList as date (date)}
+				{@const { from, to } = taiwanDayBoundsISO(date)}
+				{@const items = ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to)}
+				<Carousel.Item class="basis-[85%] pl-4">
+					<section class="card p-4">
+						{#if $expensesLoading && items.length === 0 && selectedDate === date}
+							<p class="mt-3 opacity-70 text-sm font-medium">載入中…</p>
+						{:else}
+							{#if items.length !== 0}
+								<ExpenseListSection
+									{items}
+									categoryIconMap={$categoryIconMap}
+									onEdit={openEdit}
+									showSum={true}
+								/>
+							{:else}
+								<div class="py-12 flex flex-col items-center justify-center opacity-30">
+									<TreePalm class="w-8 h-8 mb-2" />
+									<p class="text-xs font-bold uppercase tracking-widest">No Records</p>
+								</div>
+							{/if}
+							<div class="mt-4 flex gap-2">
+								<Button class="grow font-bold shadow-sm" onclick={openCreate}
+									>{items.length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
+								>
+								<Button
+									class="text-primary hover:bg-primary/5 border-primary/20"
+									variant="outline"
+									onclick={() => (aiDialogOpen = true)}
+								>
+									<Sparkles class="w-5 h-5" />
+								</Button>
+							</div>
+						{/if}
+					</section>
+				</Carousel.Item>
+			{/each}
+		</Carousel.Content>
+	</Carousel.Root>
+</div>
 
 <Dialog.Root bind:open={drawerOpen}>
 	<Dialog.Content class="max-h-[75vh] overflow-y-auto sm:max-w-[425px]">
@@ -188,6 +228,3 @@
 </Dialog.Root>
 
 <AIReceiptImportDialog bind:open={aiDialogOpen} onImport={handleImport} />
-
-<style>
-</style>
