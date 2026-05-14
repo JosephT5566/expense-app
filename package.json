@@ -37,6 +37,7 @@
 		"bits-ui": "^2.18.1",
 		"clsx": "^2.1.1",
 		"daisyui": "^5.3.2",
+		"embla-carousel-svelte": "^8.6.0",
 		"eslint": "^9.36.0",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.17.1",
