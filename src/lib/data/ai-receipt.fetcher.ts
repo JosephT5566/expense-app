@@ -1,7 +1,6 @@
-import { PUBLIC_GOOGLE_AI_GCF, PUBLIC_SUPABASE_URL } from '$env/static/public';
+import { PUBLIC_GOOGLE_AI_GCF } from '$env/static/public';
 import { supabase } from '$lib/supabase/supabaseClient';
 import Logger from '$lib/utils/logger';
-import * as jose from 'jose';
 
 async function getAccessToken() {
 	const {
@@ -16,16 +15,6 @@ async function getAccessToken() {
 
 export async function getUploadUrl(files: { file_name: string; content_type: string }[]) {
 	const accessToken = await getAccessToken();
-
-	try {
-		const JWKS = jose.createRemoteJWKSet(
-			new URL(`${PUBLIC_SUPABASE_URL}/auth/v1/.well-known/jwks.json`)
-		);
-		await jose.jwtVerify(accessToken, JWKS);
-	} catch (error) {
-		Logger.error('Token verification failed:', error);
-		throw error;
-	}
 
 	const response = await fetch(PUBLIC_GOOGLE_AI_GCF, {
 		method: 'POST',

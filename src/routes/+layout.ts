@@ -7,7 +7,6 @@ import { listCategories } from '$lib/data/categories.fetcher';
 import { listAppSetting } from '$lib/data/appSetting.fetcher';
 import { getTaiwanMonthKey } from '$lib/utils/dates';
 import { LOAD_DEP_KEYS } from '$lib/utils/const';
-import { signOutIfExpired } from '$lib/supabase/auth';
 import Logger from '$lib/utils/logger';
 
 export const load: LayoutLoad = async ({ depends, url }) => {
@@ -23,10 +22,6 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 	depends(LOAD_DEP_KEYS.appSettings);
 	depends(LOAD_DEP_KEYS.expenses);
 
-	await signOutIfExpired({
-		isDisable: true, // cancel the auto sign-out. It used to be auto sign-out every 8 hours.
-	});
-
 	// 1) 取登入使用者（在 ssr=false 下可安全呼叫）
 	const { data: u } = await supabase.auth.getUser();
 	const user = u?.user
@@ -34,7 +29,7 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 				id: u.user.id,
 				email: u.user.email ?? '',
 				display_name: u.user.user_metadata?.name ?? null,
-				photo_url: u.user.user_metadata?.avatar_url ?? null,
+				photo_url: u.user.user_metadata?.avatar_url ?? null
 			}
 		: null;
 
@@ -57,6 +52,6 @@ export const load: LayoutLoad = async ({ depends, url }) => {
 		user,
 		categories,
 		allowedEmails,
-		depKeys: LOAD_DEP_KEYS, // 給子層寫入後好用 invalidate(depKeys.xxx)
+		depKeys: LOAD_DEP_KEYS // 給子層寫入後好用 invalidate(depKeys.xxx)
 	};
 };
