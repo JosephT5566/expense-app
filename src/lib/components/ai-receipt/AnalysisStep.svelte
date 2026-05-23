@@ -137,8 +137,17 @@
 		</div>
 	</div>
 {:else}
-	<div class="py-12 text-center">
+	<div class="py-12 text-center space-y-4">
 		<p class="text-muted-foreground">分析失敗或無結果</p>
-		<Button variant="outline" class="mt-4" onclick={onReset}>返回重新上傳</Button>
+		{#if lastUploadedFilePaths.length > 0}
+			<div class="flex flex-col gap-2">
+				<Button variant="outline" onclick={handleReAnalyze} disabled={aiAnalyzing}>
+					<RotateCcw class="w-4 h-4 mr-2" /> 重新分析
+				</Button>
+				<Button variant="ghost" onclick={onReset}>返回重新上傳</Button>
+			</div>
+		{:else}
+			<Button variant="outline" onclick={onReset}>返回重新上傳</Button>
+		{/if}
 	</div>
 {/if}

@@ -4,7 +4,6 @@ export const mockReceiptResult: ReceiptResult = {
 	"store_name": "好市多股份有限公司汐止分公司",
 	"date": "2026-04-18",
 	"total_amount": 6033,
-	"currency": "TWD",
 	"items": [
 		{
 			"name": "桂格有機燕麥片",

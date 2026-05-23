@@ -1,7 +1,6 @@
 <script lang="ts">
 	import type {
 		ExpenseRow,
-		Currency,
 		PreviewExpense,
 		PreviewGroupExpense,
 		ReceiptResult
@@ -58,7 +57,7 @@
 				payer_email: $user?.email || '',
 				note: item.name || '',
 				amount: item.price || 0,
-				currency: (analysisResult?.currency as Currency) || 'TWD',
+				currency: 'TWD',
 				ts: analysisResult?.date
 					? new Date(analysisResult.date).toISOString()
 					: new Date().toISOString(),
@@ -78,6 +77,8 @@
 		analysisResult = null;
 		aiUploading = false;
 		aiAnalyzing = false;
+		aiConverting = false;
+		lastUploadedFilePaths = [];
 	}
 
 	$effect(() => {

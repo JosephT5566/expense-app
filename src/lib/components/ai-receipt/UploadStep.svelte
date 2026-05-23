@@ -137,7 +137,9 @@
 			}
 		} catch (err) {
 			console.error('Error in handleUpload:', err);
-			aiStep = 1;
+			if (lastUploadedFilePaths.length === 0) {
+				aiStep = 1;
+			}
 		} finally {
 			aiUploading = false;
 			aiAnalyzing = false;

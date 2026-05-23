@@ -80,6 +80,5 @@ export interface ReceiptResult {
 	store_name: string;
 	date: string;
 	total_amount: number;
-	currency: string;
 	items: ReceiptItem[];
 }
