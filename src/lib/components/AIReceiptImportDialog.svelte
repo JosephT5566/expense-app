@@ -78,6 +78,8 @@
 		analysisResult = null;
 		aiUploading = false;
 		aiAnalyzing = false;
+		aiConverting = false;
+		lastUploadedFilePaths = [];
 	}
 
 	$effect(() => {
