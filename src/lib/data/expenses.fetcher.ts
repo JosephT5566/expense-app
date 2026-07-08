@@ -4,7 +4,7 @@ import type {
 	ExpenseQuery,
 	PageResult,
 	ShareEntry,
-	ExpenseScope,
+	ExpenseScope
 } from '$lib/types/expense';
 import * as expensesStore from '$lib/stores/expenses.store';
 import { user as currentUser } from '$lib/stores/session.store';
@@ -97,7 +97,7 @@ export async function listExpensesMonthly(
 		...q,
 		limit,
 		from, // 含當月 00:00:00 (台灣) 對應的 UTC ISO
-		to, // 不含次月 00:00:00 (台灣) 對應的 UTC ISO
+		to // 不含次月 00:00:00 (台灣) 對應的 UTC ISO
 	});
 }
 
@@ -122,7 +122,7 @@ export interface UpsertExpenseInput {
 	shares_json: ShareEntry;
 	is_settled?: boolean;
 	notes?: string;
-	category_id: string;
+	category_id?: string | null;
 }
 
 export async function upsertExpense(input: UpsertExpenseInput): Promise<ExpenseRow> {
@@ -159,7 +159,7 @@ export async function deleteExpense(id: string): Promise<{ status: number }> {
 	}
 
 	return {
-		status,
+		status
 	};
 }
 

@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Icon from '@iconify/svelte';
-	import { derived } from 'svelte/store';
 	import { CalendarClock, Pencil, Plus, Trash2 } from 'lucide-svelte';
 	import { SvelteDate } from 'svelte/reactivity';
 
@@ -14,6 +13,7 @@
 	import { categoryIconMap, expenseOptions } from '$lib/stores/categories.store';
 	import { user as currentUser } from '$lib/stores/session.store';
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
+	import * as scheduledExpensesStore from '$lib/stores/scheduled-expenses.store';
 	import type {
 		Currency,
 		ExpenseRow,
@@ -21,7 +21,6 @@
 		ScheduledExpenseRecurrence,
 		ScheduledExpenseRow
 	} from '$lib/types/expense';
-	import * as scheduledStore from '$lib/stores/scheduled-expenses.mock.store';
 
 	type TabValue = ScheduledExpenseKind;
 
@@ -51,14 +50,18 @@
 	let recurrenceMonthDay = $state(String(new SvelteDate().getDate()));
 	let errorMessage = $state('');
 	let initialExpense = $state<Partial<ExpenseRow>>({});
+	let deletingId = $state<string | null>(null);
+	let loadedForEmail = $state<string | null>(null);
+	const rows = scheduledExpensesStore.items;
+	const loading = scheduledExpensesStore.loading;
 
-	const oneTimeRows = derived(scheduledStore.items, ($items) =>
-		$items
+	const oneTimeRows = $derived(
+		$rows
 			.filter((row) => row.kind === 'one_time' && row.status === 'pending')
 			.sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for))
 	);
-	const recurringRows = derived(scheduledStore.items, ($items) =>
-		$items
+	const recurringRows = $derived(
+		$rows
 			.filter((row) => row.kind === 'recurring' && row.status === 'pending')
 			.sort((a, b) => a.scheduled_for.localeCompare(b.scheduled_for))
 	);
@@ -66,6 +69,23 @@
 	const dialogTitle = $derived(
 		editingId ? '編輯預定支出' : activeTab === 'one_time' ? '新增單次預定支出' : '新增定期支出'
 	);
+
+	$effect(() => {
+		const userEmail = $currentUser?.email ?? '';
+
+		if (!userEmail) {
+			scheduledExpensesStore.clearAll();
+			loadedForEmail = null;
+			return;
+		}
+
+		if (loadedForEmail === userEmail) {
+			return;
+		}
+
+		loadedForEmail = userEmail;
+		void scheduledExpensesStore.loadPending();
+	});
 
 	function openCreate() {
 		resetForm(activeTab);
@@ -122,11 +142,22 @@
 		errorMessage = '';
 	}
 
-	function handleDelete(id: string) {
+	async function handleDelete(id: string) {
 		if (!confirm('確定要刪除這筆預定支出嗎？')) {
 			return;
 		}
-		scheduledStore.deleteScheduledExpense(id);
+
+		deletingId = id;
+		errorMessage = '';
+
+		try {
+			await scheduledExpensesStore.remove(id);
+		} catch (error) {
+			console.error('Delete scheduled expense error:', error);
+			errorMessage = '刪除預定支出失敗，請稍後再試。';
+		} finally {
+			deletingId = null;
+		}
 	}
 
 	async function handleScheduledSubmit(payload: UpsertExpenseInput) {
@@ -141,28 +172,34 @@
 		const baseDate = scheduledDate;
 		errorMessage = '';
 
-		scheduledStore.upsertScheduledExpense({
-			id: editingId ?? undefined,
-			owner_email: userEmail,
-			payer_email: payload.payer_email || userEmail,
-			note: payload.note.trim(),
-			amount: Number(payload.amount),
-			currency: payload.currency as Currency,
-			scheduled_for: getScheduledISO(kind, baseDate),
-			scope: payload.scope,
-			shares_json: payload.shares_json,
-			category_id: payload.category_id,
-			kind,
-			recurrence_rule: kind === 'recurring' ? recurrenceRule : null,
-			recurrence_weekday:
-				kind === 'recurring' && recurrenceRule === 'weekly'
-					? Number(recurrenceWeekday)
-					: null,
-			recurrence_month_day:
-				kind === 'recurring' && recurrenceRule === 'monthly'
-					? Number(recurrenceMonthDay)
-					: null
-		});
+		try {
+			await scheduledExpensesStore.save({
+				id: editingId ?? undefined,
+				owner_email: userEmail,
+				payer_email: payload.payer_email || userEmail,
+				note: payload.note.trim(),
+				amount: Number(payload.amount),
+				currency: payload.currency as Currency,
+				scheduled_for: getScheduledISO(kind, baseDate),
+				scope: payload.scope,
+				shares_json: payload.shares_json,
+				category_id: payload.category_id,
+				kind,
+				recurrence_rule: kind === 'recurring' ? recurrenceRule : null,
+				recurrence_weekday:
+					kind === 'recurring' && recurrenceRule === 'weekly'
+						? Number(recurrenceWeekday)
+						: null,
+				recurrence_month_day:
+					kind === 'recurring' && recurrenceRule === 'monthly'
+						? Number(recurrenceMonthDay)
+						: null
+			});
+		} catch (error) {
+			console.error('Upsert scheduled expense error:', error);
+			errorMessage = '儲存預定支出失敗，請稍後再試。';
+			throw error;
+		}
 
 		dialogOpen = false;
 	}
@@ -217,7 +254,7 @@
 		return `每月 ${row.recurrence_month_day} 日`;
 	}
 
-	function getCategoryLabel(categoryId?: string) {
+	function getCategoryLabel(categoryId?: string | null) {
 		return $expenseOptions.find((option) => option.value === categoryId)?.label ?? '未分類';
 	}
 
@@ -288,6 +325,12 @@
 	</div>
 
 	<div class="card p-4 space-y-4">
+		{#if errorMessage && !dialogOpen}
+			<p class="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+				{errorMessage}
+			</p>
+		{/if}
+
 		<Tabs.Root bind:value={activeTab} class="w-full">
 			<Tabs.List class="grid w-full grid-cols-2">
 				<Tabs.Trigger value="one_time">單次</Tabs.Trigger>
@@ -296,9 +339,10 @@
 
 			<Tabs.Content value="one_time">
 				{@render ScheduleList({
-					rows: $oneTimeRows,
+					rows: oneTimeRows,
 					onEdit: openEdit,
 					onDelete: handleDelete,
+					deletingId,
 					getCategoryLabel,
 					getRecurrenceText,
 					formatDate,
@@ -309,9 +353,10 @@
 
 			<Tabs.Content value="recurring">
 				{@render ScheduleList({
-					rows: $recurringRows,
+					rows: recurringRows,
 					onEdit: openEdit,
 					onDelete: handleDelete,
+					deletingId,
 					getCategoryLabel,
 					getRecurrenceText,
 					formatDate,
@@ -320,6 +365,10 @@
 				})}
 			</Tabs.Content>
 		</Tabs.Root>
+
+		{#if $loading}
+			<p class="text-sm text-muted-foreground">讀取中...</p>
+		{/if}
 	</div>
 </section>
 
@@ -418,6 +467,7 @@
 	rows,
 	onEdit,
 	onDelete,
+	deletingId,
 	getCategoryLabel,
 	getRecurrenceText,
 	formatDate,
@@ -426,8 +476,9 @@
 }: {
 	rows: ScheduledExpenseRow[];
 	onEdit: (row: ScheduledExpenseRow) => void;
-	onDelete: (id: string) => void;
-	getCategoryLabel: (id?: string) => string;
+	onDelete: (id: string) => void | Promise<void>;
+	deletingId: string | null;
+	getCategoryLabel: (id?: string | null) => string;
 	getRecurrenceText: (row: ScheduledExpenseRow) => string;
 	formatDate: (iso: string) => string;
 	formatAmount: (value: number) => string;
@@ -495,6 +546,7 @@
 									size="icon-sm"
 									aria-label="刪除"
 									class="text-destructive hover:bg-destructive/10"
+									disabled={deletingId === row.id}
 									onclick={() => onDelete(row.id)}
 								>
 									<Trash2 class="h-4 w-4" />

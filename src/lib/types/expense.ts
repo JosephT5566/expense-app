@@ -19,7 +19,7 @@ export interface ExpenseRow {
 	scope: ExpenseScope; // 'household' | 'personal'
 	shares_json: ShareEntry; // 僅能看到自己「有參與」的（RLS 篩）
 	notes?: string;
-	category_id?: string;
+	category_id?: string | null;
 	meta: string;
 	created_at: string; // ISO
 	updated_at: string; // ISO
@@ -37,7 +37,7 @@ export interface ScheduledExpenseRow {
 	timezone: string;
 	scope: ExpenseScope;
 	shares_json: ShareEntry;
-	category_id?: string;
+	category_id?: string | null;
 	kind: ScheduledExpenseKind;
 	recurrence_rule?: ScheduledExpenseRecurrence | null;
 	recurrence_weekday?: number | null;
