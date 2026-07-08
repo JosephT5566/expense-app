@@ -27,27 +27,46 @@
 
 	type CategoryCard = { id: string; name: string; icon: string };
 
+	const today = new Date();
+
 	let {
 		expenseId = '',
 		editMode = false,
 		selectedDate: selectedDateProp = '',
-		onSubmitFinish,
+		initialExpense,
+		dateDisabled,
+		dateMax = toTaiwanDateString(today),
+		showDate = true,
+		submitLabel,
+		disableSubmitUntilChanged = true,
+		showDelete,
+		onSubmitExpense,
+		onSubmitFinish
 	}: {
 		expenseId?: string;
 		editMode?: boolean;
 		selectedDate?: string;
+		initialExpense?: Partial<ExpenseRow>;
+		dateDisabled?: boolean;
+		dateMax?: string;
+		showDate?: boolean;
+		submitLabel?: string;
+		disableSubmitUntilChanged?: boolean;
+		showDelete?: boolean;
+		onSubmitExpense?: (payload: UpsertExpenseInput) => Promise<void> | void;
 		onSubmitFinish?: () => void;
 	} = $props();
 
 	let expenseData = $state(
-		expenseId ? getExpenseById(expenseId) : Object.assign({}, new NewExpense()), // transfer a Class to an Object.
+		expenseId ? getExpenseById(expenseId) : Object.assign({}, new NewExpense(), initialExpense) // transfer a Class to an Object.
 	);
 
-	let selectedDate = $derived(
-		selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : ''),
+	let selectedDate = $state(
+		selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : '')
 	);
+	const effectiveDateDisabled = $derived(dateDisabled ?? !editMode);
+	const effectiveShowDelete = $derived(showDelete ?? (editMode && !onSubmitExpense));
 
-	const today = new Date();
 	// const LOADING_MIN_DURATION_MS = 400;
 	// const FINISHED_DURATION_MS = 1500;
 
@@ -56,9 +75,7 @@
 
 	// handle and update shares state
 	let shares = $state(
-		expenseData.scope === 'personal' || !expenseData?.shares_json
-			? {}
-			: expenseData.shares_json,
+		expenseData.scope === 'personal' || !expenseData?.shares_json ? {} : expenseData.shares_json
 	);
 	$effect(() => {
 		if (expenseData.scope === 'personal' || !expenseData?.shares_json) {
@@ -73,7 +90,7 @@
 
 	// 轉為卡片資料並分頁（每頁 8 個）
 	const categoryCards = derived([expenseOptions, categoryIconMap], ([opts, iconMap]) =>
-		opts.map((o) => ({ id: o.value, name: o.label, icon: iconMap[o.value] })),
+		opts.map((o) => ({ id: o.value, name: o.label, icon: iconMap[o.value] }))
 	);
 	const categoryPages = derived(categoryCards, (cards): CategoryCard[][] => {
 		const pageSize = 8;
@@ -187,12 +204,20 @@
 			updated_at: editMode ? now.toISOString() : undefined,
 			// 新增：傳入是否結清
 			is_settled: expenseData.is_settled,
-			ts: selectedDate !== originTs ? new Date(selectedDate).toISOString() : undefined,
+			ts:
+				onSubmitExpense || selectedDate !== originTs
+					? new Date(selectedDate).toISOString()
+					: undefined
 		};
 		Logger.log('Would submit payload:', payload);
 
 		try {
 			await submitRun(async () => {
+				if (onSubmitExpense) {
+					await onSubmitExpense(payload);
+					return;
+				}
+
 				Logger.log('Submitting expense...');
 				const savedExpense = await upsertExpense(payload);
 				// 更新到全域 expenses store
@@ -244,17 +269,19 @@
 </Dialog.Root>
 
 <form class="flex flex-col gap-4" onsubmit={handleSubmit}>
-	<div class="grid gap-2">
-		<Label for="date-input">日期</Label>
-		<Input
-			id="date-input"
-			type="date"
-			class="w-auto"
-			bind:value={selectedDate}
-			disabled={!editMode}
-			max={toTaiwanDateString(today)}
-		/>
-	</div>
+	{#if showDate}
+		<div class="grid gap-2">
+			<Label for="date-input">日期</Label>
+			<Input
+				id="date-input"
+				type="date"
+				class="w-auto"
+				bind:value={selectedDate}
+				disabled={effectiveDateDisabled}
+				max={dateMax}
+			/>
+		</div>
+	{/if}
 
 	<div class="grid gap-2">
 		<Label for="amount-input">金額</Label>
@@ -297,7 +324,7 @@
 							class={classNames(
 								'h-auto flex flex-col gap-1 p-2',
 								'bg-white text-secondary shadow-sm',
-								'data-[selected=true]:text-primary data-[selected=true]:ring-2',
+								'data-[selected=true]:text-primary data-[selected=true]:ring-2'
 							)}
 							data-selected={expenseData.category_id === cat.id}
 							onclick={() => (expenseData.category_id = cat.id)}
@@ -372,7 +399,9 @@
 					</Select.Root>
 				</div>
 
-				<fieldset class="fieldset bg-base-200 border-base-300 rounded-lg w-full border px-4 pt-0 pb-2">
+				<fieldset
+					class="fieldset bg-base-200 border-base-300 rounded-lg w-full border px-4 pt-0 pb-2"
+				>
 					<legend class="text-sm font-semibold mb-2">分帳</legend>
 					{#if $allowedUsers.length === 0}
 						<p class="opacity-60 text-sm">尚未設定家庭成員</p>
@@ -424,17 +453,21 @@
 		<Input id="content-input" bind:value={expenseData.note} placeholder="例如：午餐便當" />
 	</div>
 
-	<Button type="submit" class="w-full" disabled={!isUpdated || $submitIsLoading || $submitIsDone}>
+	<Button
+		type="submit"
+		class="w-full"
+		disabled={(disableSubmitUntilChanged && !isUpdated) || $submitIsLoading || $submitIsDone}
+	>
 		{#if $submitIsLoading}
 			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" />
 		{:else if $submitIsDone}
 			完成
 		{:else}
-			{editMode ? '更新' : '新增'}
+			{submitLabel ?? (editMode ? '更新' : '新增')}
 		{/if}
 	</Button>
 </form>
-{#if editMode}
+{#if effectiveShowDelete}
 	<Button
 		variant="destructive"
 		class="w-full"
