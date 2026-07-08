@@ -2,12 +2,18 @@ import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
+import { sentrySvelteKit } from '@sentry/sveltekit';
 
 export default defineConfig({
 	optimizeDeps: {
 		exclude: ['@internationalized/date']
 	},
 	plugins: [
+		await sentrySvelteKit({
+			org: 'josephtseng',
+			project: 'expense-app',
+			telemetry: false
+		}),
 		tailwindcss(),
 		sveltekit(),
 		SvelteKitPWA({
@@ -15,7 +21,8 @@ export default defineConfig({
 			manifest: {
 				name: 'JoPie',
 				short_name: 'JoPie',
-				description: 'A simple expense tracking app for Joseph and Pieda. And JoPie sounds like tshiau-phài.',
+				description:
+					'A simple expense tracking app for Joseph and Pieda. And JoPie sounds like tshiau-phài.',
 				theme_color: '#ffffff',
 				icons: [
 					{
