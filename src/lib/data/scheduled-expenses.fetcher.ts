@@ -166,19 +166,32 @@ export async function confirmScheduledExpense(id: string): Promise<{
 		is_settled: scheduledExpense.scope === 'personal'
 	});
 
-	const updatePayload =
-		scheduledExpense.kind === 'recurring'
-			? {
-				status: 'pending' satisfies ScheduledExpenseStatus,
-				scheduled_for: getNextScheduledOccurrence(scheduledExpense),
+	const updatedAt = new Date().toISOString();
+
+	if (scheduledExpense.kind !== 'recurring') {
+		const { error } = await supabase.from(TABLE).delete().eq('id', scheduledExpense.id);
+
+		if (error) {
+			throw error;
+		}
+
+		return {
+			expense,
+			scheduledExpense: {
+				...scheduledExpense,
+				status: 'confirmed',
 				created_expense_id: expense.id,
-				updated_at: new Date().toISOString()
+				updated_at: updatedAt
 			}
-			: {
-				status: 'confirmed' satisfies ScheduledExpenseStatus,
-				created_expense_id: expense.id,
-				updated_at: new Date().toISOString()
-			};
+		};
+	}
+
+	const updatePayload = {
+		status: 'pending' satisfies ScheduledExpenseStatus,
+		scheduled_for: getNextScheduledOccurrence(scheduledExpense),
+		created_expense_id: expense.id,
+		updated_at: updatedAt
+	};
 
 	const { data, error } = await supabase
 		.from(TABLE)
@@ -194,6 +207,12 @@ export async function confirmScheduledExpense(id: string): Promise<{
 	return { expense, scheduledExpense: data as ScheduledExpenseRow };
 }
 
+/**
+ * 計算下一次排程的日期。
+ * @param {Pick<ScheduledExpenseRow, 'scheduled_for' | 'timezone' | 'recurrence_rule' | 'recurrence_weekday' | 'recurrence_month_day'>} row - 排程支出資料列。
+ * @returns {string} 下一次排程的 ISO 日期字串。
+ * @throws {Error} 如果排程類型不支援或缺少必要的欄位，將拋出錯誤。
+ */
 export function getNextScheduledOccurrence(
 	row: Pick<
 		ScheduledExpenseRow,
