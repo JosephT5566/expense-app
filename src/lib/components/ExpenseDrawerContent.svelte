@@ -144,6 +144,20 @@
 	const { run: submitRun, isLoading: submitIsLoading, isDone: submitIsDone } = useAsyncAction();
 	const { run: deleteRun, isLoading: deleteIsLoading, isDone: deleteIsDone } = useAsyncAction();
 
+	function getUserDisplayName(email?: string) {
+		if (!email) {
+			return '';
+		}
+		return $allowedUserInfo[email]?.name ?? email;
+	}
+
+	function getEmailByDisplayName(name?: string) {
+		if (!name) {
+			return '';
+		}
+		return $allowedUsers.find((email) => getUserDisplayName(email) === name) ?? name;
+	}
+
 	function validateForm() {
 		if (
 			!expenseData.amount ||
@@ -385,15 +399,18 @@
 			<div class="grid gap-4 mt-2">
 				<div class="grid gap-2">
 					<Label>付款人</Label>
-					<Select.Root type="single" bind:value={expenseData.payer_email}>
+					<Select.Root
+						type="single"
+						value={getUserDisplayName(expenseData.payer_email)}
+						onValueChange={(name) =>
+							(expenseData.payer_email = getEmailByDisplayName(name))}
+					>
 						<Select.Trigger class="w-full">
 							<Select.Value placeholder="選擇付款人" />
 						</Select.Trigger>
 						<Select.Content>
 							{#each $allowedUsers as email (email)}
-								<Select.Item value={email}
-									>{$allowedUserInfo[email].name ?? email}</Select.Item
-								>
+								<Select.Item value={getUserDisplayName(email)} />
 							{/each}
 						</Select.Content>
 					</Select.Root>
