@@ -169,16 +169,16 @@ export async function confirmScheduledExpense(id: string): Promise<{
 	const updatePayload =
 		scheduledExpense.kind === 'recurring'
 			? {
-					status: 'pending' satisfies ScheduledExpenseStatus,
-					scheduled_for: getNextScheduledOccurrence(scheduledExpense),
-					created_expense_id: expense.id,
-					updated_at: new Date().toISOString()
-				}
+				status: 'pending' satisfies ScheduledExpenseStatus,
+				scheduled_for: getNextScheduledOccurrence(scheduledExpense),
+				created_expense_id: expense.id,
+				updated_at: new Date().toISOString()
+			}
 			: {
-					status: 'confirmed' satisfies ScheduledExpenseStatus,
-					created_expense_id: expense.id,
-					updated_at: new Date().toISOString()
-				};
+				status: 'confirmed' satisfies ScheduledExpenseStatus,
+				created_expense_id: expense.id,
+				updated_at: new Date().toISOString()
+			};
 
 	const { data, error } = await supabase
 		.from(TABLE)

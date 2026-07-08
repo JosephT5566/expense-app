@@ -1,9 +1,11 @@
 <script lang="ts">
 	import _isEmpty from 'lodash/isEmpty';
+	import { SvelteDate } from 'svelte/reactivity';
 
 	import type { ExpenseRow } from '$lib/types/expense';
 
 	import * as expensesStore from '$lib/stores/expenses.store';
+	import * as scheduledExpensesStore from '$lib/stores/scheduled-expenses.store';
 	import { categoryIconMap } from '$lib/stores/categories.store';
 
 	import * as Dialog from '$lib/components/shadcn/dialog';
@@ -19,13 +21,13 @@
 	import AIReceiptImportDialog from '$lib/components/AIReceiptImportDialog.svelte';
 
 	import Logger from '$lib/utils/logger';
-	import { Sparkles, TreePalm } from 'lucide-svelte';
+	import { CalendarClock, Check, Sparkles, TreePalm, X } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
 
 	let expenseId = $state('');
-	const today = new Date();
+	const today = new SvelteDate();
 	let selectedDate = $state(toDateOnlyStr(today));
 	const [selectedYear, selectedMonth] = $derived(selectedDate.split('-').map(Number));
 	const monthKey = $derived(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
@@ -33,6 +35,8 @@
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
 	const expensesLoading = expensesStore.loading;
+	const dueScheduledItems = scheduledExpensesStore.dueItems;
+	const scheduledLoading = scheduledExpensesStore.loading;
 
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	$effect(() => {
@@ -80,16 +84,55 @@
 		expensesStore.setMoreItems(expenses);
 	}
 
+	let approvingScheduledId = $state<string | null>(null);
+	let cancellingScheduledId = $state<string | null>(null);
+
+	async function approveScheduledExpense(id: string) {
+		approvingScheduledId = id;
+		try {
+			await scheduledExpensesStore.approve(id);
+		} catch (error) {
+			Logger.error('Approve scheduled expense failed:', error);
+			alert('套用預定支出失敗，請稍後再試。');
+		} finally {
+			approvingScheduledId = null;
+		}
+	}
+
+	async function cancelScheduledExpense(id: string) {
+		if (!confirm('確定要取消這筆預定支出嗎？')) {
+			return;
+		}
+
+		cancellingScheduledId = id;
+		try {
+			await scheduledExpensesStore.cancel(id);
+		} catch (error) {
+			Logger.error('Cancel scheduled expense failed:', error);
+			alert('取消預定支出失敗，請稍後再試。');
+		} finally {
+			cancellingScheduledId = null;
+		}
+	}
+
+	function formatAmount(value: number) {
+		return new Intl.NumberFormat('zh-TW', {
+			style: 'currency',
+			currency: 'TWD',
+			maximumFractionDigits: 0
+		}).format(value);
+	}
+
 	// Carousel sync logic
 	let carouselApi = $state<CarouselAPI>();
 	let initialized = $state(false);
 
 	const dateList = $derived.by(() => {
 		const list = [];
-		const start = new Date(today);
+		const start = new SvelteDate(today);
 		start.setDate(start.getDate() - 60);
 		for (let i = 0; i <= 60; i++) {
-			const d = new Date(start);
+			const d = new SvelteDate(start);
 			d.setDate(d.getDate() + i);
 			list.push(toDateOnlyStr(d));
 		}
@@ -152,11 +195,11 @@
 
 		<div class="flex items-center gap-2">
 			{#if !isToday(selectedDate)}
-				<Button 
-					variant="secondary" 
-					size="sm" 
+				<Button
+					variant="secondary"
+					size="sm"
 					class="h-8 rounded-full px-4 text-[10px] font-black uppercase tracking-widest shadow-sm transition-all hover:scale-105 active:scale-95"
-					onclick={() => selectedDate = toDateOnlyStr(today)}
+					onclick={() => (selectedDate = toDateOnlyStr(today))}
 				>
 					Today
 				</Button>
@@ -172,12 +215,75 @@
 		<Carousel.Content class="items-start">
 			{#each dateList as date (date)}
 				{@const { from, to } = taiwanDayBoundsISO(date)}
-				{@const items = ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to)}
+				{@const fromMs = Date.parse(from)}
+				{@const toMs = Date.parse(to)}
+				{@const items = ($expensesItems ?? []).filter((e) => {
+					const ts = Date.parse(e.ts);
+					return ts >= fromMs && ts <= toMs;
+				})}
+				{@const dueItems = isToday(date) ? $dueScheduledItems : []}
 				<Carousel.Item class="basis-[85%] pl-4">
 					<section class="card p-4">
-						{#if $expensesLoading && items.length === 0 && selectedDate === date}
+						{#if ($expensesLoading || $scheduledLoading) && items.length === 0 && dueItems.length === 0 && selectedDate === date}
 							<p class="mt-3 opacity-70 text-sm font-medium">載入中…</p>
 						{:else}
+							{#if dueItems.length !== 0}
+								<div class="mb-4 space-y-2">
+									{#each dueItems as row (row.id)}
+										<article
+											class="rounded-lg border border-primary/20 bg-primary/5 p-3"
+										>
+											<div class="flex items-start justify-between gap-3">
+												<div class="min-w-0">
+													<div class="flex items-center gap-2">
+														<span
+															class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
+														>
+															<CalendarClock class="h-4 w-4" />
+														</span>
+														<div class="min-w-0">
+															<h2 class="truncate font-bold">
+																{row.note}
+															</h2>
+															<p
+																class="text-xs text-muted-foreground"
+															>
+																預定支出待確認
+															</p>
+														</div>
+													</div>
+												</div>
+												<p class="shrink-0 font-black">
+													{formatAmount(row.amount)}
+												</p>
+											</div>
+											<div class="mt-3 flex gap-2">
+												<Button
+													size="sm"
+													class="h-8 flex-1 gap-1 text-xs font-bold"
+													disabled={approvingScheduledId === row.id ||
+														cancellingScheduledId === row.id}
+													onclick={() => approveScheduledExpense(row.id)}
+												>
+													<Check class="h-4 w-4" />
+													套用
+												</Button>
+												<Button
+													size="sm"
+													variant="outline"
+													class="h-8 gap-1 text-xs font-bold"
+													disabled={approvingScheduledId === row.id ||
+														cancellingScheduledId === row.id}
+													onclick={() => cancelScheduledExpense(row.id)}
+												>
+													<X class="h-4 w-4" />
+													取消
+												</Button>
+											</div>
+										</article>
+									{/each}
+								</div>
+							{/if}
 							{#if items.length !== 0}
 								<ExpenseListSection
 									{items}
@@ -185,10 +291,14 @@
 									onEdit={openEdit}
 									showSum={true}
 								/>
-							{:else}
-								<div class="py-12 flex flex-col items-center justify-center opacity-30">
+							{:else if dueItems.length === 0}
+								<div
+									class="py-12 flex flex-col items-center justify-center opacity-30"
+								>
 									<TreePalm class="w-8 h-8 mb-2" />
-									<p class="text-xs font-bold uppercase tracking-widest">No Records</p>
+									<p class="text-xs font-bold uppercase tracking-widest">
+										No Records
+									</p>
 								</div>
 							{/if}
 							<div class="mt-4 flex gap-2">

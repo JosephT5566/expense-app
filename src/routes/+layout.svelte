@@ -15,8 +15,12 @@
 	import {
 		setMonthlyItemsFromLoad,
 		items as expenseItems,
-		clearAll as clearAllExpenses,
+		clearAll as clearAllExpenses
 	} from '$lib/stores/expenses.store';
+	import {
+		loadPending as loadPendingScheduledExpenses,
+		clearAll as clearAllScheduledExpenses
+	} from '$lib/stores/scheduled-expenses.store';
 	import '$lib/theme.css';
 	import Header from '$lib/components/ui/Header.svelte';
 	import BottomNav from '$lib/components/ui/BottomNav.svelte';
@@ -24,6 +28,7 @@
 	import { isDev } from '$lib/utils/helpers';
 	import { startAuthListener } from '$lib/supabase/auth';
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
+	import { clearAllScheduledExpensesCache } from '$lib/cache/scheduledExpenses';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import Logger from '$lib/utils/logger';
 	import SideNav from '$lib/components/ui/SideNav.svelte';
@@ -33,7 +38,7 @@
 
 	let {
 		data,
-		children,
+		children
 	}: {
 		children: Snippet;
 		data: LayoutData;
@@ -58,6 +63,7 @@
 				setMonthlyItemsFromLoad(monthlyData);
 			}
 		});
+		loadPendingScheduledExpenses();
 	}
 
 	onMount(() => {
@@ -75,6 +81,8 @@
 				// callback logout handler
 				clearAllExpenses();
 				clearAllExpensesCache();
+				clearAllScheduledExpenses();
+				clearAllScheduledExpensesCache();
 				goto(resolve('/'));
 			} else {
 				// User sign in. Trigger load in the layout.ts to refetch data
@@ -103,7 +111,7 @@
 		<main
 			class={classNames(
 				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto',
-				'md:h-full md:pb-4 md:max-w-screen-md md:mx-auto',
+				'md:h-full md:pb-4 md:max-w-screen-md md:mx-auto'
 			)}
 		>
 			{@render children?.()}

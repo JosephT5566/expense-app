@@ -42,7 +42,7 @@
 	}
 </script>
 
-<li class="py-2 flex w-full items-center gap-2">
+<li class="expense-item-row py-2 flex w-full items-center gap-2">
 	{#if !displayShare && selectable}
 		<input
 			type="checkbox"
