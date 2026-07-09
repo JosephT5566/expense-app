@@ -67,6 +67,13 @@
 	}
 
 	onMount(() => {
+		const splash = document.getElementById('app-splash');
+		if (splash) {
+			splash.dataset.leaving = 'true';
+			splash.addEventListener('transitionend', () => splash.remove(), { once: true });
+			window.setTimeout(() => splash.remove(), 250);
+		}
+
 		const unsubExpenseStore = isDev
 			? expenseItems.subscribe(($items) => {
 					Logger.log('Expenses items changed:', $items);

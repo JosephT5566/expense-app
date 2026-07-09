@@ -378,6 +378,7 @@
 				<Label for="scheduled-date">日期</Label>
 				<Input
 					id="scheduled-date"
+					class="w-auto"
 					type="date"
 					value={scheduledDate}
 					oninput={handleScheduleDateInput}

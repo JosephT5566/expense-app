@@ -158,6 +158,19 @@
 		return $allowedUsers.find((email) => getUserDisplayName(email) === name) ?? name;
 	}
 
+	function splitSharesEqually() {
+		const users = $allowedUsers;
+		const amount = Number(expenseData.amount);
+		if (users.length === 0 || !Number.isFinite(amount) || amount <= 0) {
+			return;
+		}
+
+		const equalShare = Math.floor(amount / users.length);
+		users.forEach((email, index) => {
+			shares[email] = index === 0 ? amount - equalShare * (users.length - 1) : equalShare;
+		});
+	}
+
 	function validateForm() {
 		if (
 			!expenseData.amount ||
@@ -417,7 +430,7 @@
 				</div>
 
 				<fieldset
-					class="fieldset bg-base-200 border-base-300 rounded-lg w-full border px-4 pt-0 pb-2"
+					class="fieldset bg-base-200 border-base-300 relative rounded-lg w-full border px-4 pt-0 pb-2"
 				>
 					<legend class="text-sm font-semibold mb-2">分帳</legend>
 					{#if $allowedUsers.length === 0}
@@ -451,6 +464,19 @@
 							{/if}
 						</div>
 					{/if}
+					<div class="flex w-full justify-end mt-2">
+						<Button
+							type="button"
+							variant="outline"
+							size="xs"
+							onclick={splitSharesEqually}
+							disabled={$allowedUsers.length === 0 ||
+								!Number.isFinite(Number(expenseData.amount)) ||
+								Number(expenseData.amount) <= 0}
+						>
+							平分
+						</Button>
+					</div>
 				</fieldset>
 
 				<div class="flex items-center gap-2 mt-2">
