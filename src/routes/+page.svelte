@@ -13,15 +13,13 @@
 	import type { CarouselAPI } from '$lib/components/shadcn/carousel/context';
 	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
-	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
-	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
 	import AIReceiptImportDialog from '$lib/components/AIReceiptImportDialog.svelte';
+	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
 
 	import Logger from '$lib/utils/logger';
-	import { CalendarClock, Check, Sparkles, TreePalm, X } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -115,14 +113,6 @@
 		}
 	}
 
-	function formatAmount(value: number) {
-		return new Intl.NumberFormat('zh-TW', {
-			style: 'currency',
-			currency: 'TWD',
-			maximumFractionDigits: 0
-		}).format(value);
-	}
-
 	// Carousel sync logic
 	let carouselApi = $state<CarouselAPI>();
 	let initialized = $state(false);
@@ -165,13 +155,19 @@
 </script>
 
 <div class="py-2">
-	<div class="flex items-center justify-between px-4 py-3 mb-4 bg-card/50 backdrop-blur-sm rounded-2xl border border-border/50 shadow-sm">
+	<div
+		class="flex items-center justify-between px-4 py-3 mb-4 bg-card/50 backdrop-blur-sm rounded-2xl border border-border/50 shadow-sm"
+	>
 		<div class="flex items-center gap-4">
-			<div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20">
+			<div
+				class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20"
+			>
 				<RetrieveExpenseButton {monthKey} />
 			</div>
 			<div class="flex flex-col">
-				<span class="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/60">
+				<span
+					class="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/60"
+				>
 					{isToday(selectedDate) ? 'Today' : 'History'}
 				</span>
 				<div class="relative flex items-center">
@@ -214,107 +210,24 @@
 	>
 		<Carousel.Content class="items-start">
 			{#each dateList as date (date)}
-				{@const { from, to } = taiwanDayBoundsISO(date)}
-				{@const fromMs = Date.parse(from)}
-				{@const toMs = Date.parse(to)}
-				{@const items = ($expensesItems ?? []).filter((e) => {
-					const ts = Date.parse(e.ts);
-					return ts >= fromMs && ts <= toMs;
-				})}
-				{@const dueItems = isToday(date) ? $dueScheduledItems : []}
 				<Carousel.Item class="basis-[85%] pl-4">
-					<section class="card p-4">
-						{#if ($expensesLoading || $scheduledLoading) && items.length === 0 && dueItems.length === 0 && selectedDate === date}
-							<p class="mt-3 opacity-70 text-sm font-medium">載入中…</p>
-						{:else}
-							{#if dueItems.length !== 0}
-								<div class="mb-4 space-y-2">
-									{#each dueItems as row (row.id)}
-										<article
-											class="rounded-lg border border-primary/20 bg-primary/5 p-3"
-										>
-											<div class="flex items-start justify-between gap-3">
-												<div class="min-w-0">
-													<div class="flex items-center gap-2">
-														<span
-															class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
-														>
-															<CalendarClock class="h-4 w-4" />
-														</span>
-														<div class="min-w-0">
-															<h2 class="truncate font-bold">
-																{row.note}
-															</h2>
-															<p
-																class="text-xs text-muted-foreground"
-															>
-																預定支出待確認
-															</p>
-														</div>
-													</div>
-												</div>
-												<p class="shrink-0 font-black">
-													{formatAmount(row.amount)}
-												</p>
-											</div>
-											<div class="mt-3 flex gap-2">
-												<Button
-													size="sm"
-													class="h-8 flex-1 gap-1 text-xs font-bold"
-													disabled={approvingScheduledId === row.id ||
-														cancellingScheduledId === row.id}
-													onclick={() => approveScheduledExpense(row.id)}
-												>
-													<Check class="h-4 w-4" />
-													套用
-												</Button>
-												<Button
-													size="sm"
-													variant="outline"
-													class="h-8 gap-1 text-xs font-bold"
-													disabled={approvingScheduledId === row.id ||
-														cancellingScheduledId === row.id}
-													onclick={() => cancelScheduledExpense(row.id)}
-												>
-													<X class="h-4 w-4" />
-													取消
-												</Button>
-											</div>
-										</article>
-									{/each}
-								</div>
-							{/if}
-							{#if items.length !== 0}
-								<ExpenseListSection
-									{items}
-									categoryIconMap={$categoryIconMap}
-									onEdit={openEdit}
-									showSum={true}
-								/>
-							{:else if dueItems.length === 0}
-								<div
-									class="py-12 flex flex-col items-center justify-center opacity-30"
-								>
-									<TreePalm class="w-8 h-8 mb-2" />
-									<p class="text-xs font-bold uppercase tracking-widest">
-										No Records
-									</p>
-								</div>
-							{/if}
-							<div class="mt-4 flex gap-2">
-								<Button class="grow font-bold shadow-sm" onclick={openCreate}
-									>{items.length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
-								>
-								<Button
-									class="text-primary hover:bg-primary/5 border-primary/20"
-									variant="outline"
-									onclick={() => (aiDialogOpen = true)}
-								>
-									<Sparkles class="w-5 h-5" />
-								</Button>
-							</div>
-						{/if}
-					</section>
+					<DailyCarouselCard
+						{date}
+						{selectedDate}
+						todayDate={toDateOnlyStr(today)}
+						expenses={$expensesItems ?? []}
+						dueScheduledItems={$dueScheduledItems}
+						expensesLoading={$expensesLoading}
+						scheduledLoading={$scheduledLoading}
+						categoryIconMap={$categoryIconMap}
+						{approvingScheduledId}
+						{cancellingScheduledId}
+						onCreate={openCreate}
+						onEdit={openEdit}
+						onOpenReceiptImport={() => (aiDialogOpen = true)}
+						onApproveScheduled={approveScheduledExpense}
+						onCancelScheduled={cancelScheduledExpense}
+					/>
 				</Carousel.Item>
 			{/each}
 		</Carousel.Content>
