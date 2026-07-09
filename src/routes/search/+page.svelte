@@ -20,9 +20,9 @@
 
 	// 狀態
 	let keyword = $state('');
-	let dateRange = $state<{ start: DateValue | undefined; end: DateValue | undefined } | undefined>(
-		undefined
-	);
+	let dateRange = $state<
+		{ start: DateValue | undefined; end: DateValue | undefined } | undefined
+	>(undefined);
 	let rows = $state<ExpenseRow[]>([]);
 	let loading = $state(false);
 
@@ -69,49 +69,55 @@
 	}
 </script>
 
-<section class="card p-4 space-y-4">
-	<div class="relative">
-		<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-		<Input
-			bind:value={keyword}
-			placeholder="輸入關鍵字搜尋"
-			class="pl-9 pr-16"
-			required
-		/>
-		{#if keyword}
-			<button
-				class="absolute right-0 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs"
-				onclick={() => (keyword = '')}
-			>
-				<CircleX class="h-4 w-4" />
-			</button>
-		{/if}
+<section>
+	<div class="mb-4">
+		<p class="text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">Search</p>
+		<h1 class="text-2xl font-black tracking-tight">搜尋支出</h1>
 	</div>
 
-	<DateRangePicker bind:value={dateRange} title="日期範圍" />
+	<div class="card space-y-4 p-4">
+		<div class="relative">
+			<Search
+				class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+			/>
+			<Input bind:value={keyword} placeholder="輸入關鍵字搜尋" class="pl-9 pr-16" required />
+			{#if keyword}
+				<button
+					class="absolute right-0 top-1/2 -translate-y-1/2 btn btn-ghost btn-xs"
+					onclick={() => (keyword = '')}
+				>
+					<CircleX class="h-4 w-4" />
+				</button>
+			{/if}
+		</div>
 
-	<Button class="w-full" onclick={runSearch} disabled={loading}>
+		<DateRangePicker bind:value={dateRange} title="日期範圍" />
+
+		<Button class="w-full" onclick={runSearch} disabled={loading}>
+			{#if loading}
+				<div
+					class="loader-white mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+				></div>
+				搜尋中
+			{:else}
+				搜尋
+			{/if}
+		</Button>
+
 		{#if loading}
-			<div class="loader-white mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"></div>
-			搜尋中
+			<p class="mt-3 opacity-70">搜尋中…</p>
+		{:else if rows.length === 0}
+			<p class="mt-3 opacity-60">找不到結果</p>
 		{:else}
-			搜尋
+			<ExpenseListSection
+				items={rows}
+				categoryIconMap={$categoryIconMap}
+				showDate={true}
+				showEdit={true}
+				onEdit={openEdit}
+			/>
 		{/if}
-	</Button>
-
-	{#if loading}
-		<p class="mt-3 opacity-70">搜尋中…</p>
-	{:else if rows.length === 0}
-		<p class="mt-3 opacity-60">找不到結果</p>
-	{:else}
-		<ExpenseListSection
-			items={rows}
-			categoryIconMap={$categoryIconMap}
-			showDate={true}
-			showEdit={true}
-			onEdit={openEdit}
-		/>
-	{/if}
+	</div>
 </section>
 
 <Dialog.Root bind:open={drawerOpen}>

@@ -48,7 +48,7 @@
 				to: toISO,
 				scope: 'household',
 				settled: 'only_unsettled',
-				limit: 1000,
+				limit: 1000
 			});
 			rows = page.items;
 			Logger.log('fetch success', rows.length);
@@ -153,7 +153,7 @@
 			transfers.push({
 				from: debtors[i].email,
 				to: creditors[j].email,
-				amount: Math.round(pay),
+				amount: Math.round(pay)
 			});
 			debtors[i].amount -= pay;
 			creditors[j].amount -= pay;
@@ -211,13 +211,13 @@
 					return {
 						item: r.note,
 						amount: sum - r.shares_json[r.payer_email],
-						date: `${month}/${day}`,
+						date: `${month}/${day}`
 					};
 				} else {
 					return {
 						item: r.note,
 						amount: -r.shares_json[currentUser.email],
-						date: `${month}/${day}`,
+						date: `${month}/${day}`
 					};
 				}
 			});
@@ -275,119 +275,129 @@
 	}
 </script>
 
-<section class="card p-4 mb-[10vh] flex flex-col gap-3">
-	<!-- 範圍 + 開關 -->
-	<DateRangePicker title="選擇計算範圍" bind:value={dateRange} />
+<section class="mb-[10vh]">
+	<div class="mb-4">
+		<p class="text-xs font-bold uppercase tracking-[0.16em] text-muted-foreground">
+			Settlement
+		</p>
+		<h1 class="text-2xl font-black tracking-tight">支出結清</h1>
+	</div>
 
-	<!-- 列表 -->
-	{#if fetchLoading}
-		<div class="flex justify-center">
-			<Icon
-				icon="svg-spinners:90-ring-with-bg"
-				class="text-[var(--c-muted)]"
-				width="64px"
-				height="64px"
-			/>
+	<div class="card flex flex-col gap-3 p-4">
+		<!-- 範圍 + 開關 -->
+		<DateRangePicker title="選擇計算範圍" bind:value={dateRange} />
+
+		<!-- 列表 -->
+		{#if fetchLoading}
+			<div class="flex justify-center">
+				<Icon
+					icon="svg-spinners:90-ring-with-bg"
+					class="text-[var(--c-muted)]"
+					width="64px"
+					height="64px"
+				/>
+			</div>
+		{:else if rows.length === 0}
+			<p class="mt-3 opacity-70">此區間沒有待結清項目</p>
+		{:else}
+			<div class="mt-3 items-center justify-between">
+				<label class="flex items-center gap-2">
+					<input
+						type="checkbox"
+						class="checkbox checkbox-sm"
+						checked={selectAll}
+						onchange={(e) => toggleAll((e.target as HTMLInputElement).checked)}
+					/>
+					<span class="text-sm">Select All</span>
+				</label>
+				<ExpenseListSection
+					items={rows}
+					categoryIconMap={$categoryIconMap}
+					showEdit={false}
+					showDate={true}
+					sectionClassname="px-2 bg-[var(--c-muted)]/25 rounded-md"
+					hideIcon={false}
+					selectable={true}
+					selectedIds={selected}
+					displayShare={true}
+					onToggle={toggleOne}
+				/>
+			</div>
+		{/if}
+
+		<!-- 建議結清 -->
+		<div>
+			<h3 class="font-semibold mb-2 text-sm">建議結清</h3>
+			{#if selected.length === 0}
+				<p class="text-sm opacity-60">尚未選擇項目</p>
+			{:else if transfers.length === 0}
+				<p class="text-sm opacity-60">已平衡，無需轉帳</p>
+			{:else}
+				<ul class="text-sm space-y-1">
+					{#each transfers as t, i (i)}
+						<li>
+							{$allowedUserInfo[t.from].name} → {$allowedUserInfo[t.to]
+								.name}:{t.amount}
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</div>
-	{:else if rows.length === 0}
-		<p class="mt-3 opacity-70">此區間沒有待結清項目</p>
-	{:else}
-		<div class="mt-3 items-center justify-between">
-			<label class="flex items-center gap-2">
+
+		<div>
+			<label class="label">
 				<input
 					type="checkbox"
-					class="checkbox checkbox-sm"
-					checked={selectAll}
-					onchange={(e) => toggleAll((e.target as HTMLInputElement).checked)}
+					bind:checked={showFormula}
+					class={classNames(
+						'toggle',
+						'border-[var(--c-primary)]/30 before:bg-[var(--c-primary)]/30',
+						'checked:border-[var(--c-primary)] checked:before:bg-[var(--c-primary)] checked:text-orange-800'
+					)}
 				/>
-				<span class="text-sm">Select All</span>
+				顯示算式
 			</label>
-			<ExpenseListSection
-				items={rows}
-				categoryIconMap={$categoryIconMap}
-				showEdit={false}
-				showDate={true}
-				sectionClassname="px-2 bg-[var(--c-muted)]/25 rounded-md"
-				hideIcon={false}
-				selectable={true}
-				selectedIds={selected}
-				displayShare={true}
-				onToggle={toggleOne}
-			/>
-		</div>
-	{/if}
 
-	<!-- 建議結清 -->
-	<div>
-		<h3 class="font-semibold mb-2 text-sm">建議結清</h3>
-		{#if selected.length === 0}
-			<p class="text-sm opacity-60">尚未選擇項目</p>
-		{:else if transfers.length === 0}
-			<p class="text-sm opacity-60">已平衡，無需轉帳</p>
-		{:else}
-			<ul class="text-sm space-y-1">
-				{#each transfers as t, i (i)}
-					<li>
-						{$allowedUserInfo[t.from].name} → {$allowedUserInfo[t.to].name}:{t.amount}
-					</li>
-				{/each}
-			</ul>
-		{/if}
-	</div>
+			<!-- 我的算式（受 Switch 控制） -->
+			{#if showFormula && myFormula}
+				<fieldset class="fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4">
+					<legend class="fieldset-legend">列表與算式</legend>
+					<p class="label">列表</p>
+					<div class="pl-4">
+						<ul class="list-decimal">
+							{#each myCalList as c, i (i)}
+								<li>{c.date} {c.item}: {c.amount}</li>
+							{/each}
+						</ul>
+					</div>
 
-	<div>
-		<label class="label">
-			<input
-				type="checkbox"
-				bind:checked={showFormula}
-				class={classNames(
-					'toggle',
-					'border-[var(--c-primary)]/30 before:bg-[var(--c-primary)]/30',
-					'checked:border-[var(--c-primary)] checked:before:bg-[var(--c-primary)] checked:text-orange-800'
-				)}
-			/>
-			顯示算式
-		</label>
-
-		<!-- 我的算式（受 Switch 控制） -->
-		{#if showFormula && myFormula}
-			<fieldset class="fieldset bg-base-200 border-base-300 rounded-box w-xs border p-4">
-				<legend class="fieldset-legend">列表與算式</legend>
-				<p class="label">列表</p>
-				<div class="pl-4">
-					<ul class="list-decimal">
-						{#each myCalList as c, i (i)}
-							<li>{c.date} {c.item}: {c.amount}</li>
-						{/each}
-					</ul>
-				</div>
-
-				<p class="label">算式</p>
-				<div class="text-xs opacity-80">
-					{myFormula}
-				</div>
-			</fieldset>
-		{/if}
-	</div>
-
-	<div class="flex w-full gap-2">
-		<button
-			class="grow btn btn-primary disabled:bg-[var(--c-muted)]!"
-			disabled={selected.length === 0 || fetchLoading}
-			onclick={startSettle}
-		>
-			{#if !settleLoading}
-				設為結清
-			{:else}
-				<Icon icon="svg-spinners:90-ring-with-bg" width="24" height="24" />
+					<p class="label">算式</p>
+					<div class="text-xs opacity-80">
+						{myFormula}
+					</div>
+				</fieldset>
 			{/if}
-		</button>
-		<button
-			class="btn btn-primary p-2! disabled:bg-[var(--c-muted)]!"
-			disabled={settledTrash.length === 0}
-			onclick={recoverSettle}
-		>
-			<Icon icon="solar:restart-linear" width="24" height="24" />
-		</button>
+		</div>
+
+		<div class="flex w-full gap-2">
+			<button
+				class="grow btn btn-primary disabled:bg-[var(--c-muted)]!"
+				disabled={selected.length === 0 || fetchLoading}
+				onclick={startSettle}
+			>
+				{#if !settleLoading}
+					設為結清
+				{:else}
+					<Icon icon="svg-spinners:90-ring-with-bg" width="24" height="24" />
+				{/if}
+			</button>
+			<button
+				class="btn btn-primary p-2! disabled:bg-[var(--c-muted)]!"
+				disabled={settledTrash.length === 0}
+				onclick={recoverSettle}
+			>
+				<Icon icon="solar:restart-linear" width="24" height="24" />
+			</button>
+		</div>
 	</div>
 </section>

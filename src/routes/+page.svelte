@@ -1,9 +1,11 @@
 <script lang="ts">
 	import _isEmpty from 'lodash/isEmpty';
+	import { SvelteDate } from 'svelte/reactivity';
 
 	import type { ExpenseRow } from '$lib/types/expense';
 
 	import * as expensesStore from '$lib/stores/expenses.store';
+	import * as scheduledExpensesStore from '$lib/stores/scheduled-expenses.store';
 	import { categoryIconMap } from '$lib/stores/categories.store';
 
 	import * as Dialog from '$lib/components/shadcn/dialog';
@@ -11,21 +13,19 @@
 	import type { CarouselAPI } from '$lib/components/shadcn/carousel/context';
 	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
-	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 
-	import { taiwanDayBoundsISO } from '$lib/utils/dates';
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
 	import AIReceiptImportDialog from '$lib/components/AIReceiptImportDialog.svelte';
+	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
 
 	import Logger from '$lib/utils/logger';
-	import { Sparkles, TreePalm } from 'lucide-svelte';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
 
 	let expenseId = $state('');
-	const today = new Date();
+	const today = new SvelteDate();
 	let selectedDate = $state(toDateOnlyStr(today));
 	const [selectedYear, selectedMonth] = $derived(selectedDate.split('-').map(Number));
 	const monthKey = $derived(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
@@ -33,6 +33,8 @@
 	// 改為從 store 過濾當日資料
 	const expensesItems = expensesStore.items;
 	const expensesLoading = expensesStore.loading;
+	const dueScheduledItems = scheduledExpensesStore.dueItems;
+	const scheduledLoading = scheduledExpensesStore.loading;
 
 	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
 	$effect(() => {
@@ -80,16 +82,47 @@
 		expensesStore.setMoreItems(expenses);
 	}
 
+	let approvingScheduledId = $state<string | null>(null);
+	let cancellingScheduledId = $state<string | null>(null);
+
+	async function approveScheduledExpense(id: string) {
+		approvingScheduledId = id;
+		try {
+			await scheduledExpensesStore.approve(id);
+		} catch (error) {
+			Logger.error('Approve scheduled expense failed:', error);
+			alert('套用預定支出失敗，請稍後再試。');
+		} finally {
+			approvingScheduledId = null;
+		}
+	}
+
+	async function cancelScheduledExpense(id: string) {
+		if (!confirm('確定要取消這筆預定支出嗎？')) {
+			return;
+		}
+
+		cancellingScheduledId = id;
+		try {
+			await scheduledExpensesStore.cancel(id);
+		} catch (error) {
+			Logger.error('Cancel scheduled expense failed:', error);
+			alert('取消預定支出失敗，請稍後再試。');
+		} finally {
+			cancellingScheduledId = null;
+		}
+	}
+
 	// Carousel sync logic
 	let carouselApi = $state<CarouselAPI>();
 	let initialized = $state(false);
 
 	const dateList = $derived.by(() => {
 		const list = [];
-		const start = new Date(today);
+		const start = new SvelteDate(today);
 		start.setDate(start.getDate() - 60);
 		for (let i = 0; i <= 60; i++) {
-			const d = new Date(start);
+			const d = new SvelteDate(start);
 			d.setDate(d.getDate() + i);
 			list.push(toDateOnlyStr(d));
 		}
@@ -122,13 +155,19 @@
 </script>
 
 <div class="py-2">
-	<div class="flex items-center justify-between px-4 py-3 mb-4 bg-card/50 backdrop-blur-sm rounded-2xl border border-border/50 shadow-sm">
+	<div
+		class="flex items-center justify-between px-4 py-3 mb-4 bg-card/50 backdrop-blur-sm rounded-2xl border border-border/50 shadow-sm"
+	>
 		<div class="flex items-center gap-4">
-			<div class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20">
+			<div
+				class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20"
+			>
 				<RetrieveExpenseButton {monthKey} />
 			</div>
 			<div class="flex flex-col">
-				<span class="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/60">
+				<span
+					class="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/60"
+				>
 					{isToday(selectedDate) ? 'Today' : 'History'}
 				</span>
 				<div class="relative flex items-center">
@@ -152,11 +191,11 @@
 
 		<div class="flex items-center gap-2">
 			{#if !isToday(selectedDate)}
-				<Button 
-					variant="secondary" 
-					size="sm" 
+				<Button
+					variant="secondary"
+					size="sm"
 					class="h-8 rounded-full px-4 text-[10px] font-black uppercase tracking-widest shadow-sm transition-all hover:scale-105 active:scale-95"
-					onclick={() => selectedDate = toDateOnlyStr(today)}
+					onclick={() => (selectedDate = toDateOnlyStr(today))}
 				>
 					Today
 				</Button>
@@ -171,40 +210,24 @@
 	>
 		<Carousel.Content class="items-start">
 			{#each dateList as date (date)}
-				{@const { from, to } = taiwanDayBoundsISO(date)}
-				{@const items = ($expensesItems ?? []).filter((e) => e.ts >= from && e.ts <= to)}
 				<Carousel.Item class="basis-[85%] pl-4">
-					<section class="card p-4">
-						{#if $expensesLoading && items.length === 0 && selectedDate === date}
-							<p class="mt-3 opacity-70 text-sm font-medium">載入中…</p>
-						{:else}
-							{#if items.length !== 0}
-								<ExpenseListSection
-									{items}
-									categoryIconMap={$categoryIconMap}
-									onEdit={openEdit}
-									showSum={true}
-								/>
-							{:else}
-								<div class="py-12 flex flex-col items-center justify-center opacity-30">
-									<TreePalm class="w-8 h-8 mb-2" />
-									<p class="text-xs font-bold uppercase tracking-widest">No Records</p>
-								</div>
-							{/if}
-							<div class="mt-4 flex gap-2">
-								<Button class="grow font-bold shadow-sm" onclick={openCreate}
-									>{items.length === 0 ? '今日第一筆記帳' : '新增項目'}</Button
-								>
-								<Button
-									class="text-primary hover:bg-primary/5 border-primary/20"
-									variant="outline"
-									onclick={() => (aiDialogOpen = true)}
-								>
-									<Sparkles class="w-5 h-5" />
-								</Button>
-							</div>
-						{/if}
-					</section>
+					<DailyCarouselCard
+						{date}
+						{selectedDate}
+						todayDate={toDateOnlyStr(today)}
+						expenses={$expensesItems ?? []}
+						dueScheduledItems={$dueScheduledItems}
+						expensesLoading={$expensesLoading}
+						scheduledLoading={$scheduledLoading}
+						categoryIconMap={$categoryIconMap}
+						{approvingScheduledId}
+						{cancellingScheduledId}
+						onCreate={openCreate}
+						onEdit={openEdit}
+						onOpenReceiptImport={() => (aiDialogOpen = true)}
+						onApproveScheduled={approveScheduledExpense}
+						onCancelScheduled={cancelScheduledExpense}
+					/>
 				</Carousel.Item>
 			{/each}
 		</Carousel.Content>

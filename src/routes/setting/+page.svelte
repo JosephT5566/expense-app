@@ -14,6 +14,10 @@
 		<Icon icon="solar:card-search-bold-duotone" width="24" height="24" />
 		搜尋
 	</Button>
+	<Button href={resolve('/scheduled')} variant="outline" class="justify-center gap-2">
+		<Icon icon="solar:calendar-mark-bold-duotone" width="24" height="24" />
+		預定支出
+	</Button>
 	<Button onclick={signOut} variant="destructive" class="justify-center gap-2">
 		<Icon icon="solar:logout-bold-duotone" width="24" height="24" />
 		登出

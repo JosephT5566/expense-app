@@ -15,7 +15,8 @@ export default defineConfig({
 			manifest: {
 				name: 'JoPie',
 				short_name: 'JoPie',
-				description: 'A simple expense tracking app for Joseph and Pieda. And JoPie sounds like tshiau-phài.',
+				description:
+					'A simple expense tracking app for Joseph and Pieda. And JoPie sounds like tshiau-phài.',
 				theme_color: '#ffffff',
 				icons: [
 					{

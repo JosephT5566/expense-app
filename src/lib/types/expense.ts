@@ -1,6 +1,9 @@
 export type Currency = 'TWD' | 'USD' | 'GBP' | 'EUR';
 
 export type ExpenseScope = 'household' | 'personal';
+export type ScheduledExpenseKind = 'one_time' | 'recurring';
+export type ScheduledExpenseRecurrence = 'daily' | 'weekly' | 'monthly';
+export type ScheduledExpenseStatus = 'pending' | 'confirmed' | 'cancelled';
 
 export type ShareEntry = Record<string, number>;
 /** key: user email（依你的 shares_json 內容而定） */
@@ -16,11 +19,33 @@ export interface ExpenseRow {
 	scope: ExpenseScope; // 'household' | 'personal'
 	shares_json: ShareEntry; // 僅能看到自己「有參與」的（RLS 篩）
 	notes?: string;
-	category_id?: string;
+	category_id?: string | null;
 	meta: string;
 	created_at: string; // ISO
 	updated_at: string; // ISO
 	is_settled: boolean; // 是否已標記結清
+}
+
+export interface ScheduledExpenseRow {
+	id: string;
+	owner_email: string;
+	payer_email: string;
+	note: string;
+	amount: number;
+	currency: Currency;
+	scheduled_for: string;
+	timezone: string;
+	scope: ExpenseScope;
+	shares_json: ShareEntry;
+	category_id?: string | null;
+	kind: ScheduledExpenseKind;
+	recurrence_rule?: ScheduledExpenseRecurrence | null;
+	recurrence_weekday?: number | null;
+	recurrence_month_day?: number | null;
+	status: ScheduledExpenseStatus;
+	created_expense_id?: string | null;
+	created_at: string;
+	updated_at: string;
 }
 
 export interface PreviewExpense extends Partial<ExpenseRow> {
