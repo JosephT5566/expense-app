@@ -30,7 +30,7 @@
 </script>
 
 <article class="rounded-lg border border-primary/20 bg-primary/5 p-3">
-	<div class="flex items-start justify-between gap-3">
+	<div class="flex items-center justify-between gap-3">
 		<div class="min-w-0">
 			<div class="flex items-center gap-2">
 				<span
@@ -39,8 +39,8 @@
 					<CalendarClock class="h-4 w-4" />
 				</span>
 				<div class="min-w-0">
+					<p class="text-xs text-muted-foreground">預定支出</p>
 					<h2 class="truncate font-bold">{row.note}</h2>
-					<p class="text-xs text-muted-foreground">預定支出待確認</p>
 				</div>
 			</div>
 		</div>
@@ -49,7 +49,7 @@
 	<div class="mt-3 flex gap-2">
 		<Button
 			size="sm"
-			class="h-8 flex-1 gap-1 text-xs font-bold"
+			class="h-8 flex-1 gap-1 text-xs font-bold bg-secondary hover:bg-secondary/20"
 			disabled={busy}
 			onclick={() => onApprove(row.id)}
 		>

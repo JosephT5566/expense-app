@@ -78,7 +78,13 @@ export async function remove(id: string) {
 
 export async function cancel(id: string) {
 	const row = await cancelScheduledExpense(id);
-	removeLocal(id);
+
+	if (row.status === 'pending') {
+		upsertLocal(row);
+	} else {
+		removeLocal(id);
+	}
+
 	await persistScheduledExpensePatch(row);
 	return row;
 }

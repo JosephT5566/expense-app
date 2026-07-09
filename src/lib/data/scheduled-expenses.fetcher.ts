@@ -112,9 +112,31 @@ export async function upsertScheduledExpense(
 }
 
 export async function cancelScheduledExpense(id: string): Promise<ScheduledExpenseRow> {
+	const scheduledExpense = await getScheduledExpenseById(id);
+
+	if (!scheduledExpense) {
+		throw new Error('Scheduled expense not found');
+	}
+
+	if (scheduledExpense.status !== 'pending') {
+		throw new Error('Only pending scheduled expenses can be cancelled');
+	}
+
+	const updatePayload =
+		scheduledExpense.kind === 'recurring'
+			? {
+				status: 'pending' satisfies ScheduledExpenseStatus,
+				scheduled_for: getNextScheduledOccurrence(scheduledExpense),
+				updated_at: new Date().toISOString()
+			}
+			: {
+				status: 'cancelled' satisfies ScheduledExpenseStatus,
+				updated_at: new Date().toISOString()
+			};
+
 	const { data, error } = await supabase
 		.from(TABLE)
-		.update({ status: 'cancelled', updated_at: new Date().toISOString() })
+		.update(updatePayload)
 		.eq('id', id)
 		.select()
 		.single();

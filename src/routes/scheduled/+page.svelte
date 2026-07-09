@@ -169,7 +169,7 @@
 
 		const userEmail = $currentUser?.email ?? payload.payer_email;
 		const kind = activeTab;
-		const baseDate = scheduledDate;
+		const baseDate = kind === 'recurring' ? toDateInputValue(new SvelteDate()) : scheduledDate;
 		errorMessage = '';
 
 		try {
@@ -254,10 +254,6 @@
 		return `每月 ${row.recurrence_month_day} 日`;
 	}
 
-	function getCategoryLabel(categoryId?: string | null) {
-		return $expenseOptions.find((option) => option.value === categoryId)?.label ?? '未分類';
-	}
-
 	function toDateInputValue(date: Date) {
 		const year = date.getFullYear();
 		const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -271,7 +267,7 @@
 
 	function getNextWeekdayISO(fromDate: string, weekday: number) {
 		const date = new SvelteDate(`${fromDate}T00:00:00+08:00`);
-		const diff = (weekday - date.getDay() + 7) % 7 || 7;
+		const diff = (weekday - date.getDay() + 7) % 7;
 		date.setDate(date.getDate() + diff);
 		return date.toISOString();
 	}
@@ -281,7 +277,7 @@
 		const target = new SvelteDate(date);
 		const lastDay = new SvelteDate(target.getFullYear(), target.getMonth() + 1, 0).getDate();
 		target.setDate(Math.min(monthDay, lastDay));
-		if (target <= date) {
+		if (target < date) {
 			target.setMonth(target.getMonth() + 1, 1);
 			const nextLastDay = new SvelteDate(
 				target.getFullYear(),
@@ -343,7 +339,6 @@
 					onEdit: openEdit,
 					onDelete: handleDelete,
 					deletingId,
-					getCategoryLabel,
 					getRecurrenceText,
 					formatDate,
 					formatAmount,
@@ -357,7 +352,6 @@
 					onEdit: openEdit,
 					onDelete: handleDelete,
 					deletingId,
-					getCategoryLabel,
 					getRecurrenceText,
 					formatDate,
 					formatAmount,
@@ -468,7 +462,6 @@
 	onEdit,
 	onDelete,
 	deletingId,
-	getCategoryLabel,
 	getRecurrenceText,
 	formatDate,
 	formatAmount,
@@ -478,7 +471,6 @@
 	onEdit: (row: ScheduledExpenseRow) => void;
 	onDelete: (id: string) => void | Promise<void>;
 	deletingId: string | null;
-	getCategoryLabel: (id?: string | null) => string;
 	getRecurrenceText: (row: ScheduledExpenseRow) => string;
 	formatDate: (iso: string) => string;
 	formatAmount: (value: number) => string;
@@ -496,9 +488,9 @@
 		<div class="mt-4 space-y-3">
 			{#each rows as row (row.id)}
 				<article class="rounded-lg border bg-card p-3 shadow-sm">
-					<div class="flex items-start justify-between gap-3">
-						<div class="min-w-0">
-							<div class="flex items-center gap-2">
+					<div class="flex items-center justify-between gap-3">
+						<div class="flex min-w-0 flex-1 items-center justify-between gap-3">
+							<div class="flex min-w-0 items-center gap-2">
 								<span
 									class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
 								>
@@ -512,46 +504,48 @@
 										<CalendarClock class="h-4 w-4" />
 									{/if}
 								</span>
-								<div class="min-w-0">
-									<h2 class="truncate font-bold">{row.note}</h2>
-									<p class="text-xs text-muted-foreground">
-										{getCategoryLabel(row.category_id)} · {getRecurrenceText(
-											row
-										)}
-									</p>
-								</div>
+								<h2 class="truncate font-bold">{row.note}</h2>
 							</div>
-							<div class="mt-3 flex flex-wrap gap-2 text-xs">
-								<span class="rounded-md bg-muted px-2 py-1"
-									>{formatDate(row.scheduled_for)}</span
-								>
-								<span class="rounded-md bg-muted px-2 py-1"
-									>{row.scope === 'household' ? '家庭' : '個人'}</span
-								>
-							</div>
+							<span
+								class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-bold text-muted-foreground"
+								aria-label={row.scope === 'household' ? '家庭' : '個人'}
+								title={row.scope === 'household' ? '家庭' : '個人'}
+							>
+								{row.scope === 'household' ? 'H' : 'P'}
+							</span>
 						</div>
-						<div class="shrink-0 text-right">
-							<p class="font-black">{formatAmount(row.amount)}</p>
-							<div class="mt-3 flex justify-end gap-1">
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									aria-label="編輯"
-									onclick={() => onEdit(row)}
-								>
-									<Pencil class="h-4 w-4" />
-								</Button>
-								<Button
-									variant="ghost"
-									size="icon-sm"
-									aria-label="刪除"
-									class="text-destructive hover:bg-destructive/10"
-									disabled={deletingId === row.id}
-									onclick={() => onDelete(row.id)}
-								>
-									<Trash2 class="h-4 w-4" />
-								</Button>
-							</div>
+						<p class="shrink-0 font-black">{formatAmount(row.amount)}</p>
+					</div>
+					<div class="mt-3 flex items-end justify-between gap-3">
+						<div class="flex min-w-0 flex-wrap gap-2 text-xs">
+							{#if row.kind === 'recurring'}
+								<span class="rounded-md bg-muted px-2 py-1">
+									{getRecurrenceText(row)}
+								</span>
+							{/if}
+							<span class="rounded-md bg-muted px-2 py-1">
+								{formatDate(row.scheduled_for)}
+							</span>
+						</div>
+						<div class="flex shrink-0 justify-end gap-1">
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								aria-label="編輯"
+								onclick={() => onEdit(row)}
+							>
+								<Pencil class="h-4 w-4" />
+							</Button>
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								aria-label="刪除"
+								class="text-destructive hover:bg-destructive/10"
+								disabled={deletingId === row.id}
+								onclick={() => onDelete(row.id)}
+							>
+								<Trash2 class="h-4 w-4" />
+							</Button>
 						</div>
 					</div>
 				</article>
