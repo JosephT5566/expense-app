@@ -3,13 +3,145 @@
 	<head>
 		<meta charset="utf-8" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.ico" />
+		<link
+			rel="preload"
+			href="%sveltekit.assets%/icon-192.png"
+			as="image"
+			type="image/png"
+			fetchpriority="high"
+		/>
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="theme-color" content="#f4e9d7" />
 		%sveltekit.head%
-		<link rel="preconnect" href="https://fonts.googleapis.com">
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-		<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Contrail+One&display=swap" rel="stylesheet">
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Contrail+One&display=swap"
+			rel="stylesheet"
+		/>
+		<style>
+			#app-splash {
+				position: fixed;
+				inset: 0;
+				z-index: 9999;
+				display: grid;
+				place-items: center;
+				background: #f4e9d7;
+				color: #1f2937;
+				transition:
+					opacity 180ms ease,
+					visibility 180ms ease;
+			}
+
+			#app-splash[data-leaving='true'] {
+				visibility: hidden;
+				opacity: 0;
+			}
+
+			.app-splash__content {
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				gap: 22px;
+				padding: 32px;
+			}
+
+			.app-splash__mark {
+				position: relative;
+				width: 88px;
+				height: 124px;
+				animation: app-splash-float 1.8s ease-in-out infinite;
+			}
+
+			.app-splash__icon {
+				display: block;
+				width: 88px;
+				height: 88px;
+				border-radius: 22px;
+				box-shadow: 0 14px 36px rgb(91 65 45 / 18%);
+			}
+
+			.app-splash__spinner {
+				position: absolute;
+				left: 30px;
+				bottom: 0;
+				width: 28px;
+				height: 28px;
+				padding: 5px;
+				border-radius: 999px;
+				background: #fff;
+				color: #d97d55;
+				box-shadow: 0 6px 16px rgb(91 65 45 / 16%);
+				animation: app-splash-spin 900ms linear infinite;
+			}
+
+			.app-splash__copy {
+				text-align: center;
+			}
+
+			.app-splash__name {
+				margin: 0 0 5px;
+				font: 700 25px/1.1 ui-sans-serif, system-ui, sans-serif;
+				letter-spacing: -0.04em;
+			}
+
+			.app-splash__status {
+				margin: 0;
+				color: #6b7280;
+				font: 500 13px/1.4 ui-sans-serif, system-ui, sans-serif;
+				letter-spacing: 0.02em;
+			}
+
+			@keyframes app-splash-float {
+				50% {
+					transform: translateY(-4px);
+				}
+			}
+
+			@keyframes app-splash-spin {
+				to {
+					transform: rotate(360deg);
+				}
+			}
+
+			@media (prefers-reduced-motion: reduce) {
+				.app-splash__mark,
+				.app-splash__spinner {
+					animation: none;
+				}
+			}
+		</style>
 	</head>
 	<body data-sveltekit-preload-data="hover">
+		<div id="app-splash" role="status" aria-live="polite" aria-label="Loading JoPie">
+			<div class="app-splash__content">
+				<div class="app-splash__mark" aria-hidden="true">
+					<img
+						class="app-splash__icon"
+						src="%sveltekit.assets%/icon-192.png"
+						alt=""
+						width="88"
+						height="88"
+						fetchpriority="high"
+					/>
+					<svg
+						class="app-splash__spinner"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2.5"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M21 12a9 9 0 1 1-6.22-8.56" />
+					</svg>
+				</div>
+				<div class="app-splash__copy">
+					<p class="app-splash__name">JoPie</p>
+					<p class="app-splash__status">Preparing…</p>
+				</div>
+			</div>
+		</div>
 		<div style="display: contents">%sveltekit.body%</div>
 	</body>
 	<!-- GIS loader -->
