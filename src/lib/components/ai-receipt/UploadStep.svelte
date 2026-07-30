@@ -6,10 +6,17 @@
 	import {
 		getUploadUrl,
 		analyzeReceipt,
-		getAnalyzeReceiptErrorMessage
+		getAIReceiptErrorInfo,
+		AIReceiptAPIError
 	} from '$lib/data/ai-receipt.fetcher';
+	import type { AIReceiptErrorCode, AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import type { ReceiptAnalysisResult } from '$lib/types/expense';
 	import * as Carousel from '$lib/components/shadcn/carousel';
+
+	const MAX_FILES = 4;
+	const MAX_FILE_BYTES = 10 * 1024 * 1024;
+	const MAX_REQUEST_BYTES = 20 * 1024 * 1024;
+	const SUPPORTED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 	let {
 		aiStep = $bindable(),
@@ -30,22 +37,79 @@
 		previewUrls: string[];
 		lastUploadedFilePaths: string[];
 		analysisResult: ReceiptAnalysisResult | null;
-		analysisError: string | null;
+		analysisError: AIReceiptErrorInfo | null;
 	} = $props();
 
 	let isDragging = $state(false);
 	let fileInput = $state<HTMLInputElement | null>(null);
 	let cameraInput = $state<HTMLInputElement | null>(null);
 
+	function setClientError(code: AIReceiptErrorCode, message?: string) {
+		analysisError = getAIReceiptErrorInfo(new AIReceiptAPIError(message ?? code, 400, code));
+	}
+
+	function isHeic(file: File) {
+		const name = file.name.toLowerCase();
+		return (
+			name.endsWith('.heic') ||
+			name.endsWith('.heif') ||
+			file.type === 'image/heic' ||
+			file.type === 'image/heif'
+		);
+	}
+
+	function convertedJpegName(name: string) {
+		return /\.(heic|heif)$/i.test(name)
+			? name.replace(/\.(heic|heif)$/i, '.jpg')
+			: `${name}.jpg`;
+	}
+
+	function hasSafeFileName(name: string) {
+		return (
+			name.length > 0 &&
+			name !== '.' &&
+			name !== '..' &&
+			!/[\\/]/.test(name) &&
+			!Array.from(name).some((character) => character.charCodeAt(0) < 32)
+		);
+	}
+
+	function validateSelection(files: File[]): AIReceiptErrorCode | null {
+		if (files.length > MAX_FILES) {
+			return 'TOO_MANY_IMAGES';
+		}
+		if (files.some((file) => !SUPPORTED_IMAGE_TYPES.has(file.type))) {
+			return 'UNSUPPORTED_IMAGE_MIME_TYPE';
+		}
+		if (files.some((file) => !hasSafeFileName(file.name))) {
+			return 'INVALID_REQUEST';
+		}
+		if (new Set(files.map((file) => file.name)).size !== files.length) {
+			return 'INVALID_REQUEST';
+		}
+		if (files.some((file) => file.size > MAX_FILE_BYTES)) {
+			return 'IMAGE_TOO_LARGE';
+		}
+		if (files.reduce((total, file) => total + file.size, 0) > MAX_REQUEST_BYTES) {
+			return 'REQUEST_TOO_LARGE';
+		}
+		return null;
+	}
+
 	async function processFiles(files: FileList | File[]) {
 		if (!browser) {
 			return;
 		}
 
+		analysisError = null;
+		if (selectedFiles.length + files.length > MAX_FILES) {
+			setClientError('TOO_MANY_IMAGES');
+			return;
+		}
+
 		const processedFiles: File[] = [];
 		for (const file of Array.from(files)) {
-			const isHeic = file.name.toLowerCase().endsWith('.heic') || file.type === 'image/heic';
-			if (isHeic) {
+			if (isHeic(file)) {
 				aiConverting = true;
 				try {
 					const heic2any = (await import('heic2any')).default;
@@ -56,14 +120,18 @@
 					});
 					const blob = Array.isArray(convertedBlob) ? convertedBlob[0] : convertedBlob;
 					processedFiles.push(
-						new File([blob], file.name.replace(/\.heic$/i, '.jpg'), {
+						new File([blob], convertedJpegName(file.name), {
 							type: 'image/jpeg'
 						})
 					);
 					Logger.log('HEIC converted to JPEG successfully');
 				} catch (err) {
 					console.error('HEIC conversion failed:', err);
-					processedFiles.push(file);
+					setClientError(
+						'UNSUPPORTED_IMAGE_MIME_TYPE',
+						'HEIC/HEIF 圖片轉換失敗，請改用 JPEG、PNG 或 WebP。'
+					);
+					return;
 				} finally {
 					aiConverting = false;
 				}
@@ -71,7 +139,14 @@
 				processedFiles.push(file);
 			}
 		}
-		selectedFiles = [...selectedFiles, ...processedFiles];
+
+		const nextFiles = [...selectedFiles, ...processedFiles];
+		const validationError = validateSelection(nextFiles);
+		if (validationError) {
+			setClientError(validationError);
+			return;
+		}
+		selectedFiles = nextFiles;
 	}
 
 	function handleFileChange(e: Event) {
@@ -94,12 +169,19 @@
 		if (selectedFiles.length === 0) {
 			return;
 		}
+		const validationError = validateSelection(selectedFiles);
+		if (validationError) {
+			setClientError(validationError);
+			return;
+		}
 		aiStep = 2;
 		aiUploading = true;
+		analysisError = null;
+		lastUploadedFilePaths = [];
 		try {
 			const filesMetadata = selectedFiles.map((file) => ({
 				file_name: file.name,
-				content_type: file.type || 'image/jpeg'
+				content_type: file.type
 			}));
 
 			const response = await getUploadUrl(filesMetadata);
@@ -109,42 +191,46 @@
 				const file = selectedFiles[i];
 				const uploadData = response.uploads.find((u) => u.file_name === file.name);
 
-				if (uploadData?.upload_url) {
-					const uploadRes = await fetch(uploadData.upload_url, {
-						method: 'PUT',
-						body: file,
-						headers: {
-							'Content-Type': file.type || 'image/jpeg'
-						}
-					});
-
-					if (uploadRes.ok) {
-						Logger.log(`File ${file.name} uploaded to GCS successfully`);
-						uploadFilePaths.push(uploadData.file_path);
-					} else {
-						console.error(`GCS Upload failed for ${file.name}:`, uploadRes.statusText);
-					}
+				if (!uploadData?.upload_url) {
+					throw new AIReceiptAPIError('Missing upload URL', 502, 'UPLOAD_FAILED');
 				}
+
+				const uploadRes = await fetch(uploadData.upload_url, {
+					method: 'PUT',
+					body: file,
+					headers: {
+						'Content-Type': file.type
+					}
+				});
+
+				if (!uploadRes.ok) {
+					throw new AIReceiptAPIError(
+						`GCS upload failed (${uploadRes.status})`,
+						uploadRes.status,
+						'UPLOAD_FAILED'
+					);
+				}
+				Logger.log(`File ${file.name} uploaded to GCS successfully`);
+				uploadFilePaths.push(uploadData.file_path);
 			}
 
-			if (uploadFilePaths.length > 0) {
+			if (uploadFilePaths.length === selectedFiles.length) {
 				lastUploadedFilePaths = uploadFilePaths;
 
 				// Start analysis immediately after upload
 				aiAnalyzing = true;
 				analysisResult = null;
-				analysisError = null;
 				const data = await analyzeReceipt(lastUploadedFilePaths);
 				if (data.status === 'success' && data.result) {
 					analysisResult = data.result;
 				}
 				Logger.log('AI Analysis Result:', data);
 			} else {
-				aiStep = 1;
+				throw new AIReceiptAPIError('Not all files were uploaded', 502, 'UPLOAD_FAILED');
 			}
 		} catch (err) {
 			console.error('Error in handleUpload:', err);
-			analysisError = getAnalyzeReceiptErrorMessage(err);
+			analysisError = getAIReceiptErrorInfo(err);
 			if (lastUploadedFilePaths.length === 0) {
 				aiStep = 1;
 			}
@@ -156,6 +242,7 @@
 
 	function removeFile(index: number) {
 		selectedFiles = selectedFiles.filter((_, i) => i !== index);
+		analysisError = null;
 	}
 </script>
 
@@ -179,14 +266,14 @@
 	<input
 		type="file"
 		multiple
-		accept="image/jpeg,image/png,image/heic,image/heif"
+		accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
 		class="hidden"
 		bind:this={fileInput}
 		onchange={handleFileChange}
 	/>
 	<input
 		type="file"
-		accept="image/*"
+		accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
 		capture="environment"
 		class="hidden"
 		bind:this={cameraInput}
@@ -237,12 +324,22 @@
 		<div class="py-8 flex flex-col items-center">
 			<Upload class="w-12 h-12 text-muted-foreground mb-2" />
 			<p class="text-sm font-medium">點擊或拖曳多張收據至此</p>
-			<p class="text-xs text-muted-foreground mt-1 text-center">支援 JPG, PNG, HEIC 格式</p>
+			<p class="text-xs text-muted-foreground mt-1 text-center">
+				支援 JPG、PNG、WebP、HEIC，最多 4 張／20 MiB
+			</p>
 		</div>
 	{/if}
 </div>
 
 <div class="mt-6 flex flex-col gap-2">
+	{#if analysisError}
+		<p
+			class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+			role="alert"
+		>
+			{analysisError.message}
+		</p>
+	{/if}
 	{#if selectedFiles.length === 0}
 		<Button class="w-full flex md:hidden" onclick={() => cameraInput?.click()}>
 			<Camera class="w-4 h-4 mr-2" /> 拍照
@@ -259,7 +356,10 @@
 			variant="ghost"
 			class="w-full"
 			disabled={aiUploading || aiConverting || aiAnalyzing}
-			onclick={() => (selectedFiles = [])}
+			onclick={() => {
+				selectedFiles = [];
+				analysisError = null;
+			}}
 		>
 			重新選取
 		</Button>

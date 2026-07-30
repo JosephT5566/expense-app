@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { Button } from '$lib/components/shadcn/button';
 	import { RotateCcw, ArrowRight } from 'lucide-svelte';
-	import { analyzeReceipt, getAnalyzeReceiptErrorMessage } from '$lib/data/ai-receipt.fetcher';
+	import { analyzeReceipt, getAIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
+	import type { AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import type {
 		ExtractionValue,
 		ReceiptAnalysisResult,
@@ -24,7 +25,7 @@
 		aiUploading: boolean;
 		aiAnalyzing: boolean;
 		analysisResult: ReceiptAnalysisResult | null;
-		analysisError: string | null;
+		analysisError: AIReceiptErrorInfo | null;
 		previewUrls: string[];
 		lastUploadedFilePaths: string[];
 		onReset: () => void;
@@ -70,7 +71,7 @@
 			Logger.log('AI Analysis Result (Re-analyze):', data);
 		} catch (error) {
 			console.error('Error in handleReAnalyze:', error);
-			analysisError = getAnalyzeReceiptErrorMessage(error);
+			analysisError = getAIReceiptErrorInfo(error);
 		} finally {
 			aiAnalyzing = false;
 		}
@@ -188,8 +189,12 @@
 	</div>
 {:else}
 	<div class="py-12 text-center space-y-4">
-		<p class="text-muted-foreground">{analysisError ?? '分析失敗或無結果'}</p>
-		{#if lastUploadedFilePaths.length > 0}
+		<p class="text-muted-foreground">{analysisError?.message ?? '分析失敗或無結果'}</p>
+		{#if analysisError?.recovery === 'reauthenticate'}
+			<Button variant="outline" onclick={() => window.location.reload()}
+				>重新載入並登入</Button
+			>
+		{:else if lastUploadedFilePaths.length > 0 && (!analysisError || analysisError.recovery === 'retry' || analysisError.recovery === 'unknown')}
 			<div class="flex flex-col gap-2">
 				<Button variant="outline" onclick={handleReAnalyze} disabled={aiAnalyzing}>
 					<RotateCcw class="w-4 h-4 mr-2" /> 重新分析
@@ -197,7 +202,7 @@
 				<Button variant="ghost" onclick={onReset}>返回重新上傳</Button>
 			</div>
 		{:else}
-			<Button variant="outline" onclick={onReset}>返回重新上傳</Button>
+			<Button variant="outline" onclick={onReset}>重新上傳</Button>
 		{/if}
 	</div>
 {/if}

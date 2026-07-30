@@ -9,6 +9,7 @@
 	import * as Dialog from '$lib/components/shadcn/dialog';
 	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
 	import { Button } from '$lib/components/shadcn/button';
+	import type { AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import { user } from '$lib/stores/session.store';
 	import { Sparkles, Upload, CircleCheckBig, X } from 'lucide-svelte';
 
@@ -35,7 +36,7 @@
 	let previewUrls = $state<string[]>([]);
 	let lastUploadedFilePaths = $state<string[]>([]);
 	let showConfirmClose = $state(false);
-	let analysisError = $state<string | null>(null);
+	let analysisError = $state<AIReceiptErrorInfo | null>(null);
 
 	let analysisResult = $state<ReceiptAnalysisResult | null>(null);
 
