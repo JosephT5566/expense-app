@@ -3,8 +3,12 @@
 	import { Button } from '$lib/components/shadcn/button';
 	import { browser } from '$app/environment';
 	import Logger from '$lib/utils/logger';
-	import { getUploadUrl, analyzeReceipt } from '$lib/data/ai-receipt.fetcher';
-	import type { ReceiptResult } from '$lib/types/expense';
+	import {
+		getUploadUrl,
+		analyzeReceipt,
+		getAnalyzeReceiptErrorMessage
+	} from '$lib/data/ai-receipt.fetcher';
+	import type { ReceiptAnalysisResult } from '$lib/types/expense';
 	import * as Carousel from '$lib/components/shadcn/carousel';
 
 	let {
@@ -15,7 +19,8 @@
 		selectedFiles = $bindable(),
 		previewUrls,
 		lastUploadedFilePaths = $bindable(),
-		analysisResult = $bindable()
+		analysisResult = $bindable(),
+		analysisError = $bindable()
 	}: {
 		aiStep: number;
 		aiUploading: boolean;
@@ -24,7 +29,8 @@
 		selectedFiles: File[];
 		previewUrls: string[];
 		lastUploadedFilePaths: string[];
-		analysisResult: ReceiptResult | null;
+		analysisResult: ReceiptAnalysisResult | null;
+		analysisError: string | null;
 	} = $props();
 
 	let isDragging = $state(false);
@@ -127,6 +133,7 @@
 				// Start analysis immediately after upload
 				aiAnalyzing = true;
 				analysisResult = null;
+				analysisError = null;
 				const data = await analyzeReceipt(lastUploadedFilePaths);
 				if (data.status === 'success' && data.result) {
 					analysisResult = data.result;
@@ -137,6 +144,7 @@
 			}
 		} catch (err) {
 			console.error('Error in handleUpload:', err);
+			analysisError = getAnalyzeReceiptErrorMessage(err);
 			if (lastUploadedFilePaths.length === 0) {
 				aiStep = 1;
 			}
