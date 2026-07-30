@@ -1,13 +1,15 @@
 <script lang="ts">
 	import type {
 		ExpenseRow,
+		ExtractionValue,
 		PreviewExpense,
 		PreviewGroupExpense,
-		ReceiptResult
+		ReceiptAnalysisResult
 	} from '$lib/types/expense';
 	import * as Dialog from '$lib/components/shadcn/dialog';
 	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
 	import { Button } from '$lib/components/shadcn/button';
+	import type { AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import { user } from '$lib/stores/session.store';
 	import { Sparkles, Upload, CircleCheckBig, X } from 'lucide-svelte';
 
@@ -34,8 +36,9 @@
 	let previewUrls = $state<string[]>([]);
 	let lastUploadedFilePaths = $state<string[]>([]);
 	let showConfirmClose = $state(false);
+	let analysisError = $state<AIReceiptErrorInfo | null>(null);
 
-	let analysisResult = $state<ReceiptResult | null>(null);
+	let analysisResult = $state<ReceiptAnalysisResult | null>(null);
 
 	const wizardSteps = [
 		{ id: 1, title: '上傳收據', icon: Upload },
@@ -46,23 +49,51 @@
 	let previewExpenses = $state<PreviewExpense[]>([]);
 	let previewGroupExpenses = $state<PreviewGroupExpense>({});
 
+	function recognized<T>(field: ExtractionValue<T> | undefined): T | undefined {
+		return field?.state === 'recognized' ? field.value : undefined;
+	}
+
 	$effect(() => {
-		if (!analysisResult) {
+		if (!analysisResult || analysisResult.document_type !== 'receipt') {
 			previewExpenses = [];
 			return;
 		}
-		previewExpenses = (analysisResult.items ?? []).map((item, i) => {
+		const receipt = analysisResult.receipt;
+		const extractedItems = recognized(receipt.line_items) ?? [];
+		const purchaseDate = recognized(receipt.purchase_date);
+		const currency = recognized(receipt.currency) ?? 'TWD';
+		const merchant = recognized(receipt.merchant)?.name ?? '';
+		const grandTotal = Number(recognized(receipt.totals)?.grand_total ?? 0);
+		const items =
+			extractedItems.length > 0
+				? extractedItems
+				: [
+						{
+							description: { state: 'recognized' as const, value: merchant },
+							quantity: { state: 'recognized' as const, value: '1' },
+							line_total: {
+								state: 'recognized' as const,
+								value: Number.isFinite(grandTotal) ? String(grandTotal) : '0'
+							}
+						}
+					];
+		previewExpenses = items.map((item, i) => {
+			const description = recognized(item.description) ?? '';
+			const quantity = Number(recognized(item.quantity) ?? 1);
+			const lineTotal = recognized(item.line_total);
+			const unitPrice = recognized(item.unit_price);
+			const amount = Number(lineTotal ?? unitPrice ?? 0) * (lineTotal ? 1 : quantity);
 			return {
 				id: `preview-${i}-${Date.now()}`,
 				payer_email: $user?.email || '',
-				note: item.name || '',
-				amount: item.price || 0,
-				currency: 'TWD',
-				ts: analysisResult?.date
-					? new Date(analysisResult.date).toISOString()
+				note: description,
+				amount: Number.isFinite(amount) ? amount : 0,
+				currency,
+				ts: purchaseDate
+					? new Date(`${purchaseDate}T00:00:00`).toISOString()
 					: new Date().toISOString(),
 				scope: 'personal',
-				shares_json: { [$user?.email || '']: item.price || 0 },
+				shares_json: { [$user?.email || '']: Number.isFinite(amount) ? amount : 0 },
 				is_settled: false,
 				category_id: '',
 				isGrouped: false,
@@ -79,6 +110,7 @@
 		aiAnalyzing = false;
 		aiConverting = false;
 		lastUploadedFilePaths = [];
+		analysisError = null;
 	}
 
 	$effect(() => {
@@ -159,6 +191,7 @@
 					{previewUrls}
 					bind:lastUploadedFilePaths
 					bind:analysisResult
+					bind:analysisError
 				/>
 			{:else if aiStep === 2}
 				<AnalysisStep
@@ -166,6 +199,7 @@
 					{aiUploading}
 					bind:aiAnalyzing
 					bind:analysisResult
+					bind:analysisError
 					{previewUrls}
 					{lastUploadedFilePaths}
 					onReset={() => (aiStep = 1)}

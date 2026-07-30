@@ -1,4 +1,14 @@
-export type Currency = 'TWD' | 'USD' | 'GBP' | 'EUR';
+export type Currency =
+	| 'TWD'
+	| 'USD'
+	| 'JPY'
+	| 'EUR'
+	| 'GBP'
+	| 'KRW'
+	| 'CNY'
+	| 'HKD'
+	| 'SGD'
+	| 'THB';
 
 export type ExpenseScope = 'household' | 'personal';
 export type ScheduledExpenseKind = 'one_time' | 'recurring';
@@ -95,15 +105,49 @@ export interface PageResult<T> {
 	nextCursor: string | null;
 }
 
-export interface ReceiptItem {
+export type UnrecognizedExtraction = {
+	state: 'unrecognized';
+};
+
+export type RecognizedExtraction<T> = {
+	state: 'recognized';
+	value: T;
+};
+
+/**
+ * A property containing this type may also be omitted. Omission and `null`
+ * intentionally retain their distinct meanings from the extraction API.
+ */
+export type ExtractionValue<T> = null | UnrecognizedExtraction | RecognizedExtraction<T>;
+
+export interface ReceiptMerchant {
 	name: string;
-	quantity: number;
-	price: number;
 }
 
-export interface ReceiptResult {
-	store_name: string;
-	date: string;
-	total_amount: number;
-	items: ReceiptItem[];
+export interface ReceiptTotals {
+	grand_total: string;
 }
+
+export interface ReceiptLineItem {
+	description?: ExtractionValue<string>;
+	quantity?: ExtractionValue<string>;
+	unit_price?: ExtractionValue<string>;
+	line_total?: ExtractionValue<string>;
+}
+
+export interface Receipt {
+	merchant?: ExtractionValue<ReceiptMerchant>;
+	purchase_date?: ExtractionValue<string>;
+	totals?: ExtractionValue<ReceiptTotals>;
+	currency?: ExtractionValue<Currency>;
+	line_items?: ExtractionValue<ReceiptLineItem[]>;
+}
+
+export type ReceiptAnalysisResult =
+	| {
+		document_type: 'receipt';
+		receipt: Receipt;
+	}
+	| {
+		document_type: 'not_a_receipt';
+	};
