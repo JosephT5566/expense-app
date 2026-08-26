@@ -1,7 +1,11 @@
 <script lang="ts">
 	import { Button } from '$lib/components/shadcn/button';
 	import { RotateCcw, ArrowRight } from 'lucide-svelte';
-	import { analyzeReceipt, getAIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
+	import {
+		analyzeReceipt,
+		getAIReceiptErrorInfo,
+		toReceiptAnalysisResult
+	} from '$lib/data/ai-receipt.fetcher';
 	import type { AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import type {
 		ExtractionValue,
@@ -65,9 +69,7 @@
 		analysisError = null;
 		try {
 			const data = await analyzeReceipt(lastUploadedFilePaths);
-			if (data.status === 'success' && data.result) {
-				analysisResult = data.result;
-			}
+			analysisResult = toReceiptAnalysisResult(data);
 			Logger.log('AI Analysis Result (Re-analyze):', data);
 		} catch (error) {
 			console.error('Error in handleReAnalyze:', error);

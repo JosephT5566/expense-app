@@ -1,13 +1,152 @@
 import { PUBLIC_GOOGLE_AI_GCF } from '$env/static/public';
 import { supabase } from '$lib/supabase/supabaseClient';
 import Logger from '$lib/utils/logger';
-import type { ReceiptAnalysisResult } from '$lib/types/expense';
+import type { ExtractionValue, ReceiptAnalysisResult, ReceiptLineItem } from '$lib/types/expense';
 
-export interface AnalyzeReceiptResponse {
-	action: 'analyze_receipt';
-	status: 'success';
-	result: ReceiptAnalysisResult;
+export type ReceiptAnalysisStatus =
+	| 'auto_acceptable'
+	| 'needs_review'
+	| 'invalid'
+	| 'retryable_failure';
+
+export type RecognitionStatus = 'recognized' | 'unrecognized' | 'missing' | 'explicit_null';
+
+export type ReceiptWarningCode =
+	| 'FIELD_MISSING'
+	| 'FIELD_EXPLICIT_NULL'
+	| 'FIELD_UNRECOGNIZED'
+	| 'MISSING_CONFIDENCE'
+	| 'LOW_CONFIDENCE'
+	| 'NOT_A_RECEIPT'
+	| 'INVALID_MODEL_OUTPUT'
+	| 'PROVIDER_FAILURE';
+
+export type SupportedCurrency =
+	| 'TWD'
+	| 'USD'
+	| 'JPY'
+	| 'EUR'
+	| 'GBP'
+	| 'KRW'
+	| 'CNY'
+	| 'HKD'
+	| 'SGD'
+	| 'THB';
+
+export interface FieldMetadata {
+	recognition_status: RecognitionStatus;
+	confidence: number | null;
+	warnings: ReceiptWarningCode[];
 }
+
+export interface NormalizedField<T> {
+	value: T | null;
+	metadata: FieldMetadata;
+}
+
+export interface NormalizedLineItem {
+	metadata: FieldMetadata;
+	description: NormalizedField<string>;
+	quantity: NormalizedField<string>;
+	unit_price: NormalizedField<string>;
+	line_total: NormalizedField<string>;
+}
+
+export interface NormalizedReceipt {
+	merchant: NormalizedField<string>;
+	purchase_date: NormalizedField<string>;
+	grand_total: NormalizedField<string>;
+	currency: NormalizedField<SupportedCurrency>;
+	line_items: NormalizedField<NormalizedLineItem[]>;
+}
+
+export interface RecognizedValue<T> {
+	state: 'recognized';
+	value: T;
+	confidence?: number | null;
+}
+
+export interface UnrecognizedValue {
+	state: 'unrecognized';
+}
+
+export type RawField<T> = RecognizedValue<T> | UnrecognizedValue | null;
+
+export interface RawLineItem {
+	description?: RawField<string>;
+	quantity?: RawField<number>;
+	unit_price?: RawField<number>;
+	line_total?: RawField<number>;
+}
+
+export interface RawReceipt {
+	merchant?: RawField<{ name: string }>;
+	purchase_date?: RawField<string>;
+	totals?: RawField<{ grand_total: number }>;
+	currency?: RawField<SupportedCurrency>;
+	line_items?: RawField<RawLineItem[]>;
+}
+
+export interface RawReceiptDocument {
+	document_type: 'receipt';
+	receipt: RawReceipt;
+}
+
+export interface RawNotReceiptDocument {
+	document_type: 'not_a_receipt';
+}
+
+export interface ValidationWarning {
+	code: ReceiptWarningCode;
+	field: string | null;
+	message: string;
+}
+
+export interface ReceiptVersionIdentifiers {
+	contract: string;
+	prompt: string;
+	model: string;
+	schema_version: string;
+}
+
+interface ReceiptEnvelopeBase<S extends ReceiptAnalysisStatus> {
+	contract_version: 'receipt-result.v1';
+	status: S;
+	validation: {
+		outcome: S;
+		warnings: ValidationWarning[];
+	};
+	versions: ReceiptVersionIdentifiers;
+}
+
+interface ReceiptDocumentResponse<
+	S extends 'auto_acceptable' | 'needs_review'
+> extends ReceiptEnvelopeBase<S> {
+	raw_extraction: RawReceiptDocument;
+	normalized_receipt: NormalizedReceipt;
+}
+
+export type AutoAcceptableReceiptResponse = ReceiptDocumentResponse<'auto_acceptable'>;
+export type NeedsReviewReceiptResponse = ReceiptDocumentResponse<'needs_review'>;
+export type SuccessfulReceiptResponse = AutoAcceptableReceiptResponse | NeedsReviewReceiptResponse;
+
+export interface InvalidReceiptResponse extends ReceiptEnvelopeBase<'invalid'> {
+	raw_extraction: RawNotReceiptDocument;
+	normalized_receipt: null;
+}
+
+export interface RetryableReceiptResponse extends ReceiptEnvelopeBase<'retryable_failure'> {
+	raw_extraction: null;
+	normalized_receipt: null;
+}
+
+export type ReceiptAnalysisResponse =
+	| SuccessfulReceiptResponse
+	| InvalidReceiptResponse
+	| RetryableReceiptResponse;
+
+/** @deprecated Use ReceiptAnalysisResponse. */
+export type AnalyzeReceiptResponse = ReceiptAnalysisResponse;
 
 export type AIReceiptErrorCode =
 	| 'INVALID_REQUEST'
@@ -109,6 +248,72 @@ export function getAIReceiptErrorInfo(error: unknown): AIReceiptErrorInfo {
 	};
 }
 
+function toExtractionValue<T>(field: NormalizedField<T>): ExtractionValue<T> | undefined {
+	switch (field.metadata.recognition_status) {
+		case 'recognized':
+			return field.value === null ? undefined : { state: 'recognized', value: field.value };
+		case 'explicit_null':
+			return null;
+		case 'unrecognized':
+			return { state: 'unrecognized' };
+		case 'missing':
+			return undefined;
+	}
+}
+
+/** Converts the normalized v1 contract into the extraction shape used by the current review UI. */
+export function toReceiptAnalysisResult(response: ReceiptAnalysisResponse): ReceiptAnalysisResult {
+	if (response.status === 'invalid') {
+		return response.raw_extraction;
+	}
+
+	if (response.status === 'retryable_failure') {
+		const warning = response.validation.warnings[0];
+		throw new AIReceiptAPIError(
+			warning?.message ?? 'AI receipt analysis failed',
+			502,
+			warning?.code
+		);
+	}
+
+	const receipt = response.normalized_receipt;
+	const normalizedItems = toExtractionValue(receipt.line_items);
+	let lineItems: ExtractionValue<ReceiptLineItem[]> | undefined;
+	if (normalizedItems?.state === 'recognized') {
+		lineItems = {
+			state: 'recognized',
+			value: normalizedItems.value.map((item) => ({
+				description: toExtractionValue(item.description),
+				quantity: toExtractionValue(item.quantity),
+				unit_price: toExtractionValue(item.unit_price),
+				line_total: toExtractionValue(item.line_total)
+			}))
+		};
+	} else {
+		lineItems = normalizedItems;
+	}
+
+	const merchant = toExtractionValue(receipt.merchant);
+	const grandTotal = toExtractionValue(receipt.grand_total);
+
+	return {
+		document_type: 'receipt',
+		receipt: {
+			merchant:
+				merchant?.state === 'recognized'
+					? { state: 'recognized', value: { name: merchant.value } }
+					: merchant,
+			purchase_date: toExtractionValue(receipt.purchase_date),
+			totals:
+				grandTotal?.state === 'recognized'
+					? { state: 'recognized', value: { grand_total: grandTotal.value } }
+					: grandTotal,
+			currency: toExtractionValue(receipt.currency),
+			line_items: lineItems
+		}
+	};
+}
+
 async function throwResponseError(response: Response, fallbackMessage: string): Promise<never> {
 	let errorCode: string | undefined;
 	let errorMessage = response.statusText;
@@ -117,9 +322,11 @@ async function throwResponseError(response: Response, fallbackMessage: string): 
 			code?: string;
 			message?: string;
 			error?: { code?: string; message?: string };
+			validation?: { warnings?: ValidationWarning[] };
 		};
-		errorCode = body.error?.code ?? body.code;
-		errorMessage = body.error?.message ?? body.message ?? errorMessage;
+		const warning = body.validation?.warnings?.[0];
+		errorCode = body.error?.code ?? body.code ?? warning?.code;
+		errorMessage = body.error?.message ?? body.message ?? warning?.message ?? errorMessage;
 	} catch {
 		// Use the response status when an upstream error is not JSON.
 	}
@@ -189,5 +396,5 @@ export async function analyzeReceipt(filePaths: string[]) {
 		return throwResponseError(response, 'Failed to analyze receipt');
 	}
 
-	return (await response.json()) as AnalyzeReceiptResponse;
+	return (await response.json()) as ReceiptAnalysisResponse;
 }

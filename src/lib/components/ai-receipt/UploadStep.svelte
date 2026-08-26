@@ -7,7 +7,8 @@
 		getUploadUrl,
 		analyzeReceipt,
 		getAIReceiptErrorInfo,
-		AIReceiptAPIError
+		AIReceiptAPIError,
+		toReceiptAnalysisResult
 	} from '$lib/data/ai-receipt.fetcher';
 	import type { AIReceiptErrorCode, AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import type { ReceiptAnalysisResult } from '$lib/types/expense';
@@ -221,9 +222,7 @@
 				aiAnalyzing = true;
 				analysisResult = null;
 				const data = await analyzeReceipt(lastUploadedFilePaths);
-				if (data.status === 'success' && data.result) {
-					analysisResult = data.result;
-				}
+				analysisResult = toReceiptAnalysisResult(data);
 				Logger.log('AI Analysis Result:', data);
 			} else {
 				throw new AIReceiptAPIError('Not all files were uploaded', 502, 'UPLOAD_FAILED');
