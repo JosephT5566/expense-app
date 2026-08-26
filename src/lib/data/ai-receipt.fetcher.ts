@@ -1,13 +1,12 @@
 import { PUBLIC_GOOGLE_AI_GCF } from '$env/static/public';
 import { supabase } from '$lib/supabase/supabaseClient';
 import Logger from '$lib/utils/logger';
-import type { ReceiptAnalysisResult } from '$lib/types/expense';
-
-export interface AnalyzeReceiptResponse {
-	action: 'analyze_receipt';
-	status: 'success';
-	result: ReceiptAnalysisResult;
-}
+import type { ExtractionValue, ReceiptAnalysisResult, ReceiptLineItem } from '$lib/types/expense';
+import type {
+	NormalizedField,
+	ReceiptAnalysisResponse,
+	ValidationWarning
+} from '$lib/types/ai-receipt';
 
 export type AIReceiptErrorCode =
 	| 'INVALID_REQUEST'
@@ -109,6 +108,72 @@ export function getAIReceiptErrorInfo(error: unknown): AIReceiptErrorInfo {
 	};
 }
 
+function toExtractionValue<T>(field: NormalizedField<T>): ExtractionValue<T> | undefined {
+	switch (field.metadata.recognition_status) {
+		case 'recognized':
+			return field.value === null ? undefined : { state: 'recognized', value: field.value };
+		case 'explicit_null':
+			return null;
+		case 'unrecognized':
+			return { state: 'unrecognized' };
+		case 'missing':
+			return undefined;
+	}
+}
+
+/** Converts the normalized v1 contract into the extraction shape used by the current review UI. */
+export function toReceiptAnalysisResult(response: ReceiptAnalysisResponse): ReceiptAnalysisResult {
+	if (response.status === 'invalid') {
+		return response.raw_extraction;
+	}
+
+	if (response.status === 'retryable_failure') {
+		const warning = response.validation.warnings[0];
+		throw new AIReceiptAPIError(
+			warning?.message ?? 'AI receipt analysis failed',
+			502,
+			warning?.code
+		);
+	}
+
+	const receipt = response.normalized_receipt;
+	const normalizedItems = toExtractionValue(receipt.line_items);
+	let lineItems: ExtractionValue<ReceiptLineItem[]> | undefined;
+	if (normalizedItems?.state === 'recognized') {
+		lineItems = {
+			state: 'recognized',
+			value: normalizedItems.value.map((item) => ({
+				description: toExtractionValue(item.description),
+				quantity: toExtractionValue(item.quantity),
+				unit_price: toExtractionValue(item.unit_price),
+				line_total: toExtractionValue(item.line_total)
+			}))
+		};
+	} else {
+		lineItems = normalizedItems;
+	}
+
+	const merchant = toExtractionValue(receipt.merchant);
+	const grandTotal = toExtractionValue(receipt.grand_total);
+
+	return {
+		document_type: 'receipt',
+		receipt: {
+			merchant:
+				merchant?.state === 'recognized'
+					? { state: 'recognized', value: { name: merchant.value } }
+					: merchant,
+			purchase_date: toExtractionValue(receipt.purchase_date),
+			totals:
+				grandTotal?.state === 'recognized'
+					? { state: 'recognized', value: { grand_total: grandTotal.value } }
+					: grandTotal,
+			currency: toExtractionValue(receipt.currency),
+			line_items: lineItems
+		}
+	};
+}
+
 async function throwResponseError(response: Response, fallbackMessage: string): Promise<never> {
 	let errorCode: string | undefined;
 	let errorMessage = response.statusText;
@@ -117,9 +182,11 @@ async function throwResponseError(response: Response, fallbackMessage: string): 
 			code?: string;
 			message?: string;
 			error?: { code?: string; message?: string };
+			validation?: { warnings?: ValidationWarning[] };
 		};
-		errorCode = body.error?.code ?? body.code;
-		errorMessage = body.error?.message ?? body.message ?? errorMessage;
+		const warning = body.validation?.warnings?.[0];
+		errorCode = body.error?.code ?? body.code ?? warning?.code;
+		errorMessage = body.error?.message ?? body.message ?? warning?.message ?? errorMessage;
 	} catch {
 		// Use the response status when an upstream error is not JSON.
 	}
@@ -189,5 +256,5 @@ export async function analyzeReceipt(filePaths: string[]) {
 		return throwResponseError(response, 'Failed to analyze receipt');
 	}
 
-	return (await response.json()) as AnalyzeReceiptResponse;
+	return (await response.json()) as ReceiptAnalysisResponse;
 }
