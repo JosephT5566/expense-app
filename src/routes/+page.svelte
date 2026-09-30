@@ -1,6 +1,6 @@
 <script lang="ts">
-	import _isEmpty from 'lodash/isEmpty';
-	import { SvelteDate } from 'svelte/reactivity';
+	import { onDestroy, tick, untrack } from 'svelte';
+	import { SvelteDate, SvelteMap } from 'svelte/reactivity';
 
 	import type { ExpenseRow } from '$lib/types/expense';
 
@@ -20,6 +20,7 @@
 	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
 
 	import Logger from '$lib/utils/logger';
+	import { user as currentUser } from '$lib/stores/session.store';
 
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
@@ -36,22 +37,73 @@
 	const dueScheduledItems = scheduledExpensesStore.dueItems;
 	const scheduledLoading = scheduledExpensesStore.loading;
 
-	// 依選擇日期，若該月份資料未在 store 中，則載入該月份
-	$effect(() => {
-		if (selectedDate === toDateOnlyStr(today)) {
+	// Track completed requests, including empty months, rather than inferring them from rows.
+	let monthStatus = $state<Record<string, 'loading' | 'loaded' | 'error'>>({});
+	const pendingMonths = new SvelteMap<string, Promise<void>>();
+	let requestGeneration = 0;
+
+	async function ensureMonth(key: string) {
+		if (!$currentUser) {
 			return;
 		}
-
-		// when state selectedDate changes
-		// check if we have any item in this month in the expenses store
-		if (!expensesStore.hasMonthExpenses(selectedYear, selectedMonth)) {
-			getMonthlyFromCacheFirst(monthKey).then((newMonthExpense) => {
-				if (_isEmpty(newMonthExpense)) {
+		if (monthStatus[key] === 'loaded') {
+			return;
+		}
+		if (pendingMonths.has(key)) {
+			return pendingMonths.get(key);
+		}
+		const generation = requestGeneration;
+		monthStatus[key] = 'loading';
+		const request = getMonthlyFromCacheFirst(key)
+			.then((rows) => {
+				if (generation !== requestGeneration) {
 					return;
 				}
-				expensesStore.setMoreItems(newMonthExpense);
+				expensesStore.setMoreItems(rows);
+				monthStatus[key] = 'loaded';
+			})
+			.catch((error) => {
+				if (generation !== requestGeneration) {
+					return;
+				}
+				monthStatus[key] = 'error';
+				Logger.error('Load carousel month failed:', key, error);
+			})
+			.finally(() => {
+				if (generation === requestGeneration) {
+					pendingMonths.delete(key);
+				}
 			});
+		pendingMonths.set(key, request);
+		return request;
+	}
+
+	$effect(() => {
+		// Reset request bookkeeping when the account changes.
+		const email = $currentUser?.email;
+		requestGeneration += 1;
+		monthStatus = {};
+		pendingMonths.clear();
+		if (!email) {
+			return;
 		}
+	});
+
+	onDestroy(() => {
+		requestGeneration += 1;
+	});
+
+	$effect(() => {
+		if (!$currentUser) {
+			return;
+		}
+		const keys = new Set(dateList.map((date) => date.slice(0, 7)));
+		// Date/account changes trigger loading; status writes must not retrigger this effect.
+		untrack(() => {
+			for (const key of keys) {
+				void ensureMonth(key);
+			}
+		});
 	});
 
 	function toDateOnlyStr(d: Date) {
@@ -113,44 +165,78 @@
 		}
 	}
 
-	// Carousel sync logic
+	// Keep only the selected day and its neighbours mounted. At today, omit tomorrow.
 	let carouselApi = $state<CarouselAPI>();
-	let initialized = $state(false);
+	let recentering = false;
+	let carouselRevision = 0;
 
-	const dateList = $derived.by(() => {
-		const list = [];
-		const start = new SvelteDate(today);
-		start.setDate(start.getDate() - 60);
-		for (let i = 0; i <= 60; i++) {
-			const d = new SvelteDate(start);
-			d.setDate(d.getDate() + i);
-			list.push(toDateOnlyStr(d));
+	function offsetDate(date: string, days: number) {
+		const value = new SvelteDate(`${date}T12:00:00Z`);
+		value.setUTCDate(value.getUTCDate() + days);
+		return value.toISOString().slice(0, 10);
+	}
+
+	const dateList = $derived(
+		[offsetDate(selectedDate, -1), selectedDate, offsetDate(selectedDate, 1)].filter(
+			(date) => date <= toDateOnlyStr(today)
+		)
+	);
+
+	// Group once when store rows change, rather than scanning every row in each card.
+	const expensesByDate = $derived.by(() => {
+		const grouped = new SvelteMap<string, ExpenseRow[]>();
+		for (const row of $expensesItems) {
+			const date = new Date(Date.parse(row.ts) + 8 * 60 * 60 * 1000)
+				.toISOString()
+				.slice(0, 10);
+			const rows = grouped.get(date) ?? [];
+			rows.push(row);
+			grouped.set(date, rows);
 		}
-		return list;
+		return grouped;
 	});
 
 	$effect(() => {
-		if (carouselApi && selectedDate) {
-			const index = dateList.indexOf(selectedDate);
-			if (index !== -1 && index !== carouselApi.selectedScrollSnap()) {
-				carouselApi.scrollTo(index, !initialized);
-				initialized = true;
+		const api = carouselApi;
+		// Subscribe to date changes so direct date jumps also recenter.
+		const date = selectedDate;
+		if (!api) {
+			return;
+		}
+		const revision = ++carouselRevision;
+		recentering = true;
+		void tick().then(() => {
+			if (revision !== carouselRevision) {
+				return;
 			}
-		}
+			api.reInit();
+			api.scrollTo(dateList.indexOf(date), true);
+			recentering = false;
+		});
+		return () => {
+			carouselRevision += 1;
+		};
 	});
 
 	$effect(() => {
-		if (carouselApi) {
-			const onSelect = () => {
-				const index = carouselApi!.selectedScrollSnap();
-				const newDate = dateList[index];
-				if (newDate && newDate !== selectedDate) {
-					selectedDate = newDate;
-				}
-			};
-			carouselApi.on('select', onSelect);
-			return () => carouselApi!.off('select', onSelect);
+		const api = carouselApi;
+		if (!api) {
+			return;
 		}
+		const onSettle = () => {
+			if (recentering) {
+				return;
+			}
+			const date = dateList[api.selectedScrollSnap()];
+			if (date && date !== selectedDate) {
+				selectedDate = date;
+			}
+		};
+		// Recenter only after the swipe animation finishes.
+		api.on('settle', onSettle);
+		return () => {
+			api.off('settle', onSettle);
+		};
 	});
 </script>
 
@@ -173,6 +259,7 @@
 				<div class="relative flex items-center">
 					<input
 						type="date"
+						aria-label="Expense date"
 						value={selectedDate}
 						class="bg-transparent border-none p-0 text-base font-black tracking-tight focus:ring-0 cursor-pointer appearance-none"
 						max={toDateOnlyStr(today)}
@@ -182,7 +269,9 @@
 								selectedDate = toDateOnlyStr(today);
 								return;
 							}
-							selectedDate = target.value;
+							if (target.validity.valid) {
+								selectedDate = target.value;
+							}
 						}}
 					/>
 				</div>
@@ -209,22 +298,31 @@
 		class="w-full"
 	>
 		<Carousel.Content class="items-start">
-			{#each dateList as date (date)}
+			{#each dateList as date, index (index)}
 				<Carousel.Item class="basis-[85%] pl-4">
 					<DailyCarouselCard
 						{date}
 						{selectedDate}
 						todayDate={toDateOnlyStr(today)}
-						expenses={$expensesItems ?? []}
+						expenses={expensesByDate.get(date) ?? []}
 						dueScheduledItems={$dueScheduledItems}
-						expensesLoading={$expensesLoading}
+						expensesLoading={$expensesLoading ||
+							monthStatus[date.slice(0, 7)] === 'loading'}
+						loadError={monthStatus[date.slice(0, 7)] === 'error'}
+						onRetry={() => ensureMonth(date.slice(0, 7))}
 						scheduledLoading={$scheduledLoading}
 						categoryIconMap={$categoryIconMap}
 						{approvingScheduledId}
 						{cancellingScheduledId}
-						onCreate={openCreate}
+						onCreate={() => {
+							selectedDate = date;
+							openCreate();
+						}}
 						onEdit={openEdit}
-						onOpenReceiptImport={() => (aiDialogOpen = true)}
+						onOpenReceiptImport={() => {
+							selectedDate = date;
+							aiDialogOpen = true;
+						}}
 						onApproveScheduled={approveScheduledExpense}
 						onCancelScheduled={cancelScheduledExpense}
 					/>

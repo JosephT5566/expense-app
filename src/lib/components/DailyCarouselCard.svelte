@@ -14,6 +14,8 @@
 		expenses = [],
 		dueScheduledItems = [],
 		expensesLoading = false,
+		loadError = false,
+		onRetry,
 		scheduledLoading = false,
 		categoryIconMap = {},
 		approvingScheduledId = null,
@@ -30,6 +32,8 @@
 		expenses?: ExpenseRow[];
 		dueScheduledItems?: ScheduledExpenseRow[];
 		expensesLoading?: boolean;
+		loadError?: boolean;
+		onRetry: () => void;
 		scheduledLoading?: boolean;
 		categoryIconMap?: Record<string, string>;
 		approvingScheduledId?: string | null;
@@ -60,8 +64,13 @@
 	);
 </script>
 
-<section class="card p-4">
-	{#if isLoadingEmpty}
+<section class="card p-4" data-date={date}>
+	{#if loadError}
+		<div class="py-12 text-center">
+			<p class="mb-3 text-sm">載入支出失敗，請稍後再試。</p>
+			<Button variant="outline" onclick={onRetry}>重試</Button>
+		</div>
+	{:else if isLoadingEmpty}
 		<p class="mt-3 opacity-70 text-sm font-medium">載入中…</p>
 	{:else}
 		{#if scheduledItems.length !== 0}
