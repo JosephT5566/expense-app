@@ -12,10 +12,6 @@ export const error = writable<unknown>(null);
 export const _lastQuery = writable<ExpenseQuery | null>(null);
 export const monthlyItems = writable(new Map<string, ExpenseRow[]>());
 
-export function setMonthlyItemsFromLoad(data: ExpenseRow[]) {
-	items.set(data);
-}
-
 export function setMoreItems(data: ExpenseRow[]) {
 	items.update((prev) => {
 		const map = new Map(prev.map((r) => [r.id, r]));
