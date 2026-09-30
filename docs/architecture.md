@@ -38,7 +38,7 @@ JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. 
 
 `src/routes/+layout.ts` skips fetching outside the browser. In the browser it gets the Supabase user, then expense categories and the settings allowlist. Its month comes from the `m` query parameter or the current Taiwan month.
 
-`src/routes/+layout.svelte` initializes stores from load data, retrieves monthly expenses through the cache-first helper, loads pending schedules, and renders navigation and the auth modal. On mount it subscribes to auth changes through `src/lib/supabase/auth.ts`. Sign-out clears expense and scheduled stores, invokes cache cleanup, and navigates home.
+`src/routes/+layout.svelte` initializes stores from load data, retrieves monthly expenses through the cache-first helper and merges them into the store so concurrent neighbouring-month loads are retained, loads pending schedules, and renders navigation and the auth modal. On mount it subscribes to auth changes through `src/lib/supabase/auth.ts`. Sign-out clears expense and scheduled stores, invokes cache cleanup, and navigates home.
 
 Google sign-in redirects to the app's origin plus its SvelteKit base path. Database access depends on external RLS policies, not just frontend filters.
 
@@ -49,6 +49,8 @@ Google sign-in redirects to the app's origin plus its SvelteKit base path. Datab
 The expense store tracks loaded rows and pagination state. `ExpenseDrawerContent.svelte` writes through the fetcher, then updates the store. Single-row store upserts/deletes patch existing monthly cache entries, including removing an old-month row when its date moves across months. Bulk store upserts do not currently persist monthly cache patches.
 
 Monthly retrieval checks memory, then IndexedDB, then Supabase. Cached months become stale after ten minutes; stale hits return immediately and launch background cache revalidation. That helper updates the cache without directly publishing refreshed rows into the expense store. Explicit refresh is implemented in `forceRefetchMonthlyExpenses`.
+
+The home page renders a moving carousel window containing the selected date, the previous day, and the next day. At today, the future card is omitted. Swipes change the selected date after the animation settles, then recenter the window; the date input can jump to any past date. Expenses are grouped by Taiwan day once per store update and passed to the visible cards. The page loads the months represented by the window through the cache-first helper and tracks loading, success (including empty months), and failure per month for the current account. Failed loads show a retry action. This bookkeeping lasts for the home page instance; the summary still checks for existing rows before requesting a month. Monthly cache retrieval currently takes only the first page, up to 500 rows by default.
 
 The summary groups loaded rows by category: personal rows contribute their full amount; household rows contribute the current user's `shares_json` amount. Settlement queries its own rows and calculates balances and transfers locally; it does not query the inherited monthly balance view described in the database notes.
 

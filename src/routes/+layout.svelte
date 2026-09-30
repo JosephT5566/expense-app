@@ -13,7 +13,7 @@
 	import { setFromLoad as setCategoriesStore } from '$lib/stores/categories.store';
 	import { setFromLoad as setAppSettingStore } from '$lib/stores/appSetting.store';
 	import {
-		setMonthlyItemsFromLoad,
+		setMoreItems,
 		items as expenseItems,
 		clearAll as clearAllExpenses
 	} from '$lib/stores/expenses.store';
@@ -60,7 +60,8 @@
 			Logger.log('User signed in, the first time we fetch month data for:', month);
 
 			if (monthlyData) {
-				setMonthlyItemsFromLoad(monthlyData);
+				// Keep neighbouring months that may have finished loading first.
+				setMoreItems(monthlyData);
 			}
 		});
 		loadPendingScheduledExpenses();
