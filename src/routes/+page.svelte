@@ -28,6 +28,8 @@
 	let expenseId = $state('');
 	const today = new SvelteDate();
 	let selectedDate = $state(toDateOnlyStr(today));
+	let windowDate = $state(toDateOnlyStr(today));
+	let navigationRevision = $state(0);
 	const [selectedYear, selectedMonth] = $derived(selectedDate.split('-').map(Number));
 	const monthKey = $derived(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`);
 
@@ -97,7 +99,7 @@
 		if (!$currentUser) {
 			return;
 		}
-		const keys = new Set(dateList.map((date) => date.slice(0, 7)));
+		const keys = new Set(getBufferedDates(selectedDate).map((date) => date.slice(0, 7)));
 		// Date/account changes trigger loading; status writes must not retrigger this effect.
 		untrack(() => {
 			for (const key of keys) {
@@ -165,10 +167,9 @@
 		}
 	}
 
-	// Keep only the selected day and its neighbours mounted. At today, omit tomorrow.
+	// Keep a seven-day buffer mounted; ordinary swipes reuse the existing cards.
 	let carouselApi = $state<CarouselAPI>();
 	let recentering = false;
-	let carouselRevision = 0;
 
 	function offsetDate(date: string, days: number) {
 		const value = new SvelteDate(`${date}T12:00:00Z`);
@@ -176,11 +177,21 @@
 		return value.toISOString().slice(0, 10);
 	}
 
-	const dateList = $derived(
-		[offsetDate(selectedDate, -1), selectedDate, offsetDate(selectedDate, 1)].filter(
-			(date) => date <= toDateOnlyStr(today)
-		)
-	);
+	function getBufferedDates(date: string) {
+		return Array.from({ length: 7 }, (_, index) => offsetDate(date, index - 3)).filter(
+			(value) => value <= toDateOnlyStr(today)
+		);
+	}
+
+	const dateList = $derived(getBufferedDates(windowDate));
+
+	function navigateDate(date: string) {
+		recentering = true;
+		selectedDate = date;
+		windowDate = date;
+		// Reset an unfinished swipe even when jumping to the existing window's centre.
+		navigationRevision += 1;
+	}
 
 	// Group once when store rows change, rather than scanning every row in each card.
 	const expensesByDate = $derived.by(() => {
@@ -198,15 +209,15 @@
 
 	$effect(() => {
 		const api = carouselApi;
-		// Subscribe to date changes so direct date jumps also recenter.
-		const date = selectedDate;
+		const date = windowDate;
+		const navigation = navigationRevision;
 		if (!api) {
 			return;
 		}
-		const revision = ++carouselRevision;
+		let cancelled = false;
 		recentering = true;
 		void tick().then(() => {
-			if (revision !== carouselRevision) {
+			if (cancelled || navigation !== navigationRevision) {
 				return;
 			}
 			api.reInit();
@@ -214,7 +225,7 @@
 			recentering = false;
 		});
 		return () => {
-			carouselRevision += 1;
+			cancelled = true;
 		};
 	});
 
@@ -223,18 +234,38 @@
 		if (!api) {
 			return;
 		}
-		const onSettle = () => {
+		const onSelect = () => {
 			if (recentering) {
 				return;
 			}
 			const date = dateList[api.selectedScrollSnap()];
-			if (date && date !== selectedDate) {
+			if (date) {
+				// Keep the header and upcoming month loads responsive without rebuilding slides.
 				selectedDate = date;
 			}
 		};
-		// Recenter only after the swipe animation finishes.
+		const onSettle = () => {
+			if (recentering) {
+				return;
+			}
+			const index = api.selectedScrollSnap();
+			const date = dateList[index];
+			if (!date) {
+				return;
+			}
+			selectedDate = date;
+			const approachingPastEdge = date < windowDate && index < 2;
+			const approachingTodayEdge = date > windowDate && index >= dateList.length - 2;
+			if (approachingPastEdge || approachingTodayEdge) {
+				// Shift only near an edge, after animation; keyed dates preserve shared cards.
+				recentering = true;
+				windowDate = date;
+			}
+		};
+		api.on('select', onSelect);
 		api.on('settle', onSettle);
 		return () => {
+			api.off('select', onSelect);
 			api.off('settle', onSettle);
 		};
 	});
@@ -266,11 +297,11 @@
 						oninput={(e) => {
 							const target = e.target as HTMLInputElement;
 							if (!target.value) {
-								selectedDate = toDateOnlyStr(today);
+								navigateDate(toDateOnlyStr(today));
 								return;
 							}
 							if (target.validity.valid) {
-								selectedDate = target.value;
+								navigateDate(target.value);
 							}
 						}}
 					/>
@@ -284,7 +315,7 @@
 					variant="secondary"
 					size="sm"
 					class="h-8 rounded-full px-4 text-[10px] font-black uppercase tracking-widest shadow-sm transition-all hover:scale-105 active:scale-95"
-					onclick={() => (selectedDate = toDateOnlyStr(today))}
+					onclick={() => navigateDate(toDateOnlyStr(today))}
 				>
 					Today
 				</Button>
@@ -298,7 +329,7 @@
 		class="w-full"
 	>
 		<Carousel.Content class="items-start">
-			{#each dateList as date, index (index)}
+			{#each dateList as date (date)}
 				<Carousel.Item class="basis-[85%] pl-4">
 					<DailyCarouselCard
 						{date}
@@ -315,12 +346,12 @@
 						{approvingScheduledId}
 						{cancellingScheduledId}
 						onCreate={() => {
-							selectedDate = date;
+							navigateDate(date);
 							openCreate();
 						}}
 						onEdit={openEdit}
 						onOpenReceiptImport={() => {
-							selectedDate = date;
+							navigateDate(date);
 							aiDialogOpen = true;
 						}}
 						onApproveScheduled={approveScheduledExpense}
