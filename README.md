@@ -67,3 +67,7 @@ This is a local coding-agent workflow. No issue-to-PR agent automation or formal
 - [Database and service contracts](docs/database.md): frontend contracts and inherited Supabase notes.
 - [Agent instructions](AGENTS.md): repository guidance and documentation maintenance rule.
 - [Expense app guide skill](.agents/skills/expense-app-guide/SKILL.md): explain the app and update affected documentation.
+
+## Planned work
+
+- Semantic expense entry and product harness evidence: [design draft](docs/superpowers/specs/2026-10-11-semantic-expense-entry-design.md) and [implementation plan](docs/superpowers/plans/2026-10-11-semantic-expense-entry.md). The current direction is automatic creation via LangGraph on GCP Cloud Run, with Supabase HTTPS RPC enforcing transactional idempotency. The plan is ready for execution review; the feature is not implemented.
