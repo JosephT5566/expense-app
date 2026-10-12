@@ -1,5 +1,7 @@
 # Semantic Expense Entry Implementation Plan
 
+> Execution status (2026-10-12): local implementation of Tasks 1–5 and final review fixes is complete through `90938d0`. The step checkboxes below preserve the original plan; they are not the current progress tracker. Production SQL compatibility, GitHub/GCP execution, paid model evaluation, and hosted acceptance remain unverified. See the [development handoff](../../evidence/semantic-entry/README.md#development-handoff--2026-10-12) for finished work, remaining boundaries, recorded checks, and next actions. Cloud Run container is confirmed; IAM setup follows code review.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 送出一句文字後自動新增一筆支出，透過 Supabase RPC 保證同一請求不重複寫入，並建立 product harness evidence。
@@ -8,7 +10,7 @@
 
 **Tech Stack:** 現有 Svelte 5、SvelteKit、TypeScript、Supabase JS、Playwright；新增 Node.js 22 service、@langchain/langgraph/@langchain/core、Vitest、tsx、Docker、Supabase CLI local stack。Backend 使用獨立 package.json/package-lock.json；套件版本在實作時核對 Node 22 相容性並鎖定。沒有 Deno runtime、Supabase Edge Function、Cloud SQL、Redis 或付費 LangSmith 部署。
 
-**Spec:** [更新設計](../specs/2026-10-11-semantic-expense-entry-design.md)，更新於 2026-10-12。架構方向已同意，執行方式尚未選定；只更新文件，不代表實作／部署完成。
+**Spec:** [更新設計](../specs/2026-10-11-semantic-expense-entry-design.md)，更新於 2026-10-12。已採 inline execution 完成本機實作及 review fixes；正式部署尚未執行，驗證範圍見 development handoff。
 
 ## Global Constraints
 
@@ -117,6 +119,6 @@ expect(() => parseRequest({ requestId: 'bad', text: '午餐100' })).toThrow();
 
 每個 task 都需 red→green tests 与獨立commit；必要工具缺失先報具體限制。正式expense schema、RLS、fallback category ID、GCP帳號/region/權限與預算在deploy前需確認。試用門檻與paid eval依spec；單一DB RPC是最終冪等保證，LangGraph／UI不是 exactly-once證明。
 
-建議 Native execution：五個任務共享contract與RPC semantics，單一實作者降低交接成本；最後整體review。使用者也可選Subagent-driven。本次只更新計畫，選擇執行方式並review更新interfaces後才實作；不自動commit/push或deploy。
+建議 Native execution：五個任務共享contract與RPC semantics，單一實作者降低交接成本；最後整體review。使用者也可選Subagent-driven。以上為原始執行交接說明；本次實作已完成並提交本機 commits。後續 push／merge、正式 SQL 變更及部署仍需各自授權，目前進度以文件頂部的 development handoff 為準。
 
 Self-review：全部預設值對應Task1；transaction／hash／user isolation／quota／tombstone對應Task2；graph／JWT／logging／container對應Task3；無人工介入與timeout/account handling對應Task4；evidence／門檻／CI對應Task5。五項Review Focus都有指定tests；已移除舊草稿確認與Edge Function方案。

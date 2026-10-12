@@ -2,6 +2,30 @@
 
 Evidence is scoped to its environment. Local implementation and fixtures do not establish production database compatibility, hosted authentication, or paid model extraction quality.
 
+## Development handoff — 2026-10-12
+
+Local implementation is complete through commit `90938d0` on `docs/semantic-entry-plan`. This handoff reflects repository source and the recorded checks from that development session; tests were not rerun for this documentation update. No operator-reported production verification has been supplied. The user confirmed the Cloud Run container target.
+
+| Plan task                 | Finished in the repository                                                                                                                | Remaining boundary                                                                                                        |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| 1. Shared contracts/rules | Portable DTO/runtime validation, Taiwan dates, defaults, integer amount/share checks                                                      | Real model extraction quality is not established by rule tests                                                            |
+| 2. Idempotency/quota      | Draft SQL RPC, request snapshots, owner isolation, atomic quota, disposable integration tests                                             | Actual production expense schema/RLS/triggers/grants and fallback category must be checked before finalizing/applying SQL |
+| 3. LangGraph service      | Auth/context/replay/quota/extract/validate/persist flow, HTTP API, provider limits, container and smoke harness                           | GCP deployment, cold starts, real auth and hosted behavior are unverified                                                 |
+| 4. Frontend               | Automatic entry, reasons, same-key retry/status recovery, account guards, pending browser persistence, fresh replay refresh               | Production frontend-to-service acceptance remains unverified                                                              |
+| 5. Evidence/CI            | 40 synthetic cases, scorer/runner, verification CI, manual Cloud Run release workflow, docs, whole-branch review and both Important fixes | GitHub workflow executions, full Linux Supabase bootstrap, paid evaluation and hosted acceptance have not run             |
+
+Recorded final verification: 68 backend unit tests; 15 disposable SQL tests; container smoke; 22 full frontend tests; 18 semantic subpath tests; 40 case IDs/120 fixture observations/zero paid calls. Frontend type checking had zero errors/six existing warnings. Whole-repository lint failed on 122 existing formatting files; scoped formatting/ESLint passed. These counts are historical evidence, not new test results from the handoff update.
+
+Next actions, in order:
+
+1. Prepare GCP console resources/IAM, Secret Manager versions, and the GitHub `semantic-entry-production` environment using the [release setup guide](../../semantic-entry-deployment.md#github-actions-release). This can proceed alongside production schema review.
+2. Obtain the current Supabase expense schema/policies/triggers/grants and category IDs; compare and finalize the draft migration. Applying it is a separate live database action.
+3. Push/open a PR when authorized and let verification CI execute. Resolve any Linux Supabase/workflow failures; neither workflow is considered verified merely because its YAML parses.
+4. After review/integration into `master`, verified database compatibility, and IAM/configuration readiness, authorize and manually trigger the Cloud Run release. Configure public invocation and verify health; then set `PUBLIC_SEMANTIC_ENTRY_URL` and release/rebuild Pages separately.
+5. Perform hosted acceptance with a real authorized user, including retry/concurrency/replay/account isolation. Run paid synthetic live evaluation only with separate authorization; it never persists expenses. Record actual usage, quality and latency before declaring trial readiness.
+
+No pushes, merges, IAM changes, production SQL changes, deployments, or paid calls have been performed by this development work. Existing lint debt and inherited general cache partitioning remain separate follow-up work.
+
 | Evidence               | Scope                                                                                    | Status                                     |
 | ---------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------ |
 | Source/types           | Shared DTO validators, graph, provider, frontend, draft SQL                              | Repository-inspected                       |
