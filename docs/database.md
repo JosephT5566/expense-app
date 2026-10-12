@@ -45,7 +45,7 @@ Approval uses separate Supabase requests, not a transaction or RPC. If schedule 
 
 ## Semantic-entry service
 
-Sources: `packages/semantic-entry-contract/src/index.ts`, `services/semantic-entry/src/`, and `supabase/migrations/202610120001_semantic_entry.sql`. SQL results were verified only against an isolated synthetic expense schema; deployed compatibility, RLS, triggers/defaults, and grants require operator verification.
+Sources: `packages/semantic-entry-contract/src/index.ts`, `services/semantic-entry/semantic_entry/`, and `supabase/migrations/202610120001_semantic_entry.sql`. SQL results were verified only against an isolated synthetic expense schema; deployed compatibility, RLS, triggers/defaults, and grants require operator verification.
 
 - `POST /semantic-entry` accepts exactly `{requestId,text}` with a UUID and 1–500 trimmed Unicode code points, at most 8 KiB. The backend verifies the session JWT, checks the allowlist, and uses the same caller JWT for Supabase queries/RPC. Client-supplied identity/hash fields are rejected.
 - Eligible input is one positive safe-integer TWD expense. Missing date uses the backend Taiwan day; future/invalid dates are rejected. Missing scope/payer/currency/category use personal/current caller/TWD/configured existing 其他. Personal shares equal the full amount and are settled. Household equal splitting requires at least two known distinct members; email lexical order receives the whole integer remainder in the first member's share. Unsupported/missing/ambiguous input is rejected without an expense write.

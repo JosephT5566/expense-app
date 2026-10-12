@@ -17,14 +17,16 @@ jobs:
         timeout-minutes: 15
         steps:
             - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
+            - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
               with:
-                  node-version: 22
-                  cache: npm
-                  cache-dependency-path: services/semantic-entry/package-lock.json
-            - run: npm --prefix services/semantic-entry ci
-            - run: npm --prefix services/semantic-entry test
-            - run: npm --prefix services/semantic-entry run check
+                  version: '0.12.7'
+                  enable-cache: true
+                  cache-dependency-glob: services/semantic-entry/uv.lock
+            - run: uv sync --project services/semantic-entry --locked
+            - run: uv run --directory services/semantic-entry --locked pytest
+            - run: uv run --directory services/semantic-entry --locked ruff check .
+            - run: uv run --directory services/semantic-entry --locked ruff format --check .
+            - run: cd services/semantic-entry && uv run --locked mypy
             - run: docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
             - run: services/semantic-entry/scripts/container-smoke.sh
 

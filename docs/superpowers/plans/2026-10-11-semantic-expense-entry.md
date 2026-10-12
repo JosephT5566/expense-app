@@ -1,14 +1,14 @@
 # Semantic Expense Entry Implementation Plan
 
-> Execution status (2026-10-12): local implementation of Tasks 1–5 and final review fixes is complete through `90938d0`. The step checkboxes below preserve the original plan; they are not the current progress tracker. Production SQL compatibility, GitHub/GCP execution, paid model evaluation, and hosted acceptance remain unverified. See the [development handoff](../../evidence/semantic-entry/README.md#development-handoff--2026-10-12) for finished work, remaining boundaries, recorded checks, and next actions. Cloud Run container is confirmed; IAM setup follows code review.
+> Historical Node execution status (2026-10-12): local implementation of Tasks 1–5 and final review fixes is complete through `90938d0`. The step checkboxes below preserve the original plan; they are not the current progress tracker. Production SQL compatibility, GitHub/GCP execution, paid model evaluation, and hosted acceptance remain unverified. See the [development handoff](../../evidence/semantic-entry/README.md#development-handoff--2026-10-12) for finished work, remaining boundaries, recorded checks, and next actions. Cloud Run container is confirmed; IAM setup follows code review.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> Python migration (2026-10-12): backend runtime, adapters, graph, evaluation, tests, Docker and CI have been migrated to Python. The original task checklist below is historical Node implementation context, not instructions for the Python migration. This migration does not use the superpowers plugin. Current commands and scope are in the [deployment guide](../../semantic-entry-deployment.md) and [Python migration record](../../evidence/semantic-entry/README.md#python-migration--2026-10-12).
 
 **Goal:** 送出一句文字後自動新增一筆支出，透過 Supabase RPC 保證同一請求不重複寫入，並建立 product harness evidence。
 
-**Architecture:** Node.js 22 HTTP service 與 LangGraph library 包裝為 Cloud Run serverless container。後端驗證 Supabase JWT、解析／驗證，再透過 HTTPS RPC 在單一 transaction 新增 expense 並保存 request 結果。前端只送出與顯示結果；沒有確認草稿或直接 expense write。
+**Architecture:** Python 3.12 Starlette/Uvicorn HTTP service 與 Python LangGraph library 包裝為 Cloud Run serverless container。後端驗證 Supabase JWT、解析／驗證，再透過 HTTPS RPC 在單一 transaction 新增 expense 並保存 request 結果。前端只送出與顯示結果；沒有確認草稿或直接 expense write。
 
-**Tech Stack:** 現有 Svelte 5、SvelteKit、TypeScript、Supabase JS、Playwright；新增 Node.js 22 service、@langchain/langgraph/@langchain/core、Vitest、tsx、Docker、Supabase CLI local stack。Backend 使用獨立 package.json/package-lock.json；套件版本在實作時核對 Node 22 相容性並鎖定。沒有 Deno runtime、Supabase Edge Function、Cloud SQL、Redis 或付費 LangSmith 部署。
+**Tech Stack:** 前端維持 Svelte 5、SvelteKit、TypeScript、Supabase JS、Playwright。Backend 改用 Python 3.12、Starlette/Uvicorn、HTTPX、LangGraph、pytest/pytest-asyncio、Ruff、mypy；獨立 `pyproject.toml` 與 `uv.lock` 管理依賴。Docker 與 CI 使用 uv 0.12.7。前端 TypeScript contract 保留，Python mirror 透過 request/hash/HTTP response parity 驗證。沒有新增 direct DB connection、queue、Redis 或付費 LangSmith 部署。
 
 **Spec:** [更新設計](../specs/2026-10-11-semantic-expense-entry-design.md)，更新於 2026-10-12。已採 inline execution 完成本機實作及 review fixes；正式部署尚未執行，驗證範圍見 development handoff。
 
@@ -33,24 +33,32 @@
 
 ---
 
-## File Structure
+## Current Python service structure
 
-以下 Create paths 均為 planned；現有 expense row types、stores/cache、home page 與 Playwright fixture 已核對。既有手動記帳編輯器不改為自動提交。
+| Files                                                                                                           | Responsibility                                                                                              |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `services/semantic-entry/{pyproject.toml,uv.lock,.python-version,Dockerfile,Dockerfile.dockerignore}`           | Python dependency lock, non-root container, source allowlist                                                |
+| `services/semantic-entry/semantic_entry/{contracts,normalize,prompt,provider,supabase,graph,handler,server}.py` | Strict wire mirror, Taiwan rules, single model call, caller JWT HTTPS adapter, LangGraph, bounded ASGI HTTP |
+| `services/semantic-entry/semantic_entry/evaluation.py`, `evals/cases.json`                                      | Same 40 synthetic cases, bounded fixture/live runner, scorer and manifest                                   |
+| `services/semantic-entry/tests/test_*.py`                                                                       | Python unit/mock and localhost-only disposable SQL tests                                                    |
+| `packages/semantic-entry-contract/tests/python-parity.mjs`, `services/semantic-entry/tests/export_contract.py`  | Actual Python outputs validated by the browser's TypeScript contract                                        |
+| `services/semantic-entry/scripts/{container-smoke.sh,smoke-server.py,smoke-client.py,local-db.sh}`              | Synthetic container smoke and disposable SQL setup                                                          |
+| `.github/workflows/semantic-entry-{check,deploy}.yml`                                                           | Python checks/container verification; existing manual Cloud Run release boundary                            |
 
-| Files                                                                                                                                         | Responsibility                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Create `packages/semantic-entry-contract/{package.json,src/index.ts}`                                                                         | Browser/server 共用 DTO 與 runtime response validation；無 Node/Svelte dependency |
-| Create `services/semantic-entry/{package.json,package-lock.json,tsconfig.json,Dockerfile,.dockerignore}`                                      | Node 22 service 與 container                                                      |
-| Create `services/semantic-entry/src/{normalize,prompt,provider,supabase,graph,handler,server}.ts`                                             | 純規則、模型、caller-scoped RPC adapter、graph、HTTP wiring                       |
-| Create `services/semantic-entry/tests/{normalize,provider,graph,handler,db.integration}.test.ts`                                              | Unit/mock 與 disposable DB tests                                                  |
-| Create `supabase/{config.toml,fixtures/semantic-entry-test-schema.sql}`                                                                       | Disposable stack 與明確標示範圍的 test schema                                     |
-| Create `supabase/migrations/202610120001_semantic_entry.sql`                                                                                  | quota、request ledger、RLS、transactional RPC                                     |
-| Create `src/lib/data/semantic-entry.fetcher.ts`, `src/lib/components/semantic-entry/SemanticEntryDialog.svelte`                               | 提交／查結果／顯示成功拒絕與 uncertain state                                      |
-| Modify `src/routes/+page.svelte`                                                                                                              | 新入口與成功後 refresh/store integration                                          |
-| Create `e2e/semantic-entry.test.ts`                                                                                                           | 零人工確認 UI、mock backend／auth                                                 |
-| Create `services/semantic-entry/evals/{cases.json,run.ts,score.ts,score.test.ts}`                                                             | 40 fixtures、fixture/live runner 與評分                                           |
-| Create `docs/evidence/semantic-entry/README.md`, `docs/semantic-entry-deployment.md`                                                          | Evidence index 與 Cloud Run deployment instructions                               |
-| Modify root `package.json`, `package-lock.json`, `tsconfig.json`, `eslint.config.js`, `.gitignore`, CI, README, architecture/database, AGENTS | Contract dependency、scope checks、setup 與新 boundary                            |
+## Python migration acceptance
+
+- [x] Preserve POST/GET routes, UUID/NFC/hash, issue/error codes and response fields.
+- [x] Preserve Taiwan date/default/split rules, safe integer bounds, explicit nullable fields.
+- [x] Preserve verified-user/allowlist/replay/quota ordering and caller JWT RPC.
+- [x] Preserve model cap 800, reasoning none, deadline 15 seconds, no retries; HTTP deadline 30 seconds, body 8 KiB, CORS and no-store.
+- [x] Port fixture/live evaluation, local-only SQL harness and container smoke to Python.
+- [x] Remove Node backend build/dependency files; frontend remains TypeScript.
+- [x] Update CI, current setup/contracts/architecture and record scoped verification.
+- [ ] Operator verification: production SQL/RLS, hosted CI/GCP/IAM, paid model quality and hosted acceptance.
+
+## Historical Node implementation checklist
+
+The following Tasks 1–5 describe the original implementation and its historical commands. They are retained to explain the design/review criteria; use the current Python commands above and in the README for new work. Historical Node paths have been replaced by the Python structure above.
 
 ## Task 1: Shared contract and automatic-entry rules
 

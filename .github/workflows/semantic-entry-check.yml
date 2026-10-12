@@ -14,15 +14,17 @@ jobs:
         timeout-minutes: 20
         steps:
             - uses: actions/checkout@v4
-            - uses: actions/setup-node@v4
+            - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
               with:
-                  node-version: 22
-                  cache: npm
-                  cache-dependency-path: services/semantic-entry/package-lock.json
-            - run: npm --prefix services/semantic-entry ci
-            - run: npm --prefix services/semantic-entry test
-            - run: npm --prefix services/semantic-entry run check
-            - run: npm --prefix services/semantic-entry run eval:semantic -- --out /tmp/jopie-semantic-eval
+                  version: '0.12.7'
+                  enable-cache: true
+                  cache-dependency-glob: services/semantic-entry/uv.lock
+            - run: uv sync --project services/semantic-entry --locked
+            - run: uv run --directory services/semantic-entry --locked pytest
+            - run: uv run --directory services/semantic-entry --locked ruff check .
+            - run: uv run --directory services/semantic-entry --locked ruff format --check .
+            - run: cd services/semantic-entry && uv run --locked mypy
+            - run: uv run --directory services/semantic-entry --locked python -m semantic_entry.evaluation --mode fixture --out /tmp/jopie-semantic-eval
             - run: docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
             - run: services/semantic-entry/scripts/container-smoke.sh
             - uses: supabase/setup-cli@v3
@@ -39,7 +41,7 @@ jobs:
                   set -a
                   source "$RUNNER_TEMP/semantic-supabase.env"
                   set +a
-                  TEST_SUPABASE_URL="$API_URL" npm --prefix services/semantic-entry run test:integration
+                  TEST_SUPABASE_URL="$API_URL" uv run --directory services/semantic-entry --locked pytest -o addopts="" tests/test_db_integration.py
             - name: Stop disposable stack
               if: always()
               run: supabase stop --no-backup
@@ -60,13 +62,18 @@ jobs:
               with:
                   node-version: 22
                   cache: npm
+            - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+              with:
+                  version: '0.12.7'
+            - run: uv sync --project services/semantic-entry --locked
+            - run: node --experimental-strip-types packages/semantic-entry-contract/tests/python-parity.mjs
             - run: npm ci
             - run: npm run check
             # Whole-repository Prettier has a pre-existing baseline failure; scope is explicit.
             - name: Semantic change formatting and lint
               run: |
-                  npx prettier --check packages/semantic-entry-contract services/semantic-entry/src services/semantic-entry/tests services/semantic-entry/evals src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
-                  npx eslint packages/semantic-entry-contract/src services/semantic-entry/src services/semantic-entry/tests services/semantic-entry/evals src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
+                  npx prettier --check packages/semantic-entry-contract src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
+                  npx eslint packages/semantic-entry-contract/src src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
             - run: npx playwright install --with-deps chromium
             - run: npm run test:e2e -- e2e/semantic-entry.test.ts e2e/daily-carousel.test.ts
             - name: Verify semantic entry under Pages base path

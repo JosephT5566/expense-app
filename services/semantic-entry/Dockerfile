@@ -1,21 +1,19 @@
-FROM node:22-bookworm-slim AS build
+FROM ghcr.io/astral-sh/uv:0.12.7 AS uv
+FROM python:3.12-slim-bookworm AS build
+COPY --from=uv /uv /usr/local/bin/uv
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app
-COPY packages/semantic-entry-contract packages/semantic-entry-contract
-COPY services/semantic-entry/package*.json services/semantic-entry/
-WORKDIR /app/services/semantic-entry
-RUN npm ci
+COPY services/semantic-entry/pyproject.toml services/semantic-entry/uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project --python /usr/local/bin/python
+COPY services/semantic-entry/semantic_entry semantic_entry
+RUN uv sync --locked --no-dev --python /usr/local/bin/python
+
+FROM python:3.12-slim-bookworm AS runtime
+ENV PORT=8080 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/app/.venv/bin:$PATH"
 WORKDIR /app
-COPY src/lib/types/expense.ts src/lib/types/expense.ts
-COPY src/lib/utils/dates.ts src/lib/utils/dates.ts
-COPY services/semantic-entry/src services/semantic-entry/src
-WORKDIR /app/services/semantic-entry
-RUN npm run build && npm prune --omit=dev
-FROM node:22-bookworm-slim AS runtime
-ENV NODE_ENV=production PORT=8080
-WORKDIR /app/services/semantic-entry
-COPY --from=build --chown=node:node /app/services/semantic-entry/node_modules node_modules
-COPY --from=build --chown=node:node /app/services/semantic-entry/dist dist
-COPY --from=build --chown=node:node /app/services/semantic-entry/package.json package.json
-USER node
+RUN groupadd --gid 10001 semantic && useradd --uid 10001 --gid semantic --no-create-home semantic
+COPY --from=build --chown=semantic:semantic /app/.venv .venv
+COPY --from=build --chown=semantic:semantic /app/semantic_entry semantic_entry
+USER semantic
 EXPOSE 8080
-CMD ["node","dist/server.js"]
+CMD ["python", "-m", "semantic_entry.server"]

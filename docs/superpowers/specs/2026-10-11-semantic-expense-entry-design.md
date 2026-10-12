@@ -21,7 +21,7 @@
 
 ## 架構與權限
 
-GitHub Pages → GCP Cloud Run 的 Node.js 22 container → LangGraph → Supabase HTTPS Data API/RPC。Cloud Run 是 serverless container，使用 request-based billing、min instances=0；第一版同步短流程，不新增 Cloud SQL、Redis、queue 或 LangSmith 託管部署。LangGraph 使用 library 與自己的 HTTP handler，不部署完整 Agent Server；不啟用 memory checkpointer 假裝提供跨重啟恢復。
+GitHub Pages → GCP Cloud Run 的 Python 3.12 ASGI container → LangGraph → Supabase HTTPS Data API/RPC。Cloud Run 是 serverless container，使用 request-based billing、min instances=0；第一版同步短流程，不新增 Cloud SQL、Redis、queue 或 LangSmith 託管部署。LangGraph 使用 library 與自己的 HTTP handler，不部署完整 Agent Server；不啟用 memory checkpointer 假裝提供跨重啟恢復。
 
 Graph 節點為 authenticate → context → replay lookup → quota → extract → validate → persist → result。reject/error 分支不執行 persist。使用一次結構化模型呼叫；沒有人工 interrupt、任意資料庫工具或模型自行決定 SQL。
 
@@ -70,6 +70,6 @@ Cloud Run 費用依 region、共用免費額度與 ancillary services；先前 U
 ## 官方參考
 
 - [Cloud Run containers](https://docs.cloud.google.com/run/docs/deploying)
-- [LangGraph orchestration](https://docs.langchain.com/oss/javascript/langgraph/overview)
+- [LangGraph orchestration](https://docs.langchain.com/oss/python/langgraph/overview)
 - [Supabase database functions](https://supabase.com/docs/guides/database/functions)
 - [PostgREST transactions](https://docs.postgrest.org/en/stable/references/transactions.html)

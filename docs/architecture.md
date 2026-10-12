@@ -1,29 +1,29 @@
 # App architecture
 
-JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Node/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, draft SQL, and disposable fixtures; it contains no SvelteKit server routes or receipt-analysis backend. Hosted service and production SQL compatibility remain unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
+JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Python 3.12/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, draft SQL, and disposable fixtures; it contains no SvelteKit server routes or receipt-analysis backend. Hosted service and production SQL compatibility remain unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
 
 ## Source map
 
-| Location                            | Responsibility                                                                |
-| ----------------------------------- | ----------------------------------------------------------------------------- |
-| `src/routes/`                       | File-based pages and shared layout                                            |
-| `src/lib/components/`               | Expense list, editor, scheduled cards, and receipt dialog                     |
-| `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                 |
-| `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                    |
-| `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                            |
-| `src/lib/data/`                     | Supabase fetchers, receipt API client, cache-first retrieval                  |
-| `src/lib/stores/`                   | Session, expenses, schedules, categories, filters, settings, theme            |
-| `src/lib/cache/`                    | Memory and IndexedDB persistence for monthly and pending scheduled expenses   |
-| `src/lib/types/`                    | Expense, schedule, receipt API, user, category, settings contracts            |
-| `src/lib/supabase/`                 | Supabase client and Google OAuth/session helpers                              |
-| `src/lib/utils/`                    | Taiwan dates/months, cache keys, loading, logging, icons, device detection    |
-| `src/app.css`, `src/lib/theme.css`  | Global styles and themes                                                      |
-| `static/`                           | Icons, favicon, robots file                                                   |
-| `services/semantic-entry/`          | LangGraph HTTP service, provider, normalizer, tests, and synthetic evaluation |
-| `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                         |
-| `supabase/`                         | Draft semantic RPC migration and explicitly disposable fixtures               |
-| `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release              |
-| `e2e/`                              | Playwright tests                                                              |
+| Location                            | Responsibility                                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `src/routes/`                       | File-based pages and shared layout                                                             |
+| `src/lib/components/`               | Expense list, editor, scheduled cards, and receipt dialog                                      |
+| `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                                  |
+| `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                                     |
+| `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                                             |
+| `src/lib/data/`                     | Supabase fetchers, receipt API client, cache-first retrieval                                   |
+| `src/lib/stores/`                   | Session, expenses, schedules, categories, filters, settings, theme                             |
+| `src/lib/cache/`                    | Memory and IndexedDB persistence for monthly and pending scheduled expenses                    |
+| `src/lib/types/`                    | Expense, schedule, receipt API, user, category, settings contracts                             |
+| `src/lib/supabase/`                 | Supabase client and Google OAuth/session helpers                                               |
+| `src/lib/utils/`                    | Taiwan dates/months, cache keys, loading, logging, icons, device detection                     |
+| `src/app.css`, `src/lib/theme.css`  | Global styles and themes                                                                       |
+| `static/`                           | Icons, favicon, robots file                                                                    |
+| `services/semantic-entry/`          | Python ASGI/LangGraph service, HTTPX provider/RPC, normalizer, tests, and synthetic evaluation |
+| `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                                          |
+| `supabase/`                         | Draft semantic RPC migration and explicitly disposable fixtures                                |
+| `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release                               |
+| `e2e/`                              | Playwright tests                                                                               |
 
 ## Routes
 
@@ -61,7 +61,7 @@ The summary groups loaded rows by category: personal rows contribute their full 
 
 `SemanticEntryDialog.svelte` submits through `semantic-entry.fetcher.ts` with the current session JWT, one UUID, and immutable trimmed text. It shows processing, created, rejected, error, or uncertain results. Closing the dialog aborts browser waiting without promising cancellation of an accepted server write. Retry preserves the UUID/text; a new operation gets a new UUID. Account/revision guards discard stale results. Unresolved UUID/text is retained in account-scoped browser localStorage, with no JWT, before submission and restored as uncertain after page lifecycle changes or returning to the owning account. Definite completion or an initial definite rejection clears it; later retry errors cannot erase earlier uncertainty. New submissions require working pending-request storage.
 
-The separate service authenticates through Supabase `auth.getUser`, loads trusted settings/categories/member context and the Taiwan date, checks for a completed request, consumes quota only for new attempts, calls the provider once, normalizes, and persists via one SQL RPC. Completed replays skip the model and quota. Raw text and JWTs are not stored in the request ledger or persisted graph state; external payload tracing is disabled. See [semantic service contracts](database.md#semantic-entry-service).
+The separate service authenticates through Supabase `HTTPS `/auth/v1/user``, loads trusted settings/categories/member context and the Taiwan date, checks for a completed request, consumes quota only for new attempts, calls the provider once, normalizes, and persists via one SQL RPC. Completed replays skip the model and quota. Raw text and JWTs are not stored in the request ledger or persisted graph state; external payload tracing is disabled. See [semantic service contracts](database.md#semantic-entry-service).
 
 First creation patches the existing expense store/cache. Replay/status recovery refreshes the snapshot month and any currently known row month instead of applying the old snapshot. The browser does not directly write expenses in this flow. Receipt import still requires its existing review/confirmation.
 
@@ -84,3 +84,5 @@ The app uses Tailwind CSS, DaisyUI, Bits UI, and shadcn-svelte primitives. Svelt
 `svelte.config.js` uses `adapter-static`, outputs to `build/`, sets `404.html` as fallback, and applies `BASE_PATH` outside development. Home, summary, settlement, search, and settings page modules export `prerender = true`. There is no explicit `ssr = false` export; browser-only data loading is guarded in the layout.
 
 `vite.config.ts` configures the JoPie PWA manifest and prompt-based registration behavior. SvelteKit's automatic service-worker registration is disabled so the PWA plugin can manage registration. PWA support and browser caching do not make remote writes available offline.
+
+The Python backend lives in `services/semantic-entry/semantic_entry/`, uses Starlette/Uvicorn for HTTP and HTTPX for caller-scoped Supabase and provider requests, and locks dependencies in `uv.lock`. Its strict Python validators mirror the browser TypeScript contract; `packages/semantic-entry-contract/tests/python-parity.mjs` compares normalized requests/hashes and validates real synthetic HTTP outputs. No Node runtime or frontend source is included in the Python container.

@@ -51,7 +51,7 @@ For documentation-only changes, run `npx prettier --check <changed Markdown file
 
 For deployment under a repository subpath, set `BASE_PATH` to `/expense-app` (or the actual repository name) when building. Development uses an empty base path. GitHub Actions builds pull requests to `master` and deploys pushes to `master` or manual workflow runs to GitHub Pages, using environment values configured in the workflows.
 
-The original Pages/build workflows remain. `semantic-entry-check.yml` adds backend unit/type checks, synthetic fixture evaluation, container smoke tests, disposable Supabase integration, frontend checks, explicitly scoped semantic-change lint, and root/subpath Playwright tests. It uses synthetic frontend configuration and no paid model key. Whole-repository `npm run lint` has existing Prettier failures; scoped CI lint does not establish whole-repository cleanliness. There is still no generated-contract drift check. New hosted CI executions remain unverified until GitHub runs them.
+The original Pages/build workflows remain. `semantic-entry-check.yml` adds backend unit/type checks, synthetic fixture evaluation, container smoke tests, disposable Supabase integration, frontend checks, explicitly scoped semantic-change lint, and root/subpath Playwright tests. It uses synthetic frontend configuration and no paid model key. Whole-repository `npm run lint` has existing Prettier failures; scoped CI lint does not establish whole-repository cleanliness. Python/browser wire parity is checked separately; it is not a generated-schema drift check. New hosted CI executions remain unverified until GitHub runs them.
 
 `semantic-entry-deploy.yml` is a separate manual, `master`-only Cloud Run release workflow. It verifies the backend/container before using OIDC credentials, pushes to Artifact Registry, deploys an immutable digest, and checks `/healthz`. It does not configure IAM, apply SQL, deploy Pages, or run paid evaluations. See [deployment setup](docs/semantic-entry-deployment.md#github-actions-release).
 
@@ -74,16 +74,21 @@ This is a local coding-agent workflow. No issue-to-PR agent automation is config
 
 ## Semantic expense entry
 
-The home page's「文字記帳」button sends one description to the separate LangGraph backend and automatically creates one eligible TWD expense. Rejected inputs show reasons. Uncertain requests retain their UUID/text for status lookup or retry; a missing status result is not proof of failure. Unresolved UUID/text is saved per account in browser localStorage (no token), restored as uncertain after navigation/reload, and removed after a definite result. Storage failure blocks a new submission before any backend call. A failed retry cannot clear uncertainty from an earlier execution. Without `PUBLIC_SEMANTIC_ENTRY_URL`, submission reports that the service is not configured. Manual editing and receipt review remain separate workflows.
+The home page's「文字記帳」button sends one description to the separate Python/LangGraph backend and automatically creates one eligible TWD expense. Rejected inputs show reasons. Uncertain requests retain their UUID/text for status lookup or retry; a missing status result is not proof of failure. Unresolved UUID/text is saved per account in browser localStorage (no token), restored as uncertain after navigation/reload, and removed after a definite result. Storage failure blocks a new submission before any backend call. A failed retry cannot clear uncertainty from an earlier execution. Without `PUBLIC_SEMANTIC_ENTRY_URL`, submission reports that the service is not configured. Manual editing and receipt review remain separate workflows.
 
 ```sh
-npm --prefix services/semantic-entry ci
-npm --prefix services/semantic-entry test
-npm --prefix services/semantic-entry run check
-npm --prefix services/semantic-entry run eval:semantic -- --out /tmp/jopie-semantic-eval
+# Python 3.12 service; uv 0.12.7 matches CI/container tooling.
+uv sync --project services/semantic-entry --locked
+uv run --directory services/semantic-entry --locked pytest
+uv run --directory services/semantic-entry --locked ruff check .
+uv run --directory services/semantic-entry --locked ruff format --check .
+uv run --directory services/semantic-entry --locked mypy
+uv run --directory services/semantic-entry --locked python -m semantic_entry.evaluation --mode fixture --out /tmp/jopie-semantic-eval
+# Cross-language check requires frontend Node 22.12+ and the Python .venv above.
+node --experimental-strip-types packages/semantic-entry-contract/tests/python-parity.mjs
 ```
 
-Fixture mode uses 40 synthetic cases, five in each of eight groups, repeated three times. It does not read the model key, contact a provider, or persist expenses. Its results measure the normalizer/scorer against authored raw outputs, not model extraction quality. Unknown usage/pricing remains null. For a separately authorized live evaluation, `eval:semantic:live` calls only the provider, caps attempts at 120, and never imports the persistence adapter. Optional cost assumptions use `SEMANTIC_INPUT_USD_PER_MILLION`, `SEMANTIC_OUTPUT_USD_PER_MILLION`, `SEMANTIC_PRICING_SOURCE`, and `SEMANTIC_PRICING_AS_OF`; estimates are not bills.
+Fixture mode uses 40 synthetic cases, five in each of eight groups, repeated three times. It does not read the model key, contact a provider, or persist expenses. Its results measure the normalizer/scorer against authored raw outputs, not model extraction quality. Unknown usage/pricing remains null. For a separately authorized live evaluation, `uv run --directory services/semantic-entry --locked python -m semantic_entry.evaluation --mode live --out /tmp/jopie-semantic-live-eval` calls only the provider, caps attempts at 120, and never imports the persistence adapter. Optional cost assumptions use `SEMANTIC_INPUT_USD_PER_MILLION`, `SEMANTIC_OUTPUT_USD_PER_MILLION`, `SEMANTIC_PRICING_SOURCE`, and `SEMANTIC_PRICING_AS_OF`; estimates are not bills.
 
 Disposable SQL setup, backend environment values, and release/IAM instructions are in [deployment setup](docs/semantic-entry-deployment.md). Verify the actual deployed expense schema/RLS and fallback category before applying the draft RPC. The checked-in test schema is synthetic and must never be applied to production.
 

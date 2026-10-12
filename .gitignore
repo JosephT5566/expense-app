@@ -8,6 +8,11 @@ node_modules
 .svelte-kit
 /build
 services/semantic-entry/dist
+services/semantic-entry/.venv
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
 services/semantic-entry/evals/runs
 .superpowers/sdd/
 

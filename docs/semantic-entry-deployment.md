@@ -4,19 +4,25 @@ The service is implemented locally; hosted deployment is not verified. The SQL i
 
 ## Local container
 
-Use Node.js 22.12 or later within Node 22:
+Use Python 3.12 and uv 0.12.7 (the frontend still uses Node 22):
 
 ```sh
-npm ci
-npm --prefix services/semantic-entry ci
-npm --prefix services/semantic-entry test
-npm --prefix services/semantic-entry run check
-npm --prefix services/semantic-entry run build
+uv sync --project services/semantic-entry --locked
+uv run --directory services/semantic-entry --locked pytest
+uv run --directory services/semantic-entry --locked ruff check .
+uv run --directory services/semantic-entry --locked ruff format --check .
+uv run --directory services/semantic-entry --locked mypy
 docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
 services/semantic-entry/scripts/container-smoke.sh
 ```
 
-The smoke test injects synthetic dependencies into the real HTTP server and graph. It verifies HTTP/container wiring without a paid model call or live database access. `/healthz` never calls the model. The image runs as `node`, listens on `0.0.0.0:$PORT` (default 8080), and copies only allowlisted source/dependency files. Root `.env` files and test fixtures are excluded.
+The smoke test injects synthetic dependencies into the real HTTP server and graph. It verifies HTTP/container wiring without a paid model call or live database access. `/healthz` never calls the model. The Python 3.12 image runs as non-root `semantic` (UID 10001), listens on `0.0.0.0:$PORT` (default 8080), and copies only allowlisted Python source and locked runtime dependencies. Root `.env` files and test fixtures are excluded.
+
+Start the service locally after configuring the backend environment values below:
+
+```sh
+uv run --directory services/semantic-entry --locked python -m semantic_entry.server
+```
 
 ## Configuration
 
@@ -31,7 +37,7 @@ The smoke test injects synthetic dependencies into the real HTTP server and grap
 | `SEMANTIC_ALLOWED_ORIGINS`   | Comma-separated exact frontend origins, without paths/trailing slash         |
 | `PUBLIC_SEMANTIC_ENTRY_URL`  | Frontend build value: Cloud Run origin; client appends `/semantic-entry`     |
 
-The runtime validates Supabase JWTs through `auth.getUser`, checks the settings allowlist, and sends the same caller JWT to HTTPS Data API/RPC. Cloud Run does not need a PostgreSQL password, direct DB connection, connection pool, or service-role credential. Public Cloud Run ingress and CORS are not authorization. Disable external LangSmith tracing; the server forcibly disables tracing environment flags and emits only sanitized events.
+The runtime validates Supabase JWTs through HTTPS `/auth/v1/user`, checks the settings allowlist, and sends the same caller JWT to HTTPS Data API/RPC. Cloud Run does not need a PostgreSQL password, direct DB connection, connection pool, or service-role credential. Public Cloud Run ingress and CORS are not authorization. Disable external LangSmith tracing; the server forcibly disables tracing environment flags and emits only sanitized events.
 
 ## Hosted setup (operator action, not performed)
 
@@ -53,7 +59,7 @@ supabase status -o env > /tmp/jopie-semantic-supabase.env
 set -a
 . /tmp/jopie-semantic-supabase.env
 set +a
-TEST_SUPABASE_URL="$API_URL" npm --prefix services/semantic-entry run test:integration
+TEST_SUPABASE_URL="$API_URL" uv run --directory services/semantic-entry --locked pytest -o addopts="" tests/test_db_integration.py
 supabase stop --no-backup
 ```
 
@@ -64,7 +70,7 @@ On the development Mac, CLI 2.120.0 failed in its realtime migration with an OS 
 ```sh
 services/semantic-entry/scripts/local-db.sh
 docker exec -i jopie-semantic-test-db psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610120001_semantic_entry.sql
-TEST_SUPABASE_URL=http://127.0.0.1:55421 TEST_STANDALONE_POSTGREST=1 npm --prefix services/semantic-entry run test:integration
+TEST_SUPABASE_URL=http://127.0.0.1:55421 TEST_STANDALONE_POSTGREST=1 uv run --directory services/semantic-entry --locked pytest -o addopts="" tests/test_db_integration.py
 docker rm -f jopie-semantic-test-rest jopie-semantic-test-db
 ```
 
@@ -72,7 +78,7 @@ These commands initialize a fresh stack; they are not a rerunnable migration pro
 
 ## GitHub Actions release
 
-The release target is the existing **Cloud Run container service**, rather than a Functions Framework source entry point. `.github/workflows/semantic-entry-deploy.yml` is manual-only and runs only from `master`. Its separate verification job runs backend tests/types and a mocked container smoke before the deployment job obtains credentials. CI and local fixture evaluation do not use the model key.
+The release target is the existing **Cloud Run container service**, rather than a Functions Framework source entry point. `.github/workflows/semantic-entry-deploy.yml` is manual-only and runs only from `master`. Its separate verification job runs Python pytest/Ruff/mypy checks and a mocked container smoke before the deployment job obtains credentials. CI and local fixture evaluation do not use the model key.
 
 Configure GCP in the console after code review:
 
