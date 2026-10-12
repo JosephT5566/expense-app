@@ -164,3 +164,35 @@ describe('disposable RPC transactions and authorization', () => {
 		expect(results.filter((r) => r.data === false)).toHaveLength(1);
 	});
 });
+it('rolls back both rows when the expense insert itself fails after validation', async () => {
+	const before = await admin.from('expenses').select('id', { count: 'exact', head: true });
+	const id = randomUUID();
+	const failed = await create(a, id, { ...payload(), note: 'fixture_insert_failure' });
+	expect(failed.error).not.toBeNull();
+	expect(
+		(await admin.from('semantic_entry_requests').select('*').eq('request_id', id)).data
+	).toEqual([]);
+	expect((await admin.from('expenses').select('id', { count: 'exact', head: true })).count).toBe(
+		before.count
+	);
+});
+it.each([
+	{ ...payload(), currency: 'USD' },
+	{ ...payload(), amount: 1.5 },
+	{ ...payload(), payer_email: 'b@example.test' },
+	{ ...payload(), is_settled: false },
+	{ ...payload(), shares_json: { 'unknown@example.test': 851 } },
+	{
+		...payload(),
+		scope: 'household',
+		is_settled: false,
+		shares_json: { 'a@example.test': 850, 'b@example.test': 1 }
+	},
+	{ ...payload(), ts: '2026-03-01T17:00:00Z' }
+])('rejects forged or unsupported RPC payloads', async (expense) => {
+	const id = randomUUID();
+	expect((await create(a, id, expense)).error).not.toBeNull();
+	expect(
+		(await admin.from('semantic_entry_requests').select('*').eq('request_id', id)).data
+	).toEqual([]);
+});

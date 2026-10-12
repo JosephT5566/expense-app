@@ -8,10 +8,15 @@ import type {
 } from '$lib/types/expense';
 import * as expensesStore from '$lib/stores/expenses.store';
 import { user as currentUser } from '$lib/stores/session.store';
-import { encodeCursor, decodeCursor, taiwanMonthBoundsISO, decodeMonthKey } from '$lib/utils/dates';
+import {
+	encodeCursor,
+	decodeCursor,
+	taiwanMonthBoundsISO,
+	decodeMonthKey,
+	getTaiwanMonthKey
+} from '$lib/utils/dates';
 import Logger from '$lib/utils/logger';
-import { clearExpenseCacheForMonth } from '$lib/cache/monthlyExpense';
-import { getMonthlyFromCacheFirst } from './monthly-cache-first';
+import { setExpenseCache } from '$lib/cache/monthlyExpense';
 import { get } from 'svelte/store';
 
 const TABLE = 'expenses';
@@ -284,35 +289,64 @@ export async function fetchMonthlySummary(
  **/
 export async function forceRefetchMonthlyExpenses(
 	monthKey: string,
-	minTimerMs?: number
-): Promise<void> {
+	minTimerMs?: number,
+	isCurrent?: () => boolean
+): Promise<boolean> {
 	if (!monthKey) {
-		Logger.warn('forceRefetchMonthlyExpenses called with empty monthKey');
-		return;
+		return false;
 	}
-
+	const owner = get(currentUser);
+	const valid = () => !!owner && get(currentUser)?.id === owner.id && (isCurrent?.() ?? true);
 	const startTime = Date.now();
-
-	clearExpenseCacheForMonth(monthKey).catch((error) => {
-		Logger.error(monthKey, error);
-		throw error;
-	});
-
 	try {
-		const newMonthExpense = await getMonthlyFromCacheFirst(monthKey);
-		const endTime = Date.now();
-		const elapsed = endTime - startTime;
-		Logger.log('elapsed time for refetch:', elapsed, 'ms');
-		if (minTimerMs && elapsed < minTimerMs) {
-			await new Promise((resolve) => setTimeout(resolve, minTimerMs - elapsed));
+		const { year, month } = decodeMonthKey(monthKey);
+		const { from, to } = taiwanMonthBoundsISO(year, month);
+		const rows: ExpenseRow[] = [];
+		// Read fresh pages directly; cache hits and merge-only updates retain deleted rows.
+		for (let offset = 0; ; offset += 500) {
+			if (!valid()) {
+				return false;
+			}
+			const page = await supabase
+				.from(TABLE)
+				.select('*')
+				.or(`and(scope.eq.personal,payer_email.eq.${owner!.email}),scope.neq.personal`)
+				.gte('ts', from)
+				.lte('ts', to)
+				.order('ts', { ascending: false })
+				.order('id', { ascending: false })
+				.range(offset, offset + 499);
+			if (page.error) {
+				throw page.error;
+			}
+			const batch = (page.data ?? []) as ExpenseRow[];
+			rows.push(...batch);
+			if (batch.length < 500) {
+				break;
+			}
 		}
-
-		expensesStore.setMoreItems(newMonthExpense);
+		if (minTimerMs && Date.now() - startTime < minTimerMs) {
+			await new Promise((resolve) =>
+				setTimeout(resolve, minTimerMs - (Date.now() - startTime))
+			);
+		}
+		if (!valid()) {
+			return false;
+		}
+		await setExpenseCache(monthKey, rows);
+		if (!valid()) {
+			return false;
+		}
+		const ids = new Set(rows.map((row) => row.id));
+		expensesStore.items.update((prev) => [
+			...prev.filter((row) => getTaiwanMonthKey(row.ts) !== monthKey && !ids.has(row.id)),
+			...rows
+		]);
+		return true;
 	} catch (error) {
 		Logger.error('Refetch monthly expenses failed:', monthKey, error);
+		return false;
 	}
-
-	// const today = toISODateOnly(new Date());
 }
 
 // 針對搜尋頁面的輔助函式（不另開檔案）

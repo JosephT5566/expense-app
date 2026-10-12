@@ -166,3 +166,17 @@ describe('portable runtime contracts', () => {
 		).toThrow();
 	});
 });
+it('counts trimmed code points before NFC normalization', () => {
+	expect(() =>
+		parseRequest({
+			requestId: '12345678-1234-4123-8123-123456789abc',
+			text: 'e\u0301'.repeat(250) + 'x'
+		})
+	).toThrow();
+});
+it('preserves explicitly ambiguous payer refusal', () => {
+	expect(normalizeExtraction({ ...raw, payerId: '__ambiguous__' }, context)).toMatchObject({
+		status: 'rejected',
+		issues: [{ field: 'members', code: 'ambiguous_member' }]
+	});
+});

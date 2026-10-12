@@ -5,7 +5,7 @@ insert into public.app_settings values (true, array['a@example.test','b@example.
 create table public.categories (id uuid primary key, name text not null, kind text not null, sort_order integer default 0);
 insert into public.categories values ('11111111-1111-4111-8111-111111111111','其他','expense',0);
 create table public.expenses (
- id uuid primary key default gen_random_uuid(), payer_email text not null, note text not null,
+ id uuid primary key default gen_random_uuid(), payer_email text not null, note text not null check(note <> 'fixture_insert_failure'),
  amount numeric not null check(amount>0), currency text not null, ts timestamptz not null,
  scope text not null, shares_json jsonb not null, category_id uuid references public.categories,
  is_settled boolean not null, meta text not null default '', notes text,

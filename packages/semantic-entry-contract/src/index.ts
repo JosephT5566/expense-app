@@ -124,11 +124,11 @@ function timestamp(raw: unknown): string {
 export function parseRequest(raw: unknown): SemanticRequest {
 	const r = object(raw);
 	exactKeys(r, ['requestId', 'text']);
-	const text = string(r.text).trim().normalize('NFC');
+	const text = string(r.text).trim();
 	if ([...text].length > 500) {
 		throw new Error('Text too long');
 	}
-	return { requestId: requestId(r.requestId), text };
+	return { requestId: requestId(r.requestId), text: text.normalize('NFC') };
 }
 export function parseExpenseRow(raw: unknown): ExpenseRow {
 	const r = object(raw);

@@ -9,6 +9,7 @@ node_modules
 /build
 services/semantic-entry/dist
 services/semantic-entry/evals/runs
+.superpowers/sdd/
 
 # OS
 .DS_Store
@@ -23,3 +24,7 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Playwright artifacts
+/test-results
+/playwright-report

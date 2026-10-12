@@ -92,6 +92,10 @@ export function normalizeExtraction(raw: unknown, ctx: SemanticContext): Validat
 		issue('intent', 'unsupported');
 	}
 	const member = (id: string) => {
+		if (id === '__ambiguous__') {
+			issue('members', 'ambiguous_member');
+			return undefined;
+		}
 		const found = ctx.members.filter((m) => m.id === id);
 		if (found.length !== 1) {
 			issue('members', found.length ? 'ambiguous_member' : 'unknown_member');
@@ -111,7 +115,7 @@ export function normalizeExtraction(raw: unknown, ctx: SemanticContext): Validat
 	const scope = r.scope ?? (r.hasSharedIntent ? 'household' : 'personal');
 	const shares: Record<string, number> = {};
 	if (scope === 'personal') {
-		if (payer?.email !== ctx.currentUserEmail) {
+		if (payer && payer.email !== ctx.currentUserEmail) {
 			issue('payerId', 'unsupported');
 		}
 		if (r.hasSharedIntent || r.splitMemberIds !== null) {
