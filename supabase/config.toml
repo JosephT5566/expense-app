@@ -1,0 +1,31 @@
+# Disposable synthetic test stack; never link this project to production.
+project_id = "jopie-semantic-entry-test"
+[api]
+enabled = true
+port = 55421
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+[db]
+port = 55422
+shadow_port = 55420
+major_version = 17
+[db.seed]
+enabled = false
+[studio]
+enabled = false
+[inbucket]
+enabled = false
+[storage]
+enabled = false
+[auth]
+enabled = true
+site_url = "http://localhost:4173"
+enable_signup = true
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+[analytics]
+enabled = false
+[edge_runtime]
+enabled = false
