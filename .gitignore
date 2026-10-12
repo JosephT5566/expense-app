@@ -5,8 +5,10 @@ node_modules
 .vercel
 .netlify
 .wrangler
-/.svelte-kit
+.svelte-kit
 /build
+services/semantic-entry/dist
+services/semantic-entry/evals/runs
 
 # OS
 .DS_Store
