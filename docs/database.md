@@ -1,6 +1,6 @@
 # Database and service contracts
 
-This document describes frontend contracts. No SQL definitions, migrations, or receipt-analysis backend are checked in. Types and queries establish what the app expects, but do not verify deployed schema, constraints, RLS policies, or service internals.
+This document describes client/service contracts. A draft semantic-entry migration and synthetic fixtures are checked in; the production expense schema/policies and receipt-analysis backend remain external. Types and queries establish what the app expects, but do not verify deployed schema, constraints, RLS policies, or service internals.
 
 ## Expenses
 
@@ -42,6 +42,20 @@ Approval uses separate Supabase requests, not a transaction or RPC. If schedule 
 - `categories` is queried by `src/lib/data/categories.fetcher.ts`, ordered by `sort_order`, and optionally filtered by `kind`. Its type declares `id`, `name`, and `kind` (`expense` or `income`); startup requests expense categories.
 - `app_settings` is queried by `src/lib/data/appSetting.fetcher.ts` for the singleton row where `id = true`. Its contract contains `allowed_emails: string[]`.
 - Member names and colors use `PUBLIC_EMAIL_NAME_MAPPING` as well as session metadata; see [setup](../README.md#development).
+
+## Semantic-entry service
+
+Sources: `packages/semantic-entry-contract/src/index.ts`, `services/semantic-entry/src/`, and `supabase/migrations/202610120001_semantic_entry.sql`. SQL results were verified only against an isolated synthetic expense schema; deployed compatibility, RLS, triggers/defaults, and grants require operator verification.
+
+- `POST /semantic-entry` accepts exactly `{requestId,text}` with a UUID and 1–500 trimmed Unicode code points, at most 8 KiB. The backend verifies the session JWT, checks the allowlist, and uses the same caller JWT for Supabase queries/RPC. Client-supplied identity/hash fields are rejected.
+- Eligible input is one positive safe-integer TWD expense. Missing date uses the backend Taiwan day; future/invalid dates are rejected. Missing scope/payer/currency/category use personal/current caller/TWD/configured existing 其他. Personal shares equal the full amount and are settled. Household equal splitting requires at least two known distinct members; email lexical order receives the whole integer remainder in the first member's share. Unsupported/missing/ambiguous input is rejected without an expense write.
+- `create_semantic_expense(p_request_id,p_input_hash,p_expense)` returns `{expense,replayed}`. The draft RPC uses `auth.uid()`, independent payload/allowlist validation, a fixed definer search path, and one transaction for request lock, expense insert, and snapshot storage. Concurrent same-user/key/hash calls replay one result; different hashes conflict. These transaction guarantees are verified only in the disposable fixture.
+- `semantic_entry_requests` has primary key `(user_id,request_id)` and stores the input hash plus completed expense snapshot; it has no expense foreign key and no expiry. It stores no raw description input. Hash is SHA-256 of `v1\n` plus trimmed NFC text, independent of model version. Edited/deleted expenses do not change the snapshot or permit reinsertion. No automatic cleanup is implemented.
+- `semantic_entry_quota` has primary key `(user_id,day)` using the Taiwan day. `consume_semantic_entry_quota()` atomically allows at most 100 new attempts per user/day. Replay precedes quota; rejection/provider failure can consume an attempt.
+- Caller roles cannot directly mutate either table. Owners may read their own snapshots; anonymous RPC access is revoked. Privileged fixture clients exist only in localhost-guarded tests, never runtime or public frontend configuration.
+- `GET /semantic-entry/:requestId` returns `completed` or `not_found` after authentication/allowlist checks, without model/quota calls. `not_found` leaves the result uncertain. A timeout or closed browser cannot establish that an accepted SQL operation was cancelled.
+
+Created responses include metadata with token counts or null. Replay metadata describes the current handling and uses null token counts; original usage is not recoverable from snapshots. The UI refreshes current database rows when replaying rather than restoring old snapshot content.
 
 ## Receipt-analysis service
 

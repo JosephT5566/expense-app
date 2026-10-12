@@ -28,3 +28,6 @@ vite.config.ts.timestamp-*
 # Playwright artifacts
 /test-results
 /playwright-report
+
+# Short-lived GitHub OIDC credentials (never commit)
+gha-creds-*.json

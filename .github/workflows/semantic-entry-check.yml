@@ -1,0 +1,76 @@
+name: Semantic Entry Check
+
+on:
+    pull_request:
+        branches: [master]
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    backend:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+                  cache-dependency-path: services/semantic-entry/package-lock.json
+            - run: npm --prefix services/semantic-entry ci
+            - run: npm --prefix services/semantic-entry test
+            - run: npm --prefix services/semantic-entry run check
+            - run: npm --prefix services/semantic-entry run eval:semantic -- --out /tmp/jopie-semantic-eval
+            - run: docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
+            - run: services/semantic-entry/scripts/container-smoke.sh
+            - uses: supabase/setup-cli@v3
+              with:
+                  version: 2.120.0
+            - name: Start disposable Supabase and install synthetic schema before draft RPC
+              run: |
+                  supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1
+                  docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/fixtures/semantic-entry-test-schema.sql
+                  docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610120001_semantic_entry.sql
+                  supabase status -o env > "$RUNNER_TEMP/semantic-supabase.env"
+            - name: Disposable integration tests only
+              run: |
+                  set -a
+                  source "$RUNNER_TEMP/semantic-supabase.env"
+                  set +a
+                  TEST_SUPABASE_URL="$API_URL" npm --prefix services/semantic-entry run test:integration
+            - name: Stop disposable stack
+              if: always()
+              run: supabase stop --no-backup
+
+    frontend:
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        env:
+            PUBLIC_SUPABASE_URL: https://synthetic.supabase.co
+            PUBLIC_SUPABASE_PUBLISHABLE_KEY: synthetic-publishable-key
+            PUBLIC_EMAIL_NAME_MAPPING: '{}'
+            PUBLIC_GOOGLE_AI_GCF: https://receipt.example.test
+            PUBLIC_SEMANTIC_ENTRY_URL: https://semantic.example.test
+            BASE_PATH: ''
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+            - run: npm ci
+            - run: npm run check
+            # Whole-repository Prettier has a pre-existing baseline failure; scope is explicit.
+            - name: Semantic change formatting and lint
+              run: |
+                  npx prettier --check packages/semantic-entry-contract services/semantic-entry/src services/semantic-entry/tests services/semantic-entry/evals src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
+                  npx eslint packages/semantic-entry-contract/src services/semantic-entry/src services/semantic-entry/tests services/semantic-entry/evals src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
+            - run: npx playwright install --with-deps chromium
+            - run: npm run test:e2e -- e2e/semantic-entry.test.ts e2e/daily-carousel.test.ts
+            - name: Verify semantic entry under Pages base path
+              env:
+                  BASE_PATH: /expense-app
+                  E2E_BASE_PATH: /expense-app
+              run: npm run test:e2e -- e2e/semantic-entry.test.ts

@@ -1,0 +1,137 @@
+name: Deploy Semantic Entry to Cloud Run
+
+on:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: semantic-entry-production
+    cancel-in-progress: false
+
+jobs:
+    verify:
+        if: github.ref == 'refs/heads/master'
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 22
+                  cache: npm
+                  cache-dependency-path: services/semantic-entry/package-lock.json
+            - run: npm --prefix services/semantic-entry ci
+            - run: npm --prefix services/semantic-entry test
+            - run: npm --prefix services/semantic-entry run check
+            - run: docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
+            - run: services/semantic-entry/scripts/container-smoke.sh
+
+    deploy:
+        needs: verify
+        runs-on: ubuntu-latest
+        timeout-minutes: 15
+        environment: semantic-entry-production
+        permissions:
+            contents: read
+            id-token: write
+        env:
+            GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+            GCP_REGION: ${{ vars.GCP_REGION }}
+            GCP_ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+            GCP_CLOUD_RUN_SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+            GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+            GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+            GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+            SEMANTIC_OPENAI_SECRET: ${{ vars.SEMANTIC_OPENAI_SECRET }}
+            SEMANTIC_MEMBER_NAMES_SECRET: ${{ vars.SEMANTIC_MEMBER_NAMES_SECRET }}
+            SEMANTIC_OTHER_CATEGORY_ID: ${{ vars.SEMANTIC_OTHER_CATEGORY_ID }}
+            SEMANTIC_ALLOWED_ORIGINS: ${{ vars.SEMANTIC_ALLOWED_ORIGINS }}
+            SUPABASE_URL: ${{ vars.PUBLIC_SUPABASE_URL }}
+            SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
+        steps:
+            - uses: actions/checkout@v4
+            - name: Validate release configuration and write runtime environment
+              shell: bash
+              run: |
+                  python3 - <<'PY'
+                  import json, os, re
+                  from pathlib import Path
+                  from urllib.parse import urlparse
+                  patterns = {
+                    'GCP_PROJECT_ID': r'[a-z][a-z0-9-]{4,28}[a-z0-9]',
+                    'GCP_REGION': r'[a-z]+-[a-z]+[0-9]',
+                    'GCP_ARTIFACT_REPOSITORY': r'[a-z][a-z0-9_-]*',
+                    'GCP_CLOUD_RUN_SERVICE': r'[a-z][a-z0-9-]{0,48}[a-z0-9]',
+                    'GCP_DEPLOY_SERVICE_ACCOUNT': r'[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com',
+                    'GCP_RUNTIME_SERVICE_ACCOUNT': r'[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com',
+                    'GCP_WORKLOAD_IDENTITY_PROVIDER': r'projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+',
+                    'SEMANTIC_OPENAI_SECRET': r'[A-Za-z0-9_-]+:[1-9][0-9]*',
+                    'SEMANTIC_MEMBER_NAMES_SECRET': r'[A-Za-z0-9_-]+:[1-9][0-9]*',
+                    'SEMANTIC_OTHER_CATEGORY_ID': r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}'
+                  }
+                  for name, pattern in patterns.items():
+                    if not re.fullmatch(pattern, os.environ[name]):
+                      raise SystemExit(f'Missing or invalid configuration: {name}')
+                  if os.environ['GCP_DEPLOY_SERVICE_ACCOUNT'] == os.environ['GCP_RUNTIME_SERVICE_ACCOUNT']:
+                    raise SystemExit('Deploy and runtime service accounts must differ')
+                  def origin(value):
+                    parsed = urlparse(value)
+                    return parsed.scheme == 'https' and bool(parsed.hostname) and not parsed.username and not parsed.password and parsed.path == '' and not parsed.query and not parsed.fragment
+                  if not origin(os.environ['SUPABASE_URL']) or not os.environ['SUPABASE_PUBLISHABLE_KEY']:
+                    raise SystemExit('Missing or invalid Supabase configuration')
+                  origins = os.environ['SEMANTIC_ALLOWED_ORIGINS'].split(',')
+                  if not all(origin(value) for value in origins):
+                    raise SystemExit('Configure exact HTTPS frontend origins without paths')
+                  runtime = {name: os.environ[name] for name in ['SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','SEMANTIC_OTHER_CATEGORY_ID','SEMANTIC_ALLOWED_ORIGINS']}
+                  runtime.update(SEMANTIC_MODEL='gpt-5.4-mini',LANGSMITH_TRACING='false',LANGCHAIN_TRACING_V2='false')
+                  Path(os.environ['RUNNER_TEMP'],'semantic-runtime.json').write_text(json.dumps(runtime))
+                  image = f"{os.environ['GCP_REGION']}-docker.pkg.dev/{os.environ['GCP_PROJECT_ID']}/{os.environ['GCP_ARTIFACT_REPOSITORY']}/{os.environ['GCP_CLOUD_RUN_SERVICE']}:{os.environ['GITHUB_SHA']}"
+                  with open(os.environ['GITHUB_ENV'],'a') as output:
+                    output.write(f'IMAGE={image}\n')
+                  PY
+            - uses: google-github-actions/auth@v3
+              with:
+                  workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+                  service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+            - uses: google-github-actions/setup-gcloud@v3
+            - name: Build and push verified source revision
+              run: |
+                  gcloud auth configure-docker "$GCP_REGION-docker.pkg.dev" --quiet
+                  docker build -f services/semantic-entry/Dockerfile -t "$IMAGE" .
+                  docker push "$IMAGE"
+            - name: Resolve immutable image digest
+              run: |
+                  image_digest="$(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}')"
+                  digest="${image_digest##*@}"
+                  [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+                  [[ "${image_digest%@*}" == "${IMAGE%:*}" ]]
+                  printf 'IMAGE_DIGEST=%s\n' "$image_digest" >> "$GITHUB_ENV"
+            - uses: google-github-actions/deploy-cloudrun@v3
+              id: deploy
+              with:
+                  project_id: ${{ vars.GCP_PROJECT_ID }}
+                  region: ${{ vars.GCP_REGION }}
+                  service: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+                  image: ${{ env.IMAGE_DIGEST }}
+                  secrets: |
+                      OPENAI_API_KEY=${{ vars.SEMANTIC_OPENAI_SECRET }}
+                      SEMANTIC_MEMBER_NAMES=${{ vars.SEMANTIC_MEMBER_NAMES_SECRET }}
+                  secrets_update_strategy: overwrite
+                  flags: >-
+                      --env-vars-file=${{ runner.temp }}/semantic-runtime.json
+                      --service-account=${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
+                      --min-instances=0
+                      --max-instances=2
+                      --cpu=1
+                      --memory=512Mi
+                      --timeout=30s
+                      --cpu-throttling
+                      --ingress=all
+            - name: Health check without model or database calls
+              env:
+                  SERVICE_URL: ${{ steps.deploy.outputs.url }}
+              run: |
+                  curl --fail --silent --show-error --retry 5 --retry-delay 3 "$SERVICE_URL/healthz"
+                  printf '\nService: %s\nRevision source: %s\n' "$SERVICE_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

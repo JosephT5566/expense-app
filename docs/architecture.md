@@ -1,26 +1,29 @@
 # App architecture
 
-JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. This repository contains no application server routes, SQL migrations, or receipt-analysis backend. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
+JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Node/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, draft SQL, and disposable fixtures; it contains no SvelteKit server routes or receipt-analysis backend. Hosted service and production SQL compatibility remain unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
 
 ## Source map
 
-| Location                           | Responsibility                                                              |
-| ---------------------------------- | --------------------------------------------------------------------------- |
-| `src/routes/`                      | File-based pages and shared layout                                          |
-| `src/lib/components/`              | Expense list, editor, scheduled cards, and receipt dialog                   |
-| `src/lib/components/ai-receipt/`   | Upload, analysis, preview editing, grouping, and confirmation               |
-| `src/lib/components/ui/`           | Navigation, auth modal, date picker, calculator, and chart                  |
-| `src/lib/components/shadcn/`       | UI primitives built around Bits UI                                          |
-| `src/lib/data/`                    | Supabase fetchers, receipt API client, cache-first retrieval                |
-| `src/lib/stores/`                  | Session, expenses, schedules, categories, filters, settings, theme          |
-| `src/lib/cache/`                   | Memory and IndexedDB persistence for monthly and pending scheduled expenses |
-| `src/lib/types/`                   | Expense, schedule, receipt API, user, category, settings contracts          |
-| `src/lib/supabase/`                | Supabase client and Google OAuth/session helpers                            |
-| `src/lib/utils/`                   | Taiwan dates/months, cache keys, loading, logging, icons, device detection  |
-| `src/app.css`, `src/lib/theme.css` | Global styles and themes                                                    |
-| `static/`                          | Icons, favicon, robots file                                                 |
-| `.github/workflows/`               | Build check and Pages deployment                                            |
-| `e2e/`                             | Playwright tests                                                            |
+| Location                            | Responsibility                                                                |
+| ----------------------------------- | ----------------------------------------------------------------------------- |
+| `src/routes/`                       | File-based pages and shared layout                                            |
+| `src/lib/components/`               | Expense list, editor, scheduled cards, and receipt dialog                     |
+| `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                 |
+| `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                    |
+| `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                            |
+| `src/lib/data/`                     | Supabase fetchers, receipt API client, cache-first retrieval                  |
+| `src/lib/stores/`                   | Session, expenses, schedules, categories, filters, settings, theme            |
+| `src/lib/cache/`                    | Memory and IndexedDB persistence for monthly and pending scheduled expenses   |
+| `src/lib/types/`                    | Expense, schedule, receipt API, user, category, settings contracts            |
+| `src/lib/supabase/`                 | Supabase client and Google OAuth/session helpers                              |
+| `src/lib/utils/`                    | Taiwan dates/months, cache keys, loading, logging, icons, device detection    |
+| `src/app.css`, `src/lib/theme.css`  | Global styles and themes                                                      |
+| `static/`                           | Icons, favicon, robots file                                                   |
+| `services/semantic-entry/`          | LangGraph HTTP service, provider, normalizer, tests, and synthetic evaluation |
+| `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                         |
+| `supabase/`                         | Draft semantic RPC migration and explicitly disposable fixtures               |
+| `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release              |
+| `e2e/`                              | Playwright tests                                                              |
 
 ## Routes
 
@@ -48,11 +51,19 @@ Google sign-in redirects to the app's origin plus its SvelteKit base path. Datab
 
 The expense store tracks loaded rows and pagination state. `ExpenseDrawerContent.svelte` writes through the fetcher, then updates the store. Single-row store upserts/deletes patch existing monthly cache entries, including removing an old-month row when its date moves across months. Bulk store upserts do not currently persist monthly cache patches.
 
-Monthly retrieval checks memory, then IndexedDB, then Supabase. Cached months become stale after ten minutes; stale hits return immediately and launch background cache revalidation. That helper updates the cache without directly publishing refreshed rows into the expense store. Explicit refresh is implemented in `forceRefetchMonthlyExpenses`.
+Monthly retrieval checks memory, then IndexedDB, then Supabase. Cached months become stale after ten minutes; stale hits return immediately and launch background cache revalidation. That helper updates the cache without directly publishing refreshed rows into the expense store. Explicit refresh in `forceRefetchMonthlyExpenses` reads fresh 500-row pages, replaces the target month in cache/store (including deletions), and guards account/revision changes. These paginated reads are not a database snapshot.
 
 The home page renders a buffered carousel with at most seven consecutive days: three days before and after a window anchor, excluding future dates (four cards when anchored at today). Swipes update the selected date when Embla selects a slide, reusing mounted cards inside the buffer. When moving within one card of an edge, the window shifts around the selected date after the animation settles; cards keyed by date preserve shared DOM nodes. The date input and Today button rebuild and center the buffer immediately, including when interrupting a swipe. Expenses are grouped by Taiwan day once per store update and passed to the visible cards. The page prepares the months in the seven-day buffer around the selected date through the cache-first helper, beginning during the swipe animation and tracks loading, success (including empty months), and failure per month for the current account. Failed loads show a retry action. This bookkeeping lasts for the home page instance; the summary still checks for existing rows before requesting a month. Monthly cache retrieval currently takes only the first page, up to 500 rows by default.
 
 The summary groups loaded rows by category: personal rows contribute their full amount; household rows contribute the current user's `shares_json` amount. Settlement queries its own rows and calculates balances and transfers locally; it does not query the inherited monthly balance view described in the database notes.
+
+## Semantic entry
+
+`SemanticEntryDialog.svelte` submits through `semantic-entry.fetcher.ts` with the current session JWT, one UUID, and immutable trimmed text. It shows processing, created, rejected, error, or uncertain results. Closing the dialog aborts browser waiting without promising cancellation of an accepted server write. Retry preserves the UUID/text; a new operation gets a new UUID. Account/revision guards discard stale results.
+
+The separate service authenticates through Supabase `auth.getUser`, loads trusted settings/categories/member context and the Taiwan date, checks for a completed request, consumes quota only for new attempts, calls the provider once, normalizes, and persists via one SQL RPC. Completed replays skip the model and quota. Raw text and JWTs are not stored in the request ledger or persisted graph state; external payload tracing is disabled. See [semantic service contracts](database.md#semantic-entry-service).
+
+First creation patches the existing expense store/cache. Replay/status recovery refreshes the snapshot month and any currently known row month instead of applying the old snapshot. The browser does not directly write expenses in this flow. Receipt import still requires its existing review/confirmation.
 
 ## Scheduled expenses
 
