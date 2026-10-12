@@ -74,7 +74,7 @@ This is a local coding-agent workflow. No issue-to-PR agent automation is config
 
 ## Semantic expense entry
 
-The home page's「文字記帳」button sends one description to the separate LangGraph backend and automatically creates one eligible TWD expense. Rejected inputs show reasons. Uncertain requests retain their UUID/text for status lookup or retry; a missing status result is not proof of failure. Without `PUBLIC_SEMANTIC_ENTRY_URL`, submission reports that the service is not configured. Manual editing and receipt review remain separate workflows.
+The home page's「文字記帳」button sends one description to the separate LangGraph backend and automatically creates one eligible TWD expense. Rejected inputs show reasons. Uncertain requests retain their UUID/text for status lookup or retry; a missing status result is not proof of failure. Unresolved UUID/text is saved per account in browser localStorage (no token), restored as uncertain after navigation/reload, and removed after a definite result. Storage failure blocks a new submission before any backend call. A failed retry cannot clear uncertainty from an earlier execution. Without `PUBLIC_SEMANTIC_ENTRY_URL`, submission reports that the service is not configured. Manual editing and receipt review remain separate workflows.
 
 ```sh
 npm --prefix services/semantic-entry ci

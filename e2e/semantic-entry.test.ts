@@ -367,3 +367,139 @@ test('account switch during replay refresh never applies an old-account response
 		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
 	).toHaveCount(0);
 });
+for (const status of [422, 429, 502]) {
+	test(`uncertain retry with ${status} cannot erase the original uncertainty`, async ({
+		page
+	}) => {
+		let post = 0;
+		const s = await setup(
+			page,
+			async (route, body) => {
+				if (!body) {
+					await route.fulfill({
+						json: {
+							status: 'completed',
+							requestId: route.request().url().split('/').at(-1),
+							expense: row,
+							replayed: true
+						}
+					});
+				} else if (++post === 1) {
+					await route.abort();
+				} else {
+					await route.fulfill({
+						status,
+						json:
+							status === 422
+								? {
+										status: 'rejected',
+										requestId: body.requestId,
+										issues: [{ field: 'amount', code: 'missing' }]
+									}
+								: {
+										error: {
+											code:
+												status === 429
+													? 'quota_exceeded'
+													: 'provider_error',
+											uncertain: false
+										}
+									}
+					});
+				}
+			},
+			[row]
+		);
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await page.getByRole('button', { name: '重試同一請求' }).click();
+		await expect.poll(() => s.posts.length).toBe(2);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(page.getByRole('button', { name: '修改後重新送出' })).toHaveCount(0);
+		expect(s.posts[1]).toEqual(s.posts[0]);
+		await page.getByRole('button', { name: '查詢結果' }).click();
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	});
+}
+for (const lifecycle of ['reload', 'navigate']) {
+	test(`pending request survives ${lifecycle} and retries its original identity`, async ({
+		page
+	}) => {
+		let count = 0;
+		const s = await setup(page, async (route, body) => {
+			if (++count === 1) {
+				await route.abort();
+			} else {
+				await route.fulfill({ json: created(body!.requestId) });
+			}
+		});
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		if (lifecycle === 'reload') {
+			await page.reload();
+		} else {
+			await page.goto(`http://localhost:4173${basePath}/summary`);
+			await page.goto(`http://localhost:4173${basePath}/`);
+		}
+		await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+		await expect(page.getByLabel('記帳內容')).toBeDisabled();
+		await page.getByRole('button', { name: '重試同一請求' }).click();
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		expect(s.posts[1]).toEqual(s.posts[0]);
+	});
+}
+test('unavailable pending-request storage prevents submitting a new operation', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) =>
+		route.fulfill({ json: created(body!.requestId) })
+	);
+	await page.evaluate(() => {
+		const original = Storage.prototype.setItem;
+		Storage.prototype.setItem = function (key, value) {
+			if (key.startsWith('jopie:semantic-pending:')) {
+				throw new Error('storage unavailable');
+			}
+			original.call(this, key, value);
+		};
+	});
+	await submit(page);
+	await expect(page.getByText('目前無法保留請求，請允許此網站儲存資料後再試。')).toBeVisible();
+	expect(s.posts).toHaveLength(0);
+});
+test('pending recovery belongs to its account and returns when its owner signs back in', async ({
+	page
+}) => {
+	const s = await setup(page, async (route) => route.abort());
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	const switchAccount = async (other: boolean) =>
+		page.evaluate(
+			({ storageKey, session, other }) => {
+				const next = other
+					? {
+							...session,
+							user: {
+								...session.user,
+								id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+								email: 'b@example.test'
+							}
+						}
+					: session;
+				localStorage.setItem(storageKey, JSON.stringify(next));
+				const channel = new BroadcastChannel(storageKey);
+				channel.postMessage({ event: 'SIGNED_IN', session: next });
+				channel.close();
+			},
+			{ storageKey: s.storageKey, session: s.session, other }
+		);
+	await switchAccount(true);
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+	await switchAccount(false);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+	expect(s.posts).toHaveLength(1);
+});

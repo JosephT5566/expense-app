@@ -12,7 +12,12 @@
 		getSemanticEntryStatus,
 		SemanticEntryError
 	} from '$lib/data/semantic-entry.fetcher';
-	import type { CompletedResult, Issue, SemanticRequest } from '@jopie/semantic-entry-contract';
+	import {
+		parseRequest,
+		type CompletedResult,
+		type Issue,
+		type SemanticRequest
+	} from '@jopie/semantic-entry-contract';
 	let { open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 	let text = $state('');
 	let phase = $state<'input' | 'processing' | 'created' | 'rejected' | 'uncertain' | 'error'>(
@@ -25,6 +30,29 @@
 	let controller: AbortController | undefined;
 	let accountId: string | undefined;
 	let destroyed = false;
+	const pendingKey = (owner: string) => `jopie:semantic-pending:${owner}`;
+	function clearPending(owner: string) {
+		try {
+			localStorage.removeItem(pendingKey(owner));
+		} catch {
+			/* A stale key remains recoverable by lookup. */
+		}
+	}
+	function restorePending(owner: string) {
+		try {
+			const saved = localStorage.getItem(pendingKey(owner));
+			if (!saved) {
+				return;
+			}
+			const request = parseRequest(JSON.parse(saved));
+			attempt = { ...request, accountId: owner };
+			text = request.text;
+			phase = 'uncertain';
+		} catch {
+			phase = 'error';
+			message = '無法讀取先前請求，請先檢查此網站的儲存設定。';
+		}
+	}
 	const count = $derived([...text.trim()].length);
 	const fields: Record<string, string> = {
 		amount: '金額',
@@ -58,6 +86,9 @@
 				phase = 'input';
 				issues = [];
 				message = '';
+				if (next) {
+					restorePending(next);
+				}
 			}
 		});
 	});
@@ -104,6 +135,7 @@
 					stillCurrent(version, owner)
 				);
 				if (!refreshed && stillCurrent(version, owner)) {
+					clearPending(owner);
 					phase = 'created';
 					message = '先前請求已完成，但清單更新失敗，請重新整理。';
 					return;
@@ -116,6 +148,7 @@
 			expensesStore.upsertOne(result.expense);
 		}
 		if (stillCurrent(version, owner)) {
+			clearPending(owner);
 			phase = 'created';
 			message = result.replayed ? '這是先前請求的完成結果，清單已重新整理。' : '';
 		}
@@ -124,8 +157,17 @@
 		if (phase === 'processing' || !$user) {
 			return;
 		}
+		const hadUncertainty = phase === 'uncertain';
 		if (!attempt) {
-			attempt = { requestId: crypto.randomUUID(), text: text.trim(), accountId: $user.id };
+			const request = { requestId: crypto.randomUUID(), text: text.trim() };
+			try {
+				localStorage.setItem(pendingKey($user.id), JSON.stringify(request));
+			} catch {
+				phase = 'error';
+				message = '目前無法保留請求，請允許此網站儲存資料後再試。';
+				return;
+			}
+			attempt = { ...request, accountId: $user.id };
 		}
 		const operation = attempt;
 		const version = ++revision;
@@ -160,14 +202,27 @@
 					await accept(result, version, operation.accountId);
 				} else {
 					issues = result.issues;
-					phase = 'rejected';
+					if (hadUncertainty) {
+						phase = 'uncertain';
+						message = '本次解析未通過，但先前請求結果仍待確認。';
+					} else {
+						clearPending(operation.accountId);
+						phase = 'rejected';
+					}
 				}
 			}
 		} catch (error) {
 			if (!stillCurrent(version, operation.accountId)) {
 				return;
 			}
-			const uncertain = query || !(error instanceof SemanticEntryError) || error.uncertain;
+			const uncertain =
+				hadUncertainty ||
+				query ||
+				!(error instanceof SemanticEntryError) ||
+				error.uncertain;
+			if (!uncertain) {
+				clearPending(operation.accountId);
+			}
 			phase = uncertain ? 'uncertain' : 'error';
 			message =
 				error instanceof SemanticEntryError && error.code === 'configuration'
@@ -223,5 +278,6 @@
 				>{/if}
 		</div>
 		<p class="text-muted-foreground text-xs">關閉視窗不會取消已接受的記帳。</p>
+		<p class="text-muted-foreground text-xs">待確認請求會暫存於此瀏覽器，完成後移除。</p>
 	</Dialog.Content>
 </Dialog.Root>

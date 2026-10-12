@@ -28,3 +28,11 @@ The runner writes `observations.json`, `summary.json`, and `manifest.json` into 
 The local Supabase CLI aborted with a realtime-container monotonic-clock failure. The fallback tests do not verify GoTrue, the complete Supabase startup, or production migrations. The draft migration must be compared with the actual deployed schema, policies, triggers, grants, and defaults before use. No live database modifications, paid model calls, pushes, or deployments were performed for this implementation.
 
 Setup and commands: [README](../../../README.md#semantic-expense-entry) and [deployment guide](../../semantic-entry-deployment.md). Source contracts: [database/service contracts](../../database.md#semantic-entry-service).
+
+## Final review and recovery fixes
+
+One fresh read-only whole-branch reviewer found two Important issues: a retry failure could erase earlier write uncertainty, and page lifecycle changes lost the pending UUID/text. Both were addressed in one fix pass. Seven browser regressions failed against the old build (three retry statuses, reload, navigation, blocked storage, and returning to the owning account), then passed in the full 22-test frontend suite. Fresh `/expense-app` build and semantic E2E also passed 18. Backend unit/type checks remained green at 68 tests; frontend check remained zero errors/six existing warnings. No Minor findings were reported.
+
+Unresolved attempts now live in account-scoped browser localStorage without tokens, are restored as uncertain, and are removed after a definite result. This intentionally retains the description on that browser until completion or site-storage cleanup. Server ledgers/logs still do not store raw input text. Later rejection/provider/quota errors do not prove the original accepted operation failed.
+
+The reviewer deferred production schema/RLS, paid model quality, hosted IAM/cold starts/release execution, Linux Supabase bootstrap, inherited general cache partitioning, and ordinary pagination consistency. Those boundaries remain explicit; no external acceptance claim follows from the review. See the [decision record](decisions.md) for all execution rulings and their costs.
