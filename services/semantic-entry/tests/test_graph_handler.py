@@ -72,12 +72,12 @@ async def client_response(deps, method="POST", path="/semantic-entry", **kwargs)
 
 async def test_rejected_zero_write(setup):
     deps, adapter = setup
-    deps.extract_entry.return_value["raw"] = {**RAW, "amount": None}
+    deps.extract_entry.return_value["raw"] = {**RAW, "unsupportedReason": "refund"}
     response = await client_response(
         deps, headers={"Authorization": "Bearer t"}, json=REQUEST
     )
     assert response.status_code == 422
-    assert response.json()["issues"] == [{"field": "amount", "code": "missing"}]
+    assert response.json()["issues"] == [{"field": "intent", "code": "unsupported"}]
     adapter.persist_expense.assert_not_awaited()
 
 

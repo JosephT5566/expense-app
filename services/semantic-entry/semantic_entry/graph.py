@@ -1,4 +1,5 @@
 import hashlib
+import json
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -7,6 +8,7 @@ from typing import Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
+from .clarification import clarification_result
 from .contracts import JSON, parse_request
 from .errors import SemanticError
 from .normalize import normalize_extraction
@@ -42,15 +44,35 @@ class State(TypedDict, total=False):
     result: JSON
 
 
-def input_hash(text: str) -> str:
-    return hashlib.sha256(f"v1\n{text}".encode()).hexdigest()
+def conversation_payload(request: JSON) -> str:
+    return json.dumps(
+        {"text": request["text"], "history": request.get("history", [])},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
-async def invoke(request: JSON, token: str, deps: Dependencies) -> JSON:
+def input_hash(request: JSON | str) -> str:
+    # Preserve legacy completed requests and snapshots; history hashes cover every correction.
+    if isinstance(request, str):
+        content = f"v1\n{request}"
+    elif not request.get("history"):
+        content = f"v1\n{request['text']}"
+    else:
+        content = f"v2\n{conversation_payload(request)}"
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+async def invoke(
+    request: JSON,
+    token: str,
+    deps: Dependencies,
+    on_persisting: Callable[[JSON], Awaitable[None]] | None = None,
+) -> JSON:
     request = parse_request(request)
     adapter = deps.create_adapter(token)
     start = time.monotonic()
-    digest = input_hash(request["text"])
+    digest = input_hash(request)
 
     def elapsed() -> int:
         return int((time.monotonic() - start) * 1000)
@@ -109,23 +131,28 @@ async def invoke(request: JSON, token: str, deps: Dependencies) -> JSON:
 
     async def extract(state: State) -> JSON:
         return {
-            "extraction": await deps.extract_entry(request["text"], state["context"])
+            "extraction": await deps.extract_entry(
+                conversation_payload(request)
+                if request.get("history")
+                else request["text"],
+                state["context"],
+            )
         }
 
     def validate(state: State) -> JSON:
         validation = normalize_extraction(state["extraction"]["raw"], state["context"])
         result = {"validation": validation}
         if validation["status"] == "rejected":
-            result["result"] = {
-                "status": "rejected",
-                "requestId": request["requestId"],
-                "issues": validation["issues"],
-            }
+            result["result"] = clarification_result(validation, request)
         return result
 
     async def persist(state: State) -> JSON:
         if state["validation"]["status"] != "valid":
             raise SemanticError(502, "invalid_graph_state")
+        if on_persisting:
+            await on_persisting(
+                {"status": "persisting", "requestId": request["requestId"]}
+            )
         try:
             completed = await adapter.persist_expense(
                 request["requestId"], digest, state["validation"]["expense"]

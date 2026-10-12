@@ -35,6 +35,15 @@ class Adapter:
 async def main():
     inputs = [
         REQUEST,
+        {**REQUEST, "history": []},
+        {**REQUEST, "history": [{"question": " 金額？ ", "answer": " e\u0301 "}]},
+        {**REQUEST, "history": [{"question": "金額？", "answer": "100"}]},
+        {**REQUEST, "history": None},
+        {
+            **REQUEST,
+            "history": [{"question": "金額？", "answer": "100", "userId": "a"}],
+        },
+        {**REQUEST, "history": [{"question": "q", "answer": "a"}] * 4},
         {**REQUEST, "text": " " + "🍜" * 500 + " "},
         {**REQUEST, "text": "e\u0301"},
         {**REQUEST, "text": "\ufeff 午餐851 \ufeff"},
@@ -49,9 +58,7 @@ async def main():
     for raw in inputs:
         try:
             parsed = parse_request(raw)
-            requests.append(
-                {"raw": raw, "parsed": parsed, "hash": input_hash(parsed["text"])}
-            )
+            requests.append({"raw": raw, "parsed": parsed, "hash": input_hash(parsed)})
         except ValueError:
             requests.append({"raw": raw, "invalid": True})
     adapter = Adapter()
@@ -67,6 +74,7 @@ async def main():
 
     deps = Dependencies(Mock(return_value=adapter), extract)
     responses = []
+    streams = []
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(deps)), base_url="http://localhost"
     ) as client:
@@ -96,6 +104,21 @@ async def main():
                 ).json(),
             }
         )
+        for raw in (deepcopy(extraction["raw"]), deepcopy(RAW)):
+            extraction["raw"] = raw
+            stream = await client.post(
+                "/semantic-entry",
+                headers={**headers, "Accept": "text/event-stream"},
+                json=REQUEST,
+            )
+            for frame in stream.text.strip().split("\n\n"):
+                lines = frame.splitlines()
+                streams.append(
+                    {
+                        "event": lines[0].removeprefix("event: "),
+                        "body": json.loads(lines[1].removeprefix("data: ")),
+                    }
+                )
         adapter.saved = {"expense": ROW, "replayed": True}
         responses.append(
             {
@@ -114,7 +137,10 @@ async def main():
             }
         )
     print(
-        json.dumps({"requests": requests, "responses": responses}, ensure_ascii=False)
+        json.dumps(
+            {"requests": requests, "responses": responses, "streams": streams},
+            ensure_ascii=False,
+        )
     )
 
 

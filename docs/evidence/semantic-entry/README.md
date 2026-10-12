@@ -2,6 +2,8 @@
 
 Evidence is scoped to its environment. Local implementation and fixtures do not establish production database compatibility, hosted authentication, or paid model extraction quality.
 
+中文整體紀錄與最新功能摘要見 [branch 開發紀錄](branch-notes.zh-TW.md)。以下各階段資料保留當時的驗證範圍；目前契約以 [service contracts](../../database.md#semantic-entry-service) 為準。
+
 ## Python migration — 2026-10-12
 
 This record supersedes the Node backend commands in the historical handoff below. The current working tree replaces the backend with Python 3.12, Starlette/Uvicorn, HTTPX and Python LangGraph. `pyproject.toml`/`uv.lock` replace the service npm package/lock and TypeScript build. Frontend TypeScript contracts, SQL, authored cases and browser behavior are preserved. Current commands live in the [README](../../../README.md#semantic-expense-entry) and [deployment guide](../../semantic-entry-deployment.md). The requested migration was performed without the superpowers plugin or delegated agents.

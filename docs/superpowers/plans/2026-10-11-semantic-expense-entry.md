@@ -33,17 +33,56 @@
 
 ---
 
+## Clarification flow implementation — 2026-10-12
+
+User-approved behavior: no editable draft or confirmation step. Insufficient/repairable information triggers a concrete Traditional Chinese question. Each answer continues the same expense; complete valid information automatically invokes the existing expense RPC and returns its actual row. Unsupported intents, configuration errors and malformed model output remain terminal failures. No conversation table, persistent graph/checkpointer, or separate agent endpoint is introduced. This work does not use the superpowers plugin.
+
+### Contracts and lifetime
+
+- Keep `{requestId,text}` compatible. Add optional `history:[{question,answer}]` (up to three follow-up answers); initial text/each answer <=500 trimmed Unicode code points, each question <=300. All strings are NFC-normalized; HTTP body remains <=8 KiB. History is untrusted user data, not system/assistant instructions. Fresh authentication, allowlist and context checks apply to every round.
+- The same frontend-generated UUID identifies one logical expense throughout clarification. Questions do not create ledger rows or expenses; each new model round consumes quota. No automatic model retries. The graph emits `needs_input` with validated issues and a deterministic focused question when all issues are repairable. At the follow-up bound it returns terminal rejection. The provider still extracts one structured expense, using the initial description and supplied corrections.
+- Preserve v1 hashes for requests without history; use a versioned canonical JSON payload hash for nonempty history. Every final retry freezes the complete normalized request. Existing caller-scoped `(user_id,request_id)` RPC uniqueness and conflict behavior remain the write boundary; no SQL migration is required.
+- Clarification history exists only in modal memory and is discarded on close/account switch/navigation/reload. Persist only `{requestId}` in account-scoped pending storage before submission because any round may write. Clear it after a definite needs_input/rejection/failure/completion. Uncertainty from an earlier submission cannot be cleared by a later needs_input/rejection/error. Preserve exact retry payload only while in memory; after disposal offer status lookup only. Existing legacy pending records are read for their UUID and discarded text is not restored.
+
+### Transport and UI
+
+- POST with `Accept:text/event-stream` receives SSE `persisting`, then one terminal `result` or `error` event. Terminal results can be needs_input/created/rejected; GET status remains JSON. JSON POST remains available for compatibility and harnesses.
+- Emit persisting only after complete validation, immediately before RPC. Stream disconnect before persist can cancel parsing; after persist begins the in-flight operation continues independently of the response stream within its deadline. No write is promised to be cancellable or certain after deadline/process termination.
+- Lock modal Close/Escape/outside interactions from the moment each POST is submitted (avoids the notification race), show processing then writing, and unlock on needs_input/result/error. Account changes and page lifecycle still discard stale UI updates. Timeout releases the lock into uncertain recovery; never permanently lock.
+- Show initial input, transient question/answer history, and a reply input. No confirmation button or draft editor. Created notifications show the actual saved note, amount, date and shares. Replay refresh retains existing edited/deleted snapshot behavior.
+
+### Implementation checklist
+
+- [x] Extend TypeScript/Python validators, canonical hashing and cross-language parity cases.
+- [x] Add deterministic clarification policy and conversational extraction input to graph/prompt; retain quota/replay/order/validation guarantees.
+- [x] Add bounded SSE transport, persisting event and disconnect/write lifetime tests.
+- [x] Add frontend stream validation, close guards, transient chat, UUID-only recovery and no-draft automatic writes.
+- [x] Cover complete-input creation, missing/ambiguous fields, repairs, limits, exact retries, changed-payload conflicts, stream faults, close/reload/account isolation and no browser expense writes.
+- [x] Run Python pytest/Ruff/mypy, fixture evaluation, parity, Docker smoke, frontend check/lint, semantic root/subpath Playwright and Pages build. SQL unchanged; existing disposable SQL evidence is historical unless rerun.
+- [x] Update current docs and scoped evidence; leave production SQL/IAM/deployment/paid model calls unverified and unperformed.
+
+### Repository verification — 2026-10-12
+
+- `uv run --directory services/semantic-entry --locked pytest -q`: 107 unit/mock tests passed. Includes clarification limits, no-write questions, final-payload hashes/conflicts, structured-log privacy, event ordering, and generator disconnect behavior before/after persistence. The checked-in SQL and dependencies were unchanged, so disposable SQL integration was not rerun; previous SQL fixture evidence is historical.
+- `uv run --directory services/semantic-entry --locked ruff check .`, `ruff format --check .`, and `mypy semantic_entry`: passed (12 typed source files). Fixture evaluation (`python -m semantic_entry.evaluation --mode fixture --out /tmp/jopie-clarification-eval`): 40 cases, 120 observations, zero failures and zero paid calls. Fixture scoring tests normalization; real conversational model quality remains unverified.
+- `node --experimental-strip-types packages/semantic-entry-contract/tests/python-parity.mjs`: 16 request/hash cases, five synthetic JSON HTTP responses, and three actual ASGI SSE events passed, plus malformed response/event checks.
+- `docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .` and `services/semantic-entry/scripts/container-smoke.sh`: passed with synthetic dependencies; real Uvicorn handled history and SSE persisting → created. This is localhost container wiring evidence, not hosted proxy/disconnect durability evidence.
+- `npm run check`: zero errors and six existing warnings. `npm run lint` failed at Prettier with 122 existing files; whole-repository lint is not passed. Explicit ESLint/Prettier checks passed for the changed contract, parity script, fetcher, component, browser tests, and Markdown. Changed Markdown local links and `git diff --check` passed.
+- Root `npm run test:e2e -- e2e/semantic-entry.test.ts`: 26 passed using synthetic public configuration and local Chromium. Covers real incremental local HTTP SSE, fragmented CRLF/UTF-8, close guards, malformed/mismatched streams, same-ID clarification, exact retries, UUID-only lifecycle recovery, account isolation, and zero browser expense REST writes.
+- Pages subpath `BASE_PATH=/expense-app E2E_BASE_PATH=/expense-app npm run test:e2e -- e2e/semantic-entry.test.ts`: 26 passed. Playwright's web-server command completed the Pages-base-path build before browser navigation/session and semantic-flow verification.
+- **Unverified/operator work:** deployed SQL/RLS, hosted CI, real model clarification quality, hosted SSE buffering/disconnect behavior, and production Cloud Run/instance lifecycle. No live model call, production database change, deployment, or push was performed. Validate these in hosted acceptance before release.
+
 ## Current Python service structure
 
-| Files                                                                                                           | Responsibility                                                                                              |
-| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `services/semantic-entry/{pyproject.toml,uv.lock,.python-version,Dockerfile,Dockerfile.dockerignore}`           | Python dependency lock, non-root container, source allowlist                                                |
-| `services/semantic-entry/semantic_entry/{contracts,normalize,prompt,provider,supabase,graph,handler,server}.py` | Strict wire mirror, Taiwan rules, single model call, caller JWT HTTPS adapter, LangGraph, bounded ASGI HTTP |
-| `services/semantic-entry/semantic_entry/evaluation.py`, `evals/cases.json`                                      | Same 40 synthetic cases, bounded fixture/live runner, scorer and manifest                                   |
-| `services/semantic-entry/tests/test_*.py`                                                                       | Python unit/mock and localhost-only disposable SQL tests                                                    |
-| `packages/semantic-entry-contract/tests/python-parity.mjs`, `services/semantic-entry/tests/export_contract.py`  | Actual Python outputs validated by the browser's TypeScript contract                                        |
-| `services/semantic-entry/scripts/{container-smoke.sh,smoke-server.py,smoke-client.py,local-db.sh}`              | Synthetic container smoke and disposable SQL setup                                                          |
-| `.github/workflows/semantic-entry-{check,deploy}.yml`                                                           | Python checks/container verification; existing manual Cloud Run release boundary                            |
+| Files                                                                                                                         | Responsibility                                                                                              |
+| ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `services/semantic-entry/{pyproject.toml,uv.lock,.python-version,Dockerfile,Dockerfile.dockerignore}`                         | Python dependency lock, non-root container, source allowlist                                                |
+| `services/semantic-entry/semantic_entry/{contracts,clarification,normalize,prompt,provider,supabase,graph,handler,server}.py` | Strict wire mirror, Taiwan rules, single model call, caller JWT HTTPS adapter, LangGraph, bounded ASGI HTTP |
+| `services/semantic-entry/semantic_entry/evaluation.py`, `evals/cases.json`                                                    | Same 40 synthetic cases, bounded fixture/live runner, scorer and manifest                                   |
+| `services/semantic-entry/tests/test_*.py`                                                                                     | Python unit/mock and localhost-only disposable SQL tests                                                    |
+| `packages/semantic-entry-contract/tests/python-parity.mjs`, `services/semantic-entry/tests/export_contract.py`                | Actual Python outputs validated by the browser's TypeScript contract                                        |
+| `services/semantic-entry/scripts/{container-smoke.sh,smoke-server.py,smoke-client.py,local-db.sh}`                            | Synthetic container smoke and disposable SQL setup                                                          |
+| `.github/workflows/semantic-entry-{check,deploy}.yml`                                                                         | Python checks/container verification; existing manual Cloud Run release boundary                            |
 
 ## Python migration acceptance
 

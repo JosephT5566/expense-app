@@ -16,14 +16,28 @@
 		parseRequest,
 		type CompletedResult,
 		type Issue,
-		type SemanticRequest
+		type SemanticRequest,
+		type ClarificationTurn
 	} from '@jopie/semantic-entry-contract';
 	let { open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
 	let text = $state('');
-	let phase = $state<'input' | 'processing' | 'created' | 'rejected' | 'uncertain' | 'error'>(
-		'input'
-	);
+	let phase = $state<
+		| 'input'
+		| 'needs_input'
+		| 'processing'
+		| 'persisting'
+		| 'created'
+		| 'rejected'
+		| 'uncertain'
+		| 'error'
+	>('input');
 	let attempt = $state<(SemanticRequest & { accountId: string }) | null>(null);
+	let history = $state<ClarificationTurn[]>([]);
+	let question = $state('');
+	let reply = $state('');
+	let pendingId = $state<string | null>(null);
+	let savedExpense = $state<CompletedResult['expense'] | null>(null);
+	const busy = $derived(phase === 'processing' || phase === 'persisting');
 	let issues = $state<Issue[]>([]);
 	let message = $state('');
 	let revision = 0;
@@ -44,9 +58,11 @@
 			if (!saved) {
 				return;
 			}
-			const request = parseRequest(JSON.parse(saved));
-			attempt = { ...request, accountId: owner };
-			text = request.text;
+			const raw = JSON.parse(saved);
+			// Read legacy UUIDs without restoring their text/history, then minimize storage.
+			const id = parseRequest({ requestId: raw.requestId, text: 'status' }).requestId;
+			localStorage.setItem(pendingKey(owner), JSON.stringify({ requestId: id }));
+			pendingId = id;
 			phase = 'uncertain';
 		} catch {
 			phase = 'error';
@@ -54,6 +70,7 @@
 		}
 	}
 	const count = $derived([...text.trim()].length);
+	const replyCount = $derived([...reply.trim()].length);
 	const fields: Record<string, string> = {
 		amount: '金額',
 		note: '描述',
@@ -82,6 +99,11 @@
 				revision++;
 				controller?.abort();
 				attempt = null;
+				pendingId = null;
+				history = [];
+				question = '';
+				reply = '';
+				savedExpense = null;
 				text = '';
 				phase = 'input';
 				issues = [];
@@ -98,11 +120,16 @@
 		controller?.abort();
 	});
 	function changeOpen(next: boolean) {
-		if (!next && phase === 'processing') {
-			revision++;
-			controller?.abort();
-			phase = 'uncertain';
-			message = '';
+		if (!next && busy) {
+			message = '正在處理這筆記帳，請等待結果。';
+			return;
+		}
+		if (!next) {
+			const uncertain = phase === 'uncertain';
+			newOperation();
+			if (uncertain) {
+				phase = 'uncertain';
+			}
 		}
 		onOpenChange(next);
 	}
@@ -110,6 +137,10 @@
 		revision++;
 		controller?.abort();
 		attempt = null;
+		history = [];
+		question = '';
+		reply = '';
+		savedExpense = null;
 		if (clear) {
 			text = '';
 		}
@@ -136,6 +167,8 @@
 				);
 				if (!refreshed && stillCurrent(version, owner)) {
 					clearPending(owner);
+					pendingId = null;
+					savedExpense = result.expense;
 					phase = 'created';
 					message = '先前請求已完成，但清單更新失敗，請重新整理。';
 					return;
@@ -149,27 +182,45 @@
 		}
 		if (stillCurrent(version, owner)) {
 			clearPending(owner);
+			pendingId = null;
+			savedExpense = result.expense;
 			phase = 'created';
 			message = result.replayed ? '這是先前請求的完成結果，清單已重新整理。' : '';
 		}
 	}
 	async function execute(query = false) {
-		if (phase === 'processing' || !$user) {
+		if (busy || !$user || (phase === 'uncertain' && !query && !attempt)) {
 			return;
 		}
 		const hadUncertainty = phase === 'uncertain';
-		if (!attempt) {
-			const request = { requestId: crypto.randomUUID(), text: text.trim() };
+		const owner = $user.id;
+		if (!query && !hadUncertainty) {
 			try {
-				localStorage.setItem(pendingKey($user.id), JSON.stringify(request));
+				const nextHistory =
+					phase === 'needs_input' ? [...history, { question, answer: reply }] : history;
+				const request = parseRequest({
+					requestId: attempt?.requestId ?? crypto.randomUUID(),
+					text,
+					...(nextHistory.length ? { history: nextHistory } : {})
+				});
+				localStorage.setItem(
+					pendingKey(owner),
+					JSON.stringify({ requestId: request.requestId })
+				);
+				attempt = { ...request, accountId: owner };
+				pendingId = request.requestId;
+				history = request.history ?? [];
+				reply = '';
 			} catch {
-				phase = 'error';
 				message = '目前無法保留請求，請允許此網站儲存資料後再試。';
 				return;
 			}
-			attempt = { ...request, accountId: $user.id };
 		}
 		const operation = attempt;
+		const id = operation?.requestId ?? pendingId;
+		if (!id) {
+			return;
+		}
 		const version = ++revision;
 		controller = new AbortController();
 		phase = 'processing';
@@ -177,42 +228,49 @@
 		issues = [];
 		try {
 			if (query) {
-				const completed = await getSemanticEntryStatus(
-					operation.requestId,
-					controller.signal
-				);
-				if (!stillCurrent(version, operation.accountId)) {
+				const completed = await getSemanticEntryStatus(id, controller.signal);
+				if (!stillCurrent(version, owner)) {
 					return;
 				}
 				if (completed) {
-					await accept(completed, version, operation.accountId);
+					await accept(completed, version, owner);
 				} else {
 					phase = 'uncertain';
 					message = '尚未查到完成結果，仍待確認。';
 				}
-			} else {
-				const result = await submitSemanticEntry(
-					{ requestId: operation.requestId, text: operation.text },
-					controller.signal
-				);
-				if (!stillCurrent(version, operation.accountId)) {
+			} else if (operation) {
+				const request = parseRequest({
+					requestId: operation.requestId,
+					text: operation.text,
+					...(operation.history ? { history: operation.history } : {})
+				});
+				const result = await submitSemanticEntry(request, controller.signal, () => {
+					if (stillCurrent(version, owner)) {
+						phase = 'persisting';
+					}
+				});
+				if (!stillCurrent(version, owner)) {
 					return;
 				}
 				if (result.status === 'created') {
-					await accept(result, version, operation.accountId);
+					await accept(result, version, owner);
+				} else if (hadUncertainty) {
+					phase = 'uncertain';
+					message = '本次解析未完成寫入，但先前請求結果仍待確認。';
 				} else {
-					issues = result.issues;
-					if (hadUncertainty) {
-						phase = 'uncertain';
-						message = '本次解析未通過，但先前請求結果仍待確認。';
+					clearPending(owner);
+					pendingId = null;
+					if (result.status === 'needs_input') {
+						question = result.question;
+						phase = 'needs_input';
 					} else {
-						clearPending(operation.accountId);
+						issues = result.issues;
 						phase = 'rejected';
 					}
 				}
 			}
 		} catch (error) {
-			if (!stillCurrent(version, operation.accountId)) {
+			if (!stillCurrent(version, owner)) {
 				return;
 			}
 			const uncertain =
@@ -221,7 +279,8 @@
 				!(error instanceof SemanticEntryError) ||
 				error.uncertain;
 			if (!uncertain) {
-				clearPending(operation.accountId);
+				clearPending(owner);
+				pendingId = null;
 			}
 			phase = uncertain ? 'uncertain' : 'error';
 			message =
@@ -239,30 +298,73 @@
 </script>
 
 <Dialog.Root {open} onOpenChange={changeOpen}>
-	<Dialog.Content>
+	<Dialog.Content
+		showCloseButton={!busy}
+		onEscapeKeydown={(event) => {
+			if (busy) {
+				event.preventDefault();
+			}
+		}}
+		onInteractOutside={(event) => {
+			if (busy) {
+				event.preventDefault();
+			}
+		}}
+	>
 		<Dialog.Header
 			><Dialog.Title>文字記帳</Dialog.Title><Dialog.Description
-				>送出一句描述，系統會直接新增一筆支出。</Dialog.Description
+				>描述一筆支出；資訊不足時會追問，完整後直接記帳。</Dialog.Description
 			></Dialog.Header
 		>
 		<label for="semantic-entry-text" class="text-sm font-medium">記帳內容</label>
 		<textarea
 			id="semantic-entry-text"
 			bind:value={text}
-			disabled={attempt !== null}
+			disabled={attempt !== null || phase === 'uncertain'}
 			rows="3"
 			class="w-full rounded-md border p-3 text-sm"
 			placeholder="例如：今天午餐100元"
 		></textarea>
 		<p class="text-muted-foreground text-xs">{count}/500 字 · 單筆台幣支出</p>
+		{#if history.length}
+			<div class="max-h-40 space-y-2 overflow-y-auto text-sm" aria-label="本次對話">
+				{#each history as turn, index (index)}
+					<p class="text-muted-foreground">{turn.question}</p>
+					<p>你：{turn.answer}</p>
+				{/each}
+			</div>
+		{/if}
+		{#if phase === 'needs_input'}
+			<p role="status" class="font-medium">{question}</p>
+			<label for="semantic-entry-reply" class="text-sm font-medium">補充資訊</label>
+			<textarea
+				id="semantic-entry-reply"
+				bind:value={reply}
+				rows="2"
+				class="w-full rounded-md border p-3 text-sm"
+			></textarea>
+			<p class="text-muted-foreground text-xs">{replyCount}/500 字</p>
+		{/if}
 		<div aria-live="polite" class="space-y-2">
 			{#if phase === 'processing'}<p role="status">處理中…</p>
+			{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
 			{:else if phase === 'created'}<p class="font-semibold">已新增</p>
 			{:else if phase === 'rejected' || phase === 'error'}<p class="font-semibold">未新增</p>
 			{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
 			{#each issues as issue, index (index)}<p>
 					{fields[issue.field] ?? '內容'}：{codes[issue.code] ?? '資訊無效'}
 				</p>{/each}
+			{#if savedExpense && phase === 'created'}
+				<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
+				<p class="text-sm">
+					{new Date(savedExpense.ts).toLocaleDateString('zh-TW', {
+						timeZone: 'Asia/Taipei'
+					})}
+				</p>
+				{#each Object.entries(savedExpense.shares_json) as [email, amount] (email)}
+					<p class="text-sm">{email}：NT$ {amount}</p>
+				{/each}
+			{/if}
 			{#if message}<p class="text-sm">{message}</p>{/if}
 		</div>
 		<div class="flex flex-wrap gap-2">
@@ -270,14 +372,22 @@
 					disabled={!$user || count === 0 || count > 500}
 					onclick={() => execute()}>送出記帳</Button
 				>
-			{:else if phase === 'uncertain'}<Button onclick={() => execute(true)}>查詢結果</Button
-				><Button variant="outline" onclick={() => execute()}>重試同一請求</Button>
+			{:else if phase === 'needs_input'}<Button
+					disabled={replyCount === 0 || replyCount > 500}
+					onclick={() => execute()}>送出補充</Button
+				>
+			{:else if phase === 'uncertain'}<Button onclick={() => execute(true)}>查詢結果</Button>
+				{#if attempt}<Button variant="outline" onclick={() => execute()}
+						>重試同一請求</Button
+					>{/if}
 			{:else if phase === 'created'}<Button onclick={() => newOperation()}>新增另一筆</Button>
 			{:else if phase === 'rejected' || phase === 'error'}<Button
 					onclick={() => newOperation(false)}>修改後重新送出</Button
 				>{/if}
 		</div>
 		<p class="text-muted-foreground text-xs">關閉視窗不會取消已接受的記帳。</p>
-		<p class="text-muted-foreground text-xs">待確認請求會暫存於此瀏覽器，完成後移除。</p>
+		<p class="text-muted-foreground text-xs">
+			對話關閉後捨棄；結果不明時僅保留請求編號供查詢。
+		</p>
 	</Dialog.Content>
 </Dialog.Root>

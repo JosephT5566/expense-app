@@ -4,6 +4,7 @@ import {
 	parseRequest,
 	parseResponse,
 	parseStatusResponse,
+	parseStreamEvent,
 	type CompletedResult,
 	type SemanticRequest,
 	type SemanticResponse
@@ -20,7 +21,8 @@ async function call(
 	path: string,
 	method: 'GET' | 'POST',
 	body?: SemanticRequest,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	onPersisting?: () => void
 ): Promise<unknown> {
 	const base = env.PUBLIC_SEMANTIC_ENTRY_URL;
 	if (!base) {
@@ -40,19 +42,97 @@ async function call(
 		throw new SemanticEntryError('unauthorized', false);
 	}
 	signal?.throwIfAborted();
+	let writing = false;
 	try {
+		const payload = body ? JSON.stringify(body) : undefined;
+		if (payload && new TextEncoder().encode(payload).length > 8192) {
+			throw new SemanticEntryError('invalid_request', false);
+		}
 		const response = await fetch(url, {
 			method,
 			headers: {
 				Authorization: `Bearer ${data.session.access_token}`,
-				...(body ? { 'Content-Type': 'application/json' } : {})
+				...(body ? { 'Content-Type': 'application/json', Accept: 'text/event-stream' } : {})
 			},
-			...(body ? { body: JSON.stringify(body) } : {}),
+			...(payload ? { body: payload } : {}),
 			signal: AbortSignal.any([
 				signal ?? new AbortController().signal,
 				AbortSignal.timeout(32000)
 			])
 		});
+		if (
+			body &&
+			response.ok &&
+			response.headers.get('Content-Type')?.includes('text/event-stream')
+		) {
+			if (!response.body) {
+				throw new SemanticEntryError('invalid_response', true);
+			}
+			const reader = response.body.getReader();
+			const decoder = new TextDecoder('utf-8', { fatal: true });
+			let buffer = '';
+			let size = 0;
+			try {
+				for (;;) {
+					const { value, done } = await reader.read();
+					if (done) {
+						throw new SemanticEntryError('invalid_response', true);
+					}
+					size += value.length;
+					if (size > 65536) {
+						throw new SemanticEntryError('invalid_response', true);
+					}
+					buffer += decoder.decode(value, { stream: true });
+					// SSE accepts LF and CRLF; preserve CR at chunk boundaries.
+					let boundary: RegExpExecArray | null;
+					while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+						const frame = buffer.slice(0, boundary.index);
+						buffer = buffer.slice(boundary.index + boundary[0].length);
+						let name = '';
+						const data: string[] = [];
+						for (const line of frame.split(/\r?\n/)) {
+							if (line.startsWith('event:')) {
+								name = line.slice(6).trim();
+							} else if (line.startsWith('data:')) {
+								data.push(line.slice(5).replace(/^ /, ''));
+							}
+						}
+						if (!data.length) {
+							continue;
+						}
+						let event;
+						try {
+							event = parseStreamEvent(name, JSON.parse(data.join('\n')));
+						} catch {
+							throw new SemanticEntryError('invalid_response', true);
+						}
+						if (event.type === 'error') {
+							throw new SemanticEntryError(event.code, writing || event.uncertain);
+						}
+						const id =
+							event.type === 'result' ? event.result.requestId : event.requestId;
+						if (id !== body.requestId) {
+							throw new SemanticEntryError('invalid_response', true);
+						}
+						if (event.type === 'persisting') {
+							if (writing) {
+								throw new SemanticEntryError('invalid_response', true);
+							}
+							writing = true;
+							onPersisting?.();
+						} else {
+							if (writing && event.result.status !== 'created') {
+								throw new SemanticEntryError('invalid_response', true);
+							}
+							return event.result;
+						}
+					}
+				}
+			} finally {
+				await reader.cancel().catch(() => {});
+				reader.releaseLock();
+			}
+		}
 		const result = await response.json();
 		if (!response.ok && response.status !== 422) {
 			throw new SemanticEntryError(
@@ -72,7 +152,8 @@ async function call(
 }
 export async function submitSemanticEntry(
 	request: SemanticRequest,
-	signal?: AbortSignal
+	signal?: AbortSignal,
+	onPersisting?: () => void
 ): Promise<SemanticResponse> {
 	let parsed: SemanticRequest;
 	try {
@@ -80,7 +161,7 @@ export async function submitSemanticEntry(
 	} catch {
 		throw new SemanticEntryError('invalid_request', false);
 	}
-	const result = await call('', 'POST', parsed, signal);
+	const result = await call('', 'POST', parsed, signal, onPersisting);
 	try {
 		const response = parseResponse(result);
 		if (response.requestId !== parsed.requestId) {

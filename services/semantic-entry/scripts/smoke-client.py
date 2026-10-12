@@ -39,6 +39,24 @@ status, result = call("/semantic-entry", body)
 assert status == 200 and result["status"] == "created"
 status, result = call(f"/semantic-entry/{REQUEST_ID}")
 assert status == 200 and result["status"] == "not_found"
+with urlopen(
+    Request(
+        BASE + "/semantic-entry",
+        data=json.dumps(
+            {**body, "history": [{"question": "金額？", "answer": "100"}]}
+        ).encode(),
+        headers={
+            "Authorization": "Bearer synthetic",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        },
+    ),
+    timeout=3,
+) as response:
+    stream = response.read().decode()
+    assert response.status == 200
+    assert stream.index("event: persisting") < stream.index("event: result")
+    assert '"status":"created"' in stream
 print(
-    "Container smoke: healthz200, missing-token401, extra-field400, mock-created200, GET not_found200"
+    "Container smoke: healthz200, missing-token401, extra-field400, mock-created200, GET not_found200, history/SSE persisting→created200"
 )

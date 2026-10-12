@@ -64,16 +64,36 @@ def safe_integer(value: Any, minimum: int = 0) -> bool:
     )
 
 
+def bounded_text(raw: Any, maximum: int) -> str:
+    value = trim(string(raw))
+    if len(value) > maximum:
+        raise ValueError("Text too long")
+    return unicodedata.normalize("NFC", value)
+
+
 def parse_request(raw: Any) -> JSON:
     r = object_(raw)
-    exact_keys(r, ["requestId", "text"])
-    text = trim(string(r["text"]))
-    if len(text) > 500:
-        raise ValueError("Text too long")
-    return {
+    exact_keys(r, ["requestId", "text"], ["history"])
+    parsed: JSON = {
         "requestId": request_id(r["requestId"]),
-        "text": unicodedata.normalize("NFC", text),
+        "text": bounded_text(r["text"], 500),
     }
+    if "history" in r:
+        if not isinstance(r["history"], list) or len(r["history"]) > 3:
+            raise ValueError("Invalid history")
+        history = []
+        for raw_turn in r["history"]:
+            turn = object_(raw_turn)
+            exact_keys(turn, ["question", "answer"])
+            history.append(
+                {
+                    "question": bounded_text(turn["question"], 300),
+                    "answer": bounded_text(turn["answer"], 500),
+                }
+            )
+        if history:
+            parsed["history"] = history
+    return parsed
 
 
 def timestamp(value: Any) -> str:

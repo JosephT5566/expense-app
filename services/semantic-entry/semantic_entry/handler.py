@@ -1,12 +1,67 @@
 import asyncio
+import json
 import re
+from collections.abc import AsyncIterator
+from contextlib import suppress
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from .contracts import load_json, parse_request, request_id
+from .contracts import JSON, load_json, parse_request, request_id
 from .errors import SemanticError
 from .graph import Dependencies, invoke
+
+# Strong references only for bounded in-flight requests; no conversation storage.
+_operations: set[asyncio.Task[None]] = set()
+
+
+def error_payload(error: SemanticError) -> JSON:
+    return {"error": {"code": error.code, "uncertain": error.uncertain}}
+
+
+async def stream_operation(
+    parsed: JSON, token: str, deps: Dependencies, deadline: float
+) -> AsyncIterator[bytes]:
+    events: asyncio.Queue[tuple[str, JSON]] = asyncio.Queue()
+    writing = False
+
+    async def persisting(payload: JSON) -> None:
+        nonlocal writing
+        writing = True
+        events.put_nowait(("persisting", payload))
+
+    async def operation() -> None:
+        try:
+            async with asyncio.timeout(deadline):
+                result = await invoke(parsed, token, deps, on_persisting=persisting)
+                events.put_nowait(("result", result))
+        except TimeoutError:
+            events.put_nowait(
+                ("error", error_payload(SemanticError(504, "persist_uncertain", True)))
+            )
+        except SemanticError as e:
+            events.put_nowait(("error", error_payload(e)))
+        except Exception:
+            events.put_nowait(
+                ("error", error_payload(SemanticError(502, "service_error", writing)))
+            )
+
+    task = asyncio.create_task(operation())
+    _operations.add(task)
+    task.add_done_callback(_operations.discard)
+    try:
+        while True:
+            name, payload = await events.get()
+            yield f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n".encode()
+            if name in ("result", "error"):
+                break
+    finally:
+        if not task.done() and not writing:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+        # After RPC begins, response disconnection does not cancel the accepted write.
+        # The task retains its own deadline and sanitized exception handling.
 
 
 async def handle(request: Request, deps: Dependencies) -> Response:
@@ -49,6 +104,7 @@ async def handle(request: Request, deps: Dependencies) -> Response:
     )
     if not bearer:
         return error(SemanticError(401, "unauthorized"))
+    started = asyncio.get_running_loop().time()
     try:
         async with asyncio.timeout(deps.http_deadline):
             if status_id:
@@ -75,6 +131,16 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                 parsed = parse_request(load_json(body.decode("utf-8")))
             except (ValueError, TypeError, UnicodeError):
                 raise SemanticError(400, "invalid_request") from None
+            if "text/event-stream" in request.headers.get("accept", ""):
+                remaining = max(
+                    0,
+                    deps.http_deadline - (asyncio.get_running_loop().time() - started),
+                )
+                return StreamingResponse(
+                    stream_operation(parsed, bearer[1], deps, remaining),
+                    media_type="text/event-stream",
+                    headers={**cors, "X-Accel-Buffering": "no"},
+                )
             result = await invoke(parsed, bearer[1], deps)
             return JSONResponse(
                 result, 422 if result["status"] == "rejected" else 200, headers=cors

@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 import { loadEnv } from 'vite';
+import type { SemanticRequest } from '../packages/semantic-entry-contract/src/index';
 const env = loadEnv('production', process.cwd(), 'PUBLIC_');
 const endpoint =
 	process.env.PUBLIC_SEMANTIC_ENTRY_URL ??
@@ -44,7 +45,7 @@ const created = (requestId: string, replayed = false) => ({
 test.use({ viewport: { width: 430, height: 900 }, timezoneId: 'Asia/Taipei' });
 async function setup(
 	page: Page,
-	handler: (route: Route, body: { requestId: string; text: string } | null) => Promise<void>,
+	handler: (route: Route, body: SemanticRequest | null) => Promise<void>,
 	initialRows: (typeof row)[] = []
 ) {
 	await page.clock.setFixedTime(new Date('2026-10-01T12:00:00+08:00'));
@@ -63,7 +64,7 @@ async function setup(
 	);
 	let rows = initialRows;
 	let writes = 0;
-	const posts: { requestId: string; text: string }[] = [];
+	const posts: SemanticRequest[] = [];
 	await page.route(`${env.PUBLIC_SUPABASE_URL}/**`, async (route) => {
 		const path = new URL(route.request().url()).pathname;
 		if (path.endsWith('/auth/v1/user')) {
@@ -245,7 +246,7 @@ test('replay removes a deleted expense from store and cache', async ({ page }) =
 	await page.reload();
 	await expect(page.getByText('語意午餐', { exact: true })).toHaveCount(0);
 });
-test('closing during processing preserves uncertain recovery and discards late UI results', async ({
+test('processing locks close, Escape and outside interaction until completion', async ({
 	page
 }) => {
 	let release!: () => void;
@@ -254,15 +255,20 @@ test('closing during processing preserves uncertain recovery and discards late U
 	});
 	const s = await setup(page, async (route, body) => {
 		await wait;
-		await route.fulfill({ json: created(body!.requestId) }).catch(() => {});
+		await route.fulfill({ json: created(body!.requestId) });
 	});
 	await submit(page);
 	await expect.poll(() => s.posts.length).toBe(1);
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(
+		page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
+	).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	await page.mouse.click(2, 2);
+	await expect(page.getByRole('dialog')).toBeVisible();
 	release();
-	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
-	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-	await expect(page.getByText('關閉視窗不會取消已接受的記帳。')).toBeVisible();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 test('switching accounts discards an old response and pending input', async ({ page }) => {
 	let release!: () => void;
@@ -422,15 +428,21 @@ for (const status of [422, 429, 502]) {
 	});
 }
 for (const lifecycle of ['reload', 'navigate']) {
-	test(`pending request survives ${lifecycle} and retries its original identity`, async ({
+	test(`pending request survives ${lifecycle} with UUID only and status lookup`, async ({
 		page
 	}) => {
-		let count = 0;
 		const s = await setup(page, async (route, body) => {
-			if (++count === 1) {
+			if (body) {
 				await route.abort();
 			} else {
-				await route.fulfill({ json: created(body!.requestId) });
+				await route.fulfill({
+					json: {
+						status: 'completed',
+						requestId: route.request().url().split('/').at(-1),
+						expense: row,
+						replayed: true
+					}
+				});
 			}
 		});
 		await submit(page);
@@ -443,11 +455,12 @@ for (const lifecycle of ['reload', 'navigate']) {
 		}
 		await page.getByRole('button', { name: '文字記帳', exact: true }).click();
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-		await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+		await expect(page.getByLabel('記帳內容')).toHaveValue('');
 		await expect(page.getByLabel('記帳內容')).toBeDisabled();
-		await page.getByRole('button', { name: '重試同一請求' }).click();
+		await expect(page.getByRole('button', { name: '重試同一請求' })).toHaveCount(0);
+		await page.getByRole('button', { name: '查詢結果' }).click();
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-		expect(s.posts[1]).toEqual(s.posts[0]);
+		expect(s.posts).toHaveLength(1);
 	});
 }
 test('unavailable pending-request storage prevents submitting a new operation', async ({
@@ -500,6 +513,201 @@ test('pending recovery belongs to its account and returns when its owner signs b
 	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
 	await switchAccount(false);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-	await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	expect(s.posts).toHaveLength(1);
 });
+
+test('clarification supplements the same request and automatically writes without draft approval', async ({
+	page
+}) => {
+	const question = '這筆支出的金額是多少？';
+	const s = await setup(page, async (route, body) => {
+		expect(route.request().headers().accept).toBe('text/event-stream');
+		const result = body!.history
+			? created(body!.requestId)
+			: {
+					status: 'needs_input',
+					requestId: body!.requestId,
+					question,
+					issues: [{ field: 'amount', code: 'missing' }]
+				};
+		await route.fulfill({
+			contentType: 'text/event-stream',
+			body: `event: result\ndata: ${JSON.stringify(result)}\n\n`
+		});
+	});
+	await page.getByLabel('記帳內容').fill('午餐');
+	await submit(page);
+	await expect(page.getByText(question, { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '確認記帳' })).toHaveCount(0);
+	await page.getByLabel('補充資訊').fill('100元');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(s.posts[1]).toEqual({ ...s.posts[0], history: [{ question, answer: '100元' }] });
+	expect(s.writes()).toBe(0);
+});
+test('closing a clarification discards conversation and uses a new request ID', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) =>
+		route.fulfill({
+			json: {
+				status: 'needs_input',
+				requestId: body!.requestId,
+				question: '金額是多少？',
+				issues: [{ field: 'amount', code: 'missing' }]
+			}
+		})
+	);
+	await submit(page);
+	await expect(page.getByLabel('補充資訊')).toBeVisible();
+	await page.getByLabel('補充資訊').fill('未送出回答');
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+	await expect(page.getByLabel('補充資訊')).toHaveCount(0);
+	await page.getByLabel('記帳內容').fill('新的午餐');
+	await submit(page);
+	await expect.poll(() => s.posts.length).toBe(2);
+	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
+	expect(s.posts[1].history).toBeUndefined();
+});
+test('interrupted stream retains only UUID and retry freezes the full answered payload', async ({
+	page
+}) => {
+	let count = 0;
+	const question = '金額是多少？';
+	const s = await setup(page, async (route, body) => {
+		if (++count === 1) {
+			await route.fulfill({
+				json: {
+					status: 'needs_input',
+					requestId: body!.requestId,
+					question,
+					issues: [{ field: 'amount', code: 'missing' }]
+				}
+			});
+		} else if (count === 2) {
+			await route.fulfill({
+				contentType: 'text/event-stream',
+				body: `event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId: body!.requestId })}\n\n`
+			});
+		} else {
+			await route.fulfill({ json: created(body!.requestId) });
+		}
+	});
+	await submit(page);
+	await page.getByLabel('補充資訊').fill('100');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	const stored = await page.evaluate(
+		(id) => JSON.parse(localStorage.getItem(`jopie:semantic-pending:${id}`)!),
+		user.id
+	);
+	expect(stored).toEqual({ requestId: s.posts[1].requestId });
+	await page.getByRole('button', { name: '重試同一請求' }).click();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(s.posts[2]).toEqual(s.posts[1]);
+});
+
+test('live chunked SSE announces writing and locks the modal before returning the saved row', async ({
+	page
+}) => {
+	const { createServer } = await import('node:http');
+	let release!: () => void;
+	const wait = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const server = createServer(async (request, response) => {
+		response.setHeader('Access-Control-Allow-Origin', '*');
+		response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+		if (request.method === 'OPTIONS') {
+			response.writeHead(204);
+			response.end();
+			return;
+		}
+		let body = '';
+		for await (const chunk of request) {
+			body += chunk;
+		}
+		const { requestId } = JSON.parse(body);
+		response.writeHead(200, {
+			'Content-Type': 'text/event-stream',
+			'Cache-Control': 'no-store'
+		});
+		const frame = Buffer.from(
+			`event: persisting\r\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\r\n\r\n`
+		);
+		response.write(frame.subarray(0, frame.length - 1));
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		response.write(frame.subarray(frame.length - 1));
+		await wait;
+		const result = Buffer.from(
+			`event: result\ndata: ${JSON.stringify(created(requestId))}\n\n`
+		);
+		const offset = result.indexOf(Buffer.from('語意')) + 1;
+		response.write(result.subarray(0, offset));
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		response.end(result.subarray(offset));
+	});
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+	const address = server.address() as { port: number };
+	try {
+		await setup(page, async (route) => route.abort());
+		await page.evaluate(
+			({ endpoint, port }) => {
+				const original = window.fetch;
+				window.fetch = (input, init) => {
+					const url = new URL(input instanceof Request ? input.url : String(input));
+					return original(
+						url.origin === new URL(endpoint).origin
+							? `http://127.0.0.1:${port}${url.pathname}`
+							: input,
+						init
+					);
+				};
+			},
+			{ endpoint, port: address.port }
+		);
+		await submit(page);
+		await expect(page.getByText('正在記帳，請稍候…', { exact: true })).toBeVisible();
+		await expect(
+			page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
+		).toHaveCount(0);
+		await page.keyboard.press('Escape');
+		await expect(page.getByRole('dialog')).toBeVisible();
+		release();
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		await expect(
+			page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
+		).toBeVisible();
+	} finally {
+		release();
+		server.closeAllConnections();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
+});
+
+for (const fault of ['wrong-id', 'unknown-event', 'question-after-writing', 'explicit-error']) {
+	test(`SSE ${fault} preserves uncertain recovery without applying expense data`, async ({
+		page
+	}) => {
+		const s = await setup(page, async (route, body) => {
+			const requestId = body!.requestId;
+			const frames =
+				fault === 'wrong-id'
+					? `event: result\ndata: ${JSON.stringify(created('11111111-1111-4111-8111-111111111111'))}\n\n`
+					: fault === 'unknown-event'
+						? 'event: invented\ndata: {}\n\n'
+						: `event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\n\n` +
+							(fault === 'explicit-error'
+								? 'event: error\ndata: {"error":{"code":"service_error","uncertain":false}}\n\n'
+								: `event: result\ndata: ${JSON.stringify({ status: 'needs_input', requestId, question: '金額？', issues: [{ field: 'amount', code: 'missing' }] })}\n\n`);
+			await route.fulfill({ contentType: 'text/event-stream', body: frames });
+		});
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
+		expect(s.writes()).toBe(0);
+	});
+}

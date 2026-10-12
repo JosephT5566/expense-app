@@ -1,8 +1,13 @@
 import type { ExpenseRow } from '../../../src/lib/types/expense';
 export type { ExpenseRow };
+export interface ClarificationTurn {
+	question: string;
+	answer: string;
+}
 export interface SemanticRequest {
 	requestId: string;
 	text: string;
+	history?: ClarificationTurn[];
 }
 export interface SemanticContext {
 	today: string;
@@ -64,7 +69,8 @@ export interface CompletedResult {
 }
 export type SemanticResponse =
 	| ({ status: 'created'; requestId: string; metadata: Metadata } & CompletedResult)
-	| { status: 'rejected'; requestId: string; issues: Issue[] };
+	| { status: 'rejected'; requestId: string; issues: Issue[] }
+	| { status: 'needs_input'; requestId: string; question: string; issues: Issue[] };
 export type StatusResponse =
 	| ({ status: 'completed'; requestId: string } & CompletedResult)
 	| { status: 'not_found'; requestId: string };
@@ -121,14 +127,37 @@ function timestamp(raw: unknown): string {
 	}
 	return s;
 }
-export function parseRequest(raw: unknown): SemanticRequest {
-	const r = object(raw);
-	exactKeys(r, ['requestId', 'text']);
-	const text = string(r.text).trim();
-	if ([...text].length > 500) {
+function boundedText(raw: unknown, maximum: number): string {
+	const value = string(raw).trim();
+	if ([...value].length > maximum) {
 		throw new Error('Text too long');
 	}
-	return { requestId: requestId(r.requestId), text: text.normalize('NFC') };
+	return value.normalize('NFC');
+}
+export function parseRequest(raw: unknown): SemanticRequest {
+	const r = object(raw);
+	exactKeys(r, ['requestId', 'text'], ['history']);
+	const parsed: SemanticRequest = {
+		requestId: requestId(r.requestId),
+		text: boundedText(r.text, 500)
+	};
+	if (Object.hasOwn(r, 'history')) {
+		if (!Array.isArray(r.history) || r.history.length > 3) {
+			throw new Error('Invalid history');
+		}
+		const history = r.history.map((raw): ClarificationTurn => {
+			const turn = object(raw);
+			exactKeys(turn, ['question', 'answer']);
+			return {
+				question: boundedText(turn.question, 300),
+				answer: boundedText(turn.answer, 500)
+			};
+		});
+		if (history.length) {
+			parsed.history = history;
+		}
+	}
+	return parsed;
 }
 export function parseExpenseRow(raw: unknown): ExpenseRow {
 	const r = object(raw);
@@ -194,8 +223,13 @@ export function parseCompletedResult(raw: unknown): CompletedResult {
 export function parseResponse(raw: unknown): SemanticResponse {
 	const r = object(raw);
 	const id = requestId(r.requestId);
-	if (r.status === 'rejected') {
-		exactKeys(r, ['status', 'requestId', 'issues']);
+	if (r.status === 'rejected' || r.status === 'needs_input') {
+		exactKeys(
+			r,
+			r.status === 'needs_input'
+				? ['status', 'requestId', 'issues', 'question']
+				: ['status', 'requestId', 'issues']
+		);
 		if (!Array.isArray(r.issues) || !r.issues.length) {
 			throw new Error('Invalid issues');
 		}
@@ -208,7 +242,14 @@ export function parseResponse(raw: unknown): SemanticResponse {
 			}
 			return i as unknown as Issue;
 		});
-		return { status: 'rejected', requestId: id, issues };
+		return r.status === 'needs_input'
+			? {
+					status: 'needs_input',
+					requestId: id,
+					question: boundedText(r.question, 300),
+					issues
+				}
+			: { status: 'rejected', requestId: id, issues };
 	}
 	if (r.status !== 'created') {
 		throw new Error('Invalid status');
@@ -247,4 +288,32 @@ export function parseStatusResponse(raw: unknown): StatusResponse {
 		requestId: id,
 		...parseCompletedResult({ expense: r.expense, replayed: r.replayed })
 	};
+}
+
+export type SemanticStreamEvent =
+	| { type: 'persisting'; requestId: string }
+	| { type: 'result'; result: SemanticResponse }
+	| { type: 'error'; code: string; uncertain: boolean };
+export function parseStreamEvent(event: string, raw: unknown): SemanticStreamEvent {
+	const r = object(raw);
+	if (event === 'result') {
+		return { type: 'result', result: parseResponse(raw) };
+	}
+	if (event === 'persisting') {
+		exactKeys(r, ['status', 'requestId']);
+		if (r.status !== 'persisting') {
+			throw new Error('Invalid stream status');
+		}
+		return { type: 'persisting', requestId: requestId(r.requestId) };
+	}
+	if (event === 'error') {
+		exactKeys(r, ['error']);
+		const e = object(r.error);
+		exactKeys(e, ['code', 'uncertain']);
+		if (typeof e.uncertain !== 'boolean') {
+			throw new Error('Invalid uncertainty');
+		}
+		return { type: 'error', code: string(e.code), uncertain: e.uncertain };
+	}
+	throw new Error('Unknown stream event');
 }
