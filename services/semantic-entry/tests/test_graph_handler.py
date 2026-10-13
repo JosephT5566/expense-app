@@ -104,7 +104,11 @@ async def test_invalid_request(setup, body):
 async def test_routes_auth_cors_and_get(setup):
     deps, adapter = setup
     assert (await client_response(deps, json=REQUEST)).status_code == 401
-    assert (await client_response(deps, "GET", "/healthz")).json() == {"status": "ok"}
+    health = await client_response(deps, "GET", "/health")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    deps.extract_entry.assert_not_awaited()
+    adapter.authenticate.assert_not_awaited()
     assert (await client_response(deps, "PUT")).status_code == 405
     assert (await client_response(deps, "GET", "/unknown")).status_code == 404
     deps.allowed_origins = ("https://app.test",)

@@ -26,12 +26,12 @@ def call(path, body=None, auth=True):
 
 for _ in range(30):
     try:
-        if call("/healthz")[0] == 200:
+        if call("/health")[0] == 200:
             break
     except (URLError, OSError, HTTPException):
         pass
     time.sleep(1)
-assert call("/healthz")[0] == 200
+assert call("/health")[0] == 200
 body = {"requestId": REQUEST_ID, "text": "synthetic lunch 100"}
 assert call("/semantic-entry", body, False)[0] == 401
 assert call("/semantic-entry", {**body, "userId": "a"})[0] == 400
@@ -58,5 +58,5 @@ with urlopen(
     assert stream.index("event: persisting") < stream.index("event: result")
     assert '"status":"created"' in stream
 print(
-    "Container smoke: healthz200, missing-token401, extra-field400, mock-created200, GET not_found200, history/SSE persisting→created200"
+    "Container smoke: health200, missing-token401, extra-field400, mock-created200, GET not_found200, history/SSE persisting→created200"
 )

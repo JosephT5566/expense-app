@@ -16,7 +16,7 @@ docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
 services/semantic-entry/scripts/container-smoke.sh
 ```
 
-The smoke test injects synthetic dependencies into the real HTTP server and graph. It verifies HTTP/container wiring without a paid model call or live database access. `/healthz` never calls the model. The Python 3.12 image runs as non-root `semantic` (UID 10001), listens on `0.0.0.0:$PORT` (default 8080), and copies only allowlisted Python source and locked runtime dependencies. Root `.env` files and test fixtures are excluded.
+The smoke test injects synthetic dependencies into the real HTTP server and graph. It verifies HTTP/container wiring without a paid model call or live database access. `/health` never calls the model. The Python 3.12 image runs as non-root `semantic` (UID 10001), listens on `0.0.0.0:$PORT` (default 8080), and copies only allowlisted Python source and locked runtime dependencies. Root `.env` files and test fixtures are excluded.
 
 Start the service locally after configuring the backend environment values below:
 
@@ -44,7 +44,7 @@ Confirm project, region, budget, IAM permissions, Secret Manager access, actual 
 
 Set the frontend's public URL to the service origin, rebuild under the GitHub Pages base path, and configure the frontend origin in CORS. The backend uses the Gemini Developer API with an API key, not Vertex AI. The runtime account needs Secret Manager Secret Accessor on the Gemini key secret; it does not need Vertex AI permissions for this adapter. No member-name secret is required.
 
-The service accepts `POST /semantic-entry`, `GET /semantic-entry/:requestId`, `OPTIONS`, and `GET /healthz`. It uses one structured model call, an 800-token output cap, minimal thinking for the default model, a 15-second model deadline, and no model retries. [Gemini structured output reference](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) and [model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite).
+The service accepts `POST /semantic-entry`, `GET /semantic-entry/:requestId`, `OPTIONS`, and `GET /health`. It uses one structured model call, an 800-token output cap, minimal thinking for the default model, a 15-second model deadline, and no model retries. [Gemini structured output reference](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) and [model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite).
 
 The existing POST endpoint now supports bounded clarification history and SSE state events; no new agent endpoint or conversation table is required. See [wire and idempotency contracts](database.md#semantic-entry-service). The hosting path must forward `text/event-stream` incrementally without buffering. A `persisting` event precedes the RPC; accepted writes continue in an in-process task after response disconnection, subject to the request deadline and instance lifetime. Verify this on the hosted path, including proxy buffering, lost responses, cold starts, and instance shutdown. Only UUID recovery is stored by the browser.
 
@@ -105,6 +105,8 @@ These commands initialize a fresh stack; they are not a rerunnable migration pro
 
 ## GitHub Actions release
 
+The public health endpoint is `/health`. Avoid `/healthz`: Cloud Run reserves some URL paths ending in `z`, which can return a Google frontend 404 before reaching the container. See [Cloud Run reserved URL paths](https://docs.cloud.google.com/run/docs/known-issues#reserved-url-paths). After pushing the endpoint and workflow changes to `master`, start a new workflow run; rerunning an old run uses its original source revision.
+
 The release target is the existing **Cloud Run container service**, rather than a Functions Framework source entry point. `.github/workflows/semantic-entry-deploy.yml` is manual-only and runs only from `master`. Its separate verification job runs Python pytest/Ruff/mypy checks and a mocked container smoke before the deployment job obtains credentials. CI and local fixture evaluation do not use the model key.
 
 Configure GCP in the console after code review:
@@ -136,7 +138,7 @@ The workflow validates `SEMANTIC_MEMBER_NAMES` as a JSON object with string valu
 
 Add the environment secret `PUBLIC_SUPABASE_PUBLISHABLE_KEY` (publishable key only). The workflow writes a temporary runtime environment file, binds secret references, pushes an image tagged with the source SHA, and deploys the resolved immutable digest. The environment file and secret bindings are authoritative for this dedicated service. It uses request-based CPU allocation, zero minimum/two maximum instances, one vCPU, 512 MiB, and a 30-second request timeout. It does not set up IAM, create secret versions, or run paid evaluation. The workflow definition has been inspected locally; Google authentication, permissions, Artifact Registry push, and hosted behavior require the first authorized execution.
 
-After deployment, set repository variable `PUBLIC_SEMANTIC_ENTRY_URL` to the emitted service origin for both Pages/build workflows. Release/rebuild Pages separately. Cloud Run deployment does not rebuild the frontend. `/healthz` checks process reachability only; complete the hosted acceptance items above before claiming the expense flow works in production. Use Cloud Run revision traffic controls for an operator-directed rollback.
+After deployment, set repository variable `PUBLIC_SEMANTIC_ENTRY_URL` to the emitted service origin for both Pages/build workflows. Release/rebuild Pages separately. Cloud Run deployment does not rebuild the frontend. `/health` checks process reachability only; complete the hosted acceptance items above before claiming the expense flow works in production. Use Cloud Run revision traffic controls for an operator-directed rollback.
 
 ## Gemini model configuration
 

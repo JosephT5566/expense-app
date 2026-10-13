@@ -53,7 +53,7 @@ For deployment under a repository subpath, set `BASE_PATH` to `/expense-app` (or
 
 The original Pages/build workflows remain. `semantic-entry-check.yml` adds backend unit/type checks, synthetic fixture evaluation, container smoke tests, disposable Supabase integration, frontend checks, explicitly scoped semantic-change lint, and root/subpath Playwright tests. It uses synthetic frontend configuration and no paid model key. Whole-repository `npm run lint` has existing Prettier failures; scoped CI lint does not establish whole-repository cleanliness. Python/browser wire parity is checked separately; it is not a generated-schema drift check. New hosted CI executions remain unverified until GitHub runs them.
 
-`semantic-entry-deploy.yml` is a separate manual, `master`-only Cloud Run release workflow. It verifies the backend/container before using OIDC credentials, pushes to Artifact Registry, deploys an immutable digest, and checks `/healthz`. It does not configure IAM, apply SQL, deploy Pages, or run paid evaluations. See [deployment setup](docs/semantic-entry-deployment.md#github-actions-release).
+`semantic-entry-deploy.yml` is a separate manual, `master`-only Cloud Run release workflow. It verifies the backend/container before using OIDC credentials, pushes to Artifact Registry, deploys an immutable digest, and checks `/health`. It does not configure IAM, apply SQL, deploy Pages, or run paid evaluations. See [deployment setup](docs/semantic-entry-deployment.md#github-actions-release).
 
 ## Agent workflow
 

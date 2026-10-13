@@ -140,5 +140,5 @@ jobs:
               env:
                   SERVICE_URL: ${{ steps.deploy.outputs.url }}
               run: |
-                  curl --fail --silent --show-error --retry 5 --retry-delay 3 "$SERVICE_URL/healthz"
+                  curl --fail --silent --show-error --retry 5 --retry-delay 3 "$SERVICE_URL/health"
                   printf '\nService: %s\nRevision source: %s\n' "$SERVICE_URL" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

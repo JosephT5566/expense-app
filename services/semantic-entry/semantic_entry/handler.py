@@ -89,7 +89,8 @@ async def handle(request: Request, deps: Dependencies) -> Response:
             },
         )
     path = request.url.path
-    if path == "/healthz" and request.method == "GET":
+    # Cloud Run reserves some paths ending in "z", including /healthz.
+    if path == "/health" and request.method == "GET":
         return JSONResponse({"status": "ok"}, headers=cors)
     match = re.fullmatch(r"/semantic-entry/([^/]+)", path)
     status_id = match[1] if match else None
