@@ -136,11 +136,13 @@ def normalize_extraction(raw: Any, ctx: JSON) -> JSON:
                     m["email"]: each + (remainder if i == 0 else 0)
                     for i, m in enumerate(members)
                 }
-    category = (
-        r["categoryId"] if r["categoryId"] is not None else ctx["otherCategoryId"]
-    )
-    if not any(c["id"] == category for c in ctx["categories"]):
-        issue("categoryId", "configuration" if r["categoryId"] is None else "invalid")
+    category = r["categoryId"]
+    if not ctx["categories"]:
+        issue("categoryId", "configuration")
+    elif category is None or not trim(category):
+        issue("categoryId", "missing")
+    elif not any(c["id"] == category for c in ctx["categories"]):
+        issue("categoryId", "invalid")
     day = ctx["today"]
     if not valid_date(day):
         issue("date", "configuration")

@@ -23,7 +23,7 @@ VALID = {
         "amount": 851,
         "currency": "TWD",
         "scope": "personal",
-        "category_id": CONTEXT["otherCategoryId"],
+        "category_id": CONTEXT["categories"][0]["id"],
     },
 }
 REJECTED = {

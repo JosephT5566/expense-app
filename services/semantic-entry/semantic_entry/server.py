@@ -34,7 +34,6 @@ def environment_dependencies(client: httpx.AsyncClient) -> Dependencies:
             os.environ.get("SUPABASE_URL", ""),
             os.environ.get("SUPABASE_PUBLISHABLE_KEY", ""),
             names,
-            os.environ.get("SEMANTIC_OTHER_CATEGORY_ID", ""),
             token,
         )
 

@@ -77,16 +77,9 @@ def test_rejections(patch):
 
 
 def test_configuration_and_ambiguity():
-    assert normalize_extraction(RAW, {**CONTEXT, "otherCategoryId": "absent"})[
-        "issues"
-    ] == [{"field": "categoryId", "code": "configuration"}]
-    assert (
-        normalize_extraction(
-            {**RAW, "categoryId": CONTEXT["otherCategoryId"]},
-            {**CONTEXT, "otherCategoryId": ""},
-        )["status"]
-        == "valid"
-    )
+    assert normalize_extraction(RAW, {**CONTEXT, "categories": []})["issues"] == [
+        {"field": "categoryId", "code": "configuration"}
+    ]
     assert normalize_extraction({**RAW, "payerId": "__ambiguous__"}, CONTEXT)[
         "issues"
     ] == [{"field": "members", "code": "ambiguous_member"}]

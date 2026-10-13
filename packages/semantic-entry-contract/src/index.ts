@@ -14,7 +14,6 @@ export interface SemanticContext {
 	currentUserEmail: string;
 	members: { id: string; email: string; name: string }[];
 	categories: { id: string; name: string }[];
-	otherCategoryId: string;
 }
 export interface ModelExtraction {
 	note: string | null;

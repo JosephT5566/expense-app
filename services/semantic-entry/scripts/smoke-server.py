@@ -10,7 +10,6 @@ CONTEXT = {
     "currentUserEmail": "a@example.test",
     "members": [{"id": "a", "email": "a@example.test", "name": "Synthetic"}],
     "categories": [{"id": "other", "name": "其他"}],
-    "otherCategoryId": "other",
 }
 ROW = {
     "id": "22222222-2222-4222-8222-222222222222",
@@ -57,7 +56,7 @@ async def extract(text, context):
             "scope": None,
             "hasSharedIntent": False,
             "splitMemberIds": None,
-            "categoryId": None,
+            "categoryId": "other",
             "unsupportedReason": None,
         },
         "model": "synthetic",

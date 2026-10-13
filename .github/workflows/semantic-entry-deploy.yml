@@ -47,8 +47,7 @@ jobs:
             GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
             GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
             SEMANTIC_OPENAI_SECRET: ${{ vars.SEMANTIC_OPENAI_SECRET }}
-            SEMANTIC_MEMBER_NAMES_SECRET: ${{ vars.SEMANTIC_MEMBER_NAMES_SECRET }}
-            SEMANTIC_OTHER_CATEGORY_ID: ${{ vars.SEMANTIC_OTHER_CATEGORY_ID }}
+            SEMANTIC_MEMBER_NAMES: ${{ vars.SEMANTIC_MEMBER_NAMES }}
             SEMANTIC_ALLOWED_ORIGINS: ${{ vars.SEMANTIC_ALLOWED_ORIGINS }}
             SUPABASE_URL: ${{ vars.PUBLIC_SUPABASE_URL }}
             SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
@@ -70,12 +69,16 @@ jobs:
                     'GCP_RUNTIME_SERVICE_ACCOUNT': r'[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com',
                     'GCP_WORKLOAD_IDENTITY_PROVIDER': r'projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+',
                     'SEMANTIC_OPENAI_SECRET': r'[A-Za-z0-9_-]+:[1-9][0-9]*',
-                    'SEMANTIC_MEMBER_NAMES_SECRET': r'[A-Za-z0-9_-]+:[1-9][0-9]*',
-                    'SEMANTIC_OTHER_CATEGORY_ID': r'[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}'
                   }
                   for name, pattern in patterns.items():
                     if not re.fullmatch(pattern, os.environ[name]):
                       raise SystemExit(f'Missing or invalid configuration: {name}')
+                  try:
+                    member_names = json.loads(os.environ['SEMANTIC_MEMBER_NAMES'])
+                  except ValueError:
+                    raise SystemExit('Invalid SEMANTIC_MEMBER_NAMES JSON') from None
+                  if not isinstance(member_names, dict) or any(not isinstance(value, str) for value in member_names.values()):
+                    raise SystemExit('SEMANTIC_MEMBER_NAMES must map emails to display-name strings')
                   if os.environ['GCP_DEPLOY_SERVICE_ACCOUNT'] == os.environ['GCP_RUNTIME_SERVICE_ACCOUNT']:
                     raise SystemExit('Deploy and runtime service accounts must differ')
                   def origin(value):
@@ -86,7 +89,8 @@ jobs:
                   origins = os.environ['SEMANTIC_ALLOWED_ORIGINS'].split(',')
                   if not all(origin(value) for value in origins):
                     raise SystemExit('Configure exact HTTPS frontend origins without paths')
-                  runtime = {name: os.environ[name] for name in ['SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','SEMANTIC_OTHER_CATEGORY_ID','SEMANTIC_ALLOWED_ORIGINS']}
+                  runtime = {name: os.environ[name] for name in ['SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','SEMANTIC_ALLOWED_ORIGINS']}
+                  runtime['SEMANTIC_MEMBER_NAMES'] = json.dumps(member_names, ensure_ascii=False, separators=(',', ':'))
                   runtime.update(SEMANTIC_MODEL='gpt-5.4-mini',LANGSMITH_TRACING='false',LANGCHAIN_TRACING_V2='false')
                   Path(os.environ['RUNNER_TEMP'],'semantic-runtime.json').write_text(json.dumps(runtime))
                   image = f"{os.environ['GCP_REGION']}-docker.pkg.dev/{os.environ['GCP_PROJECT_ID']}/{os.environ['GCP_ARTIFACT_REPOSITORY']}/{os.environ['GCP_CLOUD_RUN_SERVICE']}:{os.environ['GITHUB_SHA']}"
@@ -119,7 +123,6 @@ jobs:
                   image: ${{ env.IMAGE_DIGEST }}
                   secrets: |
                       OPENAI_API_KEY=${{ vars.SEMANTIC_OPENAI_SECRET }}
-                      SEMANTIC_MEMBER_NAMES=${{ vars.SEMANTIC_MEMBER_NAMES_SECRET }}
                   secrets_update_strategy: overwrite
                   flags: >-
                       --env-vars-file=${{ runner.temp }}/semantic-runtime.json

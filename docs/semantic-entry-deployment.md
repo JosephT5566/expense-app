@@ -1,6 +1,6 @@
 # Semantic entry service deployment
 
-The service is implemented locally; hosted acceptance remains unverified. On 2026-10-13 the existing public schema and semantic objects were reviewed, migration history was adopted, and the tested citext trigger fix was applied to the user-designated Supabase project. See [scoped database evidence](evidence/semantic-entry/2026-10-13-database-baseline.md). Production metadata inspection and localhost transaction tests do not establish real-user hosted behavior. The service adapts JSONB metadata to the existing string wire contract and validates whole-TWD amounts against the actual numeric column capacity. Hosted acceptance and fallback-category configuration still need verification. Do not apply `supabase/fixtures/` to production.
+The service is implemented locally; hosted acceptance remains unverified. On 2026-10-13 the existing public schema and semantic objects were reviewed, migration history was adopted, and the tested citext trigger fix was applied to the user-designated Supabase project. See [scoped database evidence](evidence/semantic-entry/2026-10-13-database-baseline.md). Production metadata inspection and localhost transaction tests do not establish real-user hosted behavior. The service adapts JSONB metadata to the existing string wire contract and validates whole-TWD amounts against the actual numeric column capacity. Hosted acceptance remains unverified. Missing or unresolved categories require clarification before writing. Do not apply `supabase/fixtures/` to production.
 
 ## Local container
 
@@ -26,22 +26,21 @@ uv run --directory services/semantic-entry --locked python -m semantic_entry.ser
 
 ## Configuration
 
-| Variable                     | Value                                                                        |
-| ---------------------------- | ---------------------------------------------------------------------------- |
-| `SUPABASE_URL`               | Existing Supabase project HTTPS origin                                       |
-| `SUPABASE_PUBLISHABLE_KEY`   | Publishable key; never a service-role key                                    |
-| `OPENAI_API_KEY`             | Secret Manager secret exposed only to the backend                            |
-| `SEMANTIC_MODEL`             | `gpt-5.4-mini` by default                                                    |
-| `SEMANTIC_MEMBER_NAMES`      | JSON object of allowed email to display name; e.g. `{"a@example.test":"甲"}` |
-| `SEMANTIC_OTHER_CATEGORY_ID` | Existing expense category UUID for 其他                                      |
-| `SEMANTIC_ALLOWED_ORIGINS`   | Comma-separated exact frontend origins, without paths/trailing slash         |
-| `PUBLIC_SEMANTIC_ENTRY_URL`  | Frontend build value: Cloud Run origin; client appends `/semantic-entry`     |
+| Variable                    | Value                                                                        |
+| --------------------------- | ---------------------------------------------------------------------------- |
+| `SUPABASE_URL`              | Existing Supabase project HTTPS origin                                       |
+| `SUPABASE_PUBLISHABLE_KEY`  | Publishable key; never a service-role key                                    |
+| `OPENAI_API_KEY`            | Secret Manager secret exposed only to the backend                            |
+| `SEMANTIC_MODEL`            | `gpt-5.4-mini` by default                                                    |
+| `SEMANTIC_MEMBER_NAMES`     | JSON object of allowed email to display name; e.g. `{"a@example.test":"甲"}` |
+| `SEMANTIC_ALLOWED_ORIGINS`  | Comma-separated exact frontend origins, without paths/trailing slash         |
+| `PUBLIC_SEMANTIC_ENTRY_URL` | Frontend build value: Cloud Run origin; client appends `/semantic-entry`     |
 
 The runtime validates Supabase JWTs through HTTPS `/auth/v1/user`, checks the settings allowlist, and sends the same caller JWT to HTTPS Data API/RPC. Cloud Run does not need a PostgreSQL password, direct DB connection, connection pool, or service-role credential. Public Cloud Run ingress and CORS are not authorization. Disable external LangSmith tracing; the server forcibly disables tracing environment flags and emits only sanitized events.
 
 ## Hosted setup (operator action, not performed)
 
-Confirm project, region, budget, IAM permissions, Secret Manager access, actual schema/RLS compatibility, and fallback category before deployment. Build/push the image to the chosen Artifact Registry repository. Deploy with request-based CPU billing, minimum zero instances, maximum two, one vCPU, 512 MiB memory, and a 30-second request timeout. Limit the runtime service account's secret access to the required secret only; do not grant project-wide secret access or database administration. Configure secrets with Secret Manager bindings, not plaintext committed environment files. Pin versions when releasing.
+Confirm project, region, budget, IAM permissions, Secret Manager access, actual schema/RLS compatibility, and available expense categories before deployment. Build/push the image to the chosen Artifact Registry repository. Deploy with request-based CPU billing, minimum zero instances, maximum two, one vCPU, 512 MiB memory, and a 30-second request timeout. Limit the runtime service account's secret access to the required secret only; do not grant project-wide secret access or database administration. Configure secrets with Secret Manager bindings, not plaintext committed environment files. Pin versions when releasing.
 
 Set the frontend's public URL to the service origin, rebuild under the GitHub Pages base path, and configure the frontend origin in CORS. The service accepts `POST /semantic-entry`, `GET /semantic-entry/:requestId`, `OPTIONS`, and `GET /healthz`. It uses one structured model call, an 800-token output cap, reasoning effort `none`, a 15-second model deadline, and no model retries. [Structured output reference](https://developers.openai.com/api/docs/guides/structured-outputs) and [model reference](https://developers.openai.com/api/docs/models/gpt-5.4-mini).
 
@@ -109,9 +108,9 @@ The release target is the existing **Cloud Run container service**, rather than 
 Configure GCP in the console after code review:
 
 1. Select project/region and enable Cloud Run, Artifact Registry, Secret Manager, IAM, IAM Credentials, and Security Token Service APIs. Create a Docker Artifact Registry repository in the chosen region; set a budget/alerts.
-2. Create separate deployer and runtime service accounts. Give the deployer Artifact Registry Writer on that repository, Cloud Run Developer for the intended service (project scope is needed for initial creation), and Service Account User only on the runtime account. The deployer does not need to read the model secret or administer the database. Give the runtime Secret Manager Secret Accessor only on the model-key and member-name secrets.
+2. Create separate deployer and runtime service accounts. Give the deployer Artifact Registry Writer on that repository, Cloud Run Developer for the intended service (project scope is needed for initial creation), and Service Account User only on the runtime account. The deployer does not need to read the model secret or administer the database. Give the runtime Secret Manager Secret Accessor only on the model-key secret. Member display names are ordinary runtime configuration, provided by the GitHub environment variable `SEMANTIC_MEMBER_NAMES`.
 3. Create a GitHub OIDC Workload Identity pool/provider. Restrict its attribute condition to your repository/owner IDs and `refs/heads/master`; grant the matching principal Workload Identity User only on the deployer account. Do not upload a service-account JSON key to GitHub. Follow [Google's authentication action setup](https://github.com/google-github-actions/auth#setting-up-workload-identity-federation).
-4. Create Secret Manager versions for the OpenAI key and `SEMANTIC_MEMBER_NAMES` JSON mapping. Record numeric versions, not `latest`. Verify the actual expense schema/RLS, install only the reviewed production-compatible migration, and confirm the fallback category UUID before releasing. This workflow never applies SQL.
+4. Create a Secret Manager version for the OpenAI key. Record numeric versions, not `latest`. Verify the actual expense schema/RLS, install only the reviewed production-compatible migration, and confirm the caller can read existing expense categories before releasing. This workflow never applies SQL.
 5. Configure public browser access for the Cloud Run service in the console. Supabase bearer JWT authentication remains enforced inside the application. The deployer does not change IAM/public invocation policy. If the first deployment creates a private service, its unauthenticated health check fails after deployment; configure public invocation and rerun. The failed health step does not roll back the deployed revision. See [public access configuration](https://docs.cloud.google.com/run/docs/authenticating/public) and [required deployment roles](https://docs.cloud.google.com/run/docs/deploying).
 
 Create the GitHub environment `semantic-entry-production`, restrict it to `master`, and configure required reviewers if desired. Add these environment variables:
@@ -126,10 +125,11 @@ Create the GitHub environment `semantic-entry-production`, restrict it to `maste
 | `GCP_RUNTIME_SERVICE_ACCOUNT`    | Separate runtime service account email                                                           |
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` name |
 | `SEMANTIC_OPENAI_SECRET`         | Secret name plus numeric version, e.g. `semantic-openai-key:1`                                   |
-| `SEMANTIC_MEMBER_NAMES_SECRET`   | Secret name plus numeric version, e.g. `semantic-member-names:1`                                 |
-| `SEMANTIC_OTHER_CATEGORY_ID`     | Verified existing expense category UUID                                                          |
+| `SEMANTIC_MEMBER_NAMES`          | JSON email-to-display-name mapping, e.g. `{"a@example.test":"甲"}`                               |
 | `SEMANTIC_ALLOWED_ORIGINS`       | Exact HTTPS frontend origins, comma-separated without whitespace, path, or trailing slash        |
 | `PUBLIC_SUPABASE_URL`            | Existing Supabase project HTTPS origin                                                           |
+
+The workflow validates `SEMANTIC_MEMBER_NAMES` as a JSON object with string values, then injects it into the Cloud Run runtime through `--env-vars-file`; it is not baked into the container image. Updating the GitHub variable takes effect on the next deployment. This mapping is ordinary configuration visible to users with access to those settings; it is not a Secret Manager binding. No `semantic-member-names` secret is required. The mapping does not grant database authorization, which remains controlled by Supabase.
 
 Add the environment secret `PUBLIC_SUPABASE_PUBLISHABLE_KEY` (publishable key only). The workflow writes a temporary runtime environment file, binds secret references, pushes an image tagged with the source SHA, and deploys the resolved immutable digest. The environment file and secret bindings are authoritative for this dedicated service. It uses request-based CPU allocation, zero minimum/two maximum instances, one vCPU, 512 MiB, and a 30-second request timeout. It does not set up IAM, create secret versions, or run paid evaluation. The workflow definition has been inspected locally; Google authentication, permissions, Artifact Registry push, and hosted behavior require the first authorized execution.
 

@@ -15,7 +15,6 @@ CONTEXT = {
         {"id": "b", "email": "b@example.test", "name": "乙"},
     ],
     "categories": [{"id": "11111111-1111-4111-8111-111111111111", "name": "其他"}],
-    "otherCategoryId": "11111111-1111-4111-8111-111111111111",
 }
 RAW = {
     "note": "午餐",
@@ -26,7 +25,7 @@ RAW = {
     "scope": None,
     "hasSharedIntent": False,
     "splitMemberIds": None,
-    "categoryId": None,
+    "categoryId": CONTEXT["categories"][0]["id"],
     "unsupportedReason": None,
 }
 ROW = {
@@ -38,7 +37,7 @@ ROW = {
     "payer_email": "a@example.test",
     "scope": "personal",
     "shares_json": {"a@example.test": 851},
-    "category_id": CONTEXT["otherCategoryId"],
+    "category_id": CONTEXT["categories"][0]["id"],
     "is_settled": True,
     "meta": "",
     "created_at": "2026-03-01T00:00:00Z",

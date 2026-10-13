@@ -27,14 +27,12 @@ class SupabaseAdapter:
         url: str,
         publishable_key: str,
         member_names: dict[str, str],
-        other_category_id: str,
         token: str,
     ):
         self.client = client
         self.url = url.rstrip("/")
         self.headers = {"apikey": publishable_key, "Authorization": f"Bearer {token}"}
         self.member_names = member_names
-        self.other_category_id = other_category_id
         self.verified: JSON | None = None
 
     async def call(
@@ -128,7 +126,6 @@ class SupabaseAdapter:
                 for i, e in enumerate(emails)
             ],
             "categories": categories,
-            "otherCategoryId": self.other_category_id,
         }
 
     async def lookup_completed(

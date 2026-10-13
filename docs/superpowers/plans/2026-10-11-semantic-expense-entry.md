@@ -181,3 +181,7 @@ expect(() => parseRequest({ requestId: 'bad', text: '午餐100' })).toThrow();
 建議 Native execution：五個任務共享contract與RPC semantics，單一實作者降低交接成本；最後整體review。使用者也可選Subagent-driven。以上為原始執行交接說明；本次實作已完成並提交本機 commits。後續 push／merge、正式 SQL 變更及部署仍需各自授權，目前進度以文件頂部的 development handoff 為準。
 
 Self-review：全部預設值對應Task1；transaction／hash／user isolation／quota／tombstone對應Task2；graph／JWT／logging／container對應Task3；無人工介入與timeout/account handling對應Task4；evidence／門檻／CI對應Task5。五項Review Focus都有指定tests；已移除舊草稿確認與Edge Function方案。
+
+## 2026-10-13 分類規則更新
+
+依最新需求，不再使用 fallback category。Model 未能可靠判定既有 expense category 時回傳 null，service 回詢、不寫入；有效既有分類確認後才進入 persisting／RPC。未知或空白分類同樣回詢，最多三輪回答仍未解決則拒絕。移除 `SEMANTIC_OTHER_CATEGORY_ID` 與 context 的 `otherCategoryId`，無新增 migration。這段更新取代前述預設其他分類的設計。

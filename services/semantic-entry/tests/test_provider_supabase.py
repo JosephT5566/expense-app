@@ -156,7 +156,6 @@ async def test_adapter_caller_and_owner_filters():
             "https://synthetic.test",
             "synthetic-public",
             {"a@example.test": "甲"},
-            "other",
             "synthetic-caller",
         )
         user = await adapter.authenticate()
@@ -188,7 +187,7 @@ async def test_persist_error_mapping(status, data, expected, uncertain):
         transport=httpx.MockTransport(lambda r: httpx.Response(status, json=data))
     ) as client:
         adapter = SupabaseAdapter(
-            client, "https://synthetic.test", "synthetic-public", {}, "other", "t"
+            client, "https://synthetic.test", "synthetic-public", {}, "t"
         )
         with pytest.raises(SemanticError) as exc:
             await adapter.persist_expense(REQUEST_ID, "a" * 64, {})
@@ -201,7 +200,7 @@ async def test_adapter_transport_error_is_uncertain():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
         adapter = SupabaseAdapter(
-            client, "https://synthetic.test", "synthetic-public", {}, "other", "t"
+            client, "https://synthetic.test", "synthetic-public", {}, "t"
         )
         with pytest.raises(SemanticError) as exc:
             await adapter.persist_expense(REQUEST_ID, "a" * 64, {})
@@ -219,7 +218,7 @@ async def test_adapter_forbidden_member():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
         adapter = SupabaseAdapter(
-            client, "https://synthetic.test", "synthetic-public", {}, "other", "t"
+            client, "https://synthetic.test", "synthetic-public", {}, "t"
         )
         adapter.verified = {"id": "a", "email": "a@example.test"}
         with pytest.raises(SemanticError) as exc:
@@ -265,7 +264,7 @@ async def test_database_jsonb_metadata_on_create_and_recovery(meta):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
         adapter = SupabaseAdapter(
-            client, "https://synthetic.test", "synthetic-public", {}, "other", "t"
+            client, "https://synthetic.test", "synthetic-public", {}, "t"
         )
         adapter.verified = {"id": "a", "email": "a@example.test"}
         created = await adapter.persist_expense(REQUEST_ID, "a" * 64, {})

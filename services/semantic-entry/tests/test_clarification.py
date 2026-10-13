@@ -67,7 +67,7 @@ async def test_follow_up_limit_and_configuration_are_terminal(setup):
     assert (await invoke({**REQUEST, "history": HISTORY * 3}, "t", deps))[
         "status"
     ] == "rejected"
-    adapter.load_context.return_value = {**CONTEXT, "otherCategoryId": "absent"}
+    adapter.load_context.return_value = {**CONTEXT, "categories": []}
     assert (await invoke(REQUEST, "t", deps))["status"] == "rejected"
     adapter.persist_expense.assert_not_awaited()
 
@@ -222,3 +222,28 @@ async def test_conversation_never_reaches_structured_logs(setup):
     for event in logs:
         assert set(event) == {"requestId", "node", "status", "elapsedMs"}
         assert "851 元" not in str(event) and "private-token" not in str(event)
+
+
+@pytest.mark.parametrize("category", [None, "", "unknown"])
+async def test_unknown_category_requires_answer_before_write(setup, category):
+    deps, adapter = setup
+    deps.extract_entry.return_value["raw"] = {**RAW, "categoryId": category}
+    first = await invoke(REQUEST, "t", deps)
+    assert first["status"] == "needs_input"
+    assert first["issues"][0]["field"] == "categoryId"
+    assert "分類" in first["question"]
+    adapter.persist_expense.assert_not_awaited()
+    deps.extract_entry.return_value["raw"] = RAW
+    answer = {**REQUEST, "history": [{"question": first["question"], "answer": "其他"}]}
+    result = await invoke(answer, "t", deps)
+    assert result["status"] == "created"
+    assert adapter.persist_expense.call_args.args[2]["category_id"] == RAW["categoryId"]
+
+
+async def test_category_still_missing_after_limit_never_writes(setup):
+    deps, adapter = setup
+    deps.extract_entry.return_value["raw"] = {**RAW, "categoryId": None}
+    result = await invoke({**REQUEST, "history": HISTORY * 3}, "t", deps)
+    assert result["status"] == "rejected"
+    assert result["issues"] == [{"field": "categoryId", "code": "missing"}]
+    adapter.persist_expense.assert_not_awaited()

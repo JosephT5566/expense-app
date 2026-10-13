@@ -163,3 +163,24 @@ Service 完成寫入後，前端更新既有 expense store／cache，不再透�
 ## 13. Service 與實際 schema 對齊
 
 Supabase adapter 在建立結果與 ledger 查詢復原時，將 JSONB `meta` 轉成 compact JSON 字串，保留前端既有 contract；既有字串原樣保留。解析驗證限制台幣整數金額為 1 到 9,999,999,999 元，超過上限會回詢並且不進入 RPC。此階段沒有新增 migration 或正式資料庫操作。Backend unit tests、Ruff 與 mypy 的最新結果見 [相容性驗證](2026-10-13-service-schema-compatibility.md)。
+
+## 14. 成員名稱改由 GitHub environment 設定
+
+部署 workflow 改讀 `semantic-entry-production` 的 `SEMANTIC_MEMBER_NAMES` variable，驗證 email-to-name JSON object 後，透過 runtime env file 注入 Cloud Run。Mapping 不再需要 Secret Manager secret，也不會寫入 image；修改 variable 後需要重新部署才會生效。模型 API key 仍使用 Secret Manager。此變更沒有執行 hosted deployment，Gemini provider 尚未實作。
+
+本次 repository verification：workflow YAML、內嵌 Bash／Python syntax 通過；使用 synthetic mapping 驗證中文、引號、逗號與換行經 JSON env file 完整保留，空 object 合法，無效 JSON／array／null／非字串 value 被拒絕。Prettier 與 `git diff --check` 通過。Backend／frontend／container 未改動，未重跑其測試；Cloud Run secret-to-env 切換仍待 hosted 驗收。
+
+## 15. 分類未確認時回詢，不使用預設分類
+
+分類缺失、空白或不屬於既有 expense categories 時，service 會回詢並阻止寫入。使用者補充後解析出有效既有分類，才進入原本的自動寫入流程。沿用最多三輪回答，仍未解決則拒絕並不寫入；category list 為空則屬於設定錯誤。Prompt 明確禁止自動選其他／預設分類，版本改為 `semantic-entry-v3`。移除 context fallback 與部署設定 `SEMANTIC_OTHER_CATEGORY_ID`，不需要 database migration。先前章節提及 fallback 的內容為歷史紀錄。
+
+本次 repository verification：
+
+- `uv run --directory services/semantic-entry --locked pytest`：120 passed，包含分類缺失／空白／未知時零寫入、回答後有效分類才寫入、三輪後仍缺分類拒絕；fixture evaluation 仍為 40 cases、120 observations、0 paid calls，依新分類規則更新 authored outputs。
+- `uv run --directory services/semantic-entry --locked ruff check .`、`ruff format .` 與 `mypy`：通過。使用既有 `/tmp/jopie-uv-cache`、`/tmp/jopie-uv-python`。
+- `npm run check`：0 errors、6 existing warnings。`npm run lint`：123 個 Prettier 格式問題中包含本次 fixture，已格式化修正；其餘 122 項為既有問題，whole-repository lint 未通過。Changed-file Prettier 與 contract ESLint 通過。
+- Docker build 與 `services/semantic-entry/scripts/container-smoke.sh`：通過；model／database 為 synthetic dependencies。
+- `PLAYWRIGHT_BROWSERS_PATH=/tmp/jopie-playwright PUBLIC_SEMANTIC_ENTRY_URL=https://semantic.example.test npm run test:e2e -- e2e/semantic-entry.test.ts`：26 passed。第一次未指定本機 browser path，因預設 browser executable 缺失導致 26 tests 無法啟動，使用既有 browser 安裝後重跑成功。
+- Workflow YAML／Bash／Python syntax、synthetic runtime config（不設定 fallback）、Markdown local links、`git diff --check`：通過。
+
+沒有修改 SQL，未重跑 SQL integration；沒有 routing 變更，未重跑 subpath E2E。Mocked tests 不驗證 production RLS 或模型分類品質。本次未部署、未執行 production expense transaction，也未修改 Gemini provider。
