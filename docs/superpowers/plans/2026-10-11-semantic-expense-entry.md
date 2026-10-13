@@ -185,3 +185,7 @@ Self-review：全部預設值對應Task1；transaction／hash／user isolation�
 ## 2026-10-13 分類規則更新
 
 依最新需求，不再使用 fallback category。Model 未能可靠判定既有 expense category 時回傳 null，service 回詢、不寫入；有效既有分類確認後才進入 persisting／RPC。未知或空白分類同樣回詢，最多三輪回答仍未解決則拒絕。移除 `SEMANTIC_OTHER_CATEGORY_ID` 與 context 的 `otherCategoryId`，無新增 migration。這段更新取代前述預設其他分類的設計。
+
+## 2026-10-13 Gemini provider 更新
+
+LLM 改為 Gemini Developer API generateContent，預設 gemini-3.5-flash-lite，模型由 SEMANTIC_MODEL 設定；部署使用 SEMANTIC_GEMINI_SECRET 綁定 GEMINI_API_KEY。舊 OpenAI 設定為歷史設計。本次保留服務回詢、SSE、JWT、quota 與 idempotent RPC；驗證使用 mocks／fixtures，不呼叫付費模型。

@@ -59,7 +59,7 @@ POST clients requesting `Accept: text/event-stream` receive SSE `persisting` (`{
 
 An in-flight service task is retained once the RPC starts, so closing the response stream does not cancel that task within its deadline. Before persistence, disconnection can cancel extraction. Process termination, deadline expiry, or database connection loss still require status recovery; this is not durable background execution or a guarantee of write completion. The frontend blocks ordinary modal closing from submission until a definite response or uncertain error. Page exit cannot guarantee cancellation.
 
-Created responses include metadata with token counts or null. Replay metadata describes the current handling and uses null token counts; original usage is not recoverable from snapshots. The UI refreshes current database rows when replaying rather than restoring old snapshot content.
+The service extracts through the Gemini Developer API (one structured generateContent call per round, no provider retry), then independently validates before any RPC. Created responses include metadata with token counts or null; Gemini output counts include reported candidate and thinking tokens. Replay metadata describes the current handling and uses null token counts; original usage is not recoverable from snapshots. The UI refreshes current database rows when replaying rather than restoring old snapshot content.
 
 ### Actual schema compatibility
 

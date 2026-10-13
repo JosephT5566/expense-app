@@ -17,6 +17,7 @@ from typing import Any
 from .contracts import JSON
 from .normalize import normalize_extraction
 from .prompt import PROMPT_VERSION
+from .provider import DEFAULT_MODEL
 
 COMMON = ("note", "amount", "currency", "scope", "category_id")
 DERIVED = ("ts", "payer_email", "shares_json", "is_settled")
@@ -254,15 +255,15 @@ async def main() -> None:
 
         from .provider import Provider
 
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise ValueError("Live evaluation requires OPENAI_API_KEY")
+        if not os.environ.get("GEMINI_API_KEY"):
+            raise ValueError("Live evaluation requires GEMINI_API_KEY")
         async with httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(retries=0)
         ) as client:
             provider = Provider(
                 client,
-                os.environ["OPENAI_API_KEY"],
-                os.environ.get("SEMANTIC_MODEL", "gpt-5.4-mini"),
+                os.environ["GEMINI_API_KEY"],
+                os.environ.get("SEMANTIC_MODEL", DEFAULT_MODEL),
             )
             result = await run_evaluation(
                 args.mode, args.runs, args.max_calls, cases, provider
@@ -288,7 +289,7 @@ async def main() -> None:
             for p in ("httpx", "langgraph", "starlette", "uvicorn")
         },
         "promptVersion": PROMPT_VERSION,
-        "model": os.environ.get("SEMANTIC_MODEL", "gpt-5.4-mini")
+        "model": os.environ.get("SEMANTIC_MODEL", DEFAULT_MODEL)
         if args.mode == "live"
         else "fixture",
         "paidCalls": result["paidCalls"],

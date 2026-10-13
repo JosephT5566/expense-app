@@ -4,26 +4,26 @@ JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. 
 
 ## Source map
 
-| Location                            | Responsibility                                                                                 |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `src/routes/`                       | File-based pages and shared layout                                                             |
-| `src/lib/components/`               | Expense list, editor, scheduled cards, and receipt dialog                                      |
-| `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                                  |
-| `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                                     |
-| `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                                             |
-| `src/lib/data/`                     | Supabase fetchers, receipt API client, cache-first retrieval                                   |
-| `src/lib/stores/`                   | Session, expenses, schedules, categories, filters, settings, theme                             |
-| `src/lib/cache/`                    | Memory and IndexedDB persistence for monthly and pending scheduled expenses                    |
-| `src/lib/types/`                    | Expense, schedule, receipt API, user, category, settings contracts                             |
-| `src/lib/supabase/`                 | Supabase client and Google OAuth/session helpers                                               |
-| `src/lib/utils/`                    | Taiwan dates/months, cache keys, loading, logging, icons, device detection                     |
-| `src/app.css`, `src/lib/theme.css`  | Global styles and themes                                                                       |
-| `static/`                           | Icons, favicon, robots file                                                                    |
-| `services/semantic-entry/`          | Python ASGI/LangGraph service, HTTPX provider/RPC, normalizer, tests, and synthetic evaluation |
-| `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                                          |
-| `supabase/`                         | Captured public baseline, semantic migrations, and explicitly disposable fixtures              |
-| `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release                               |
-| `e2e/`                              | Playwright tests                                                                               |
+| Location                            | Responsibility                                                                                        |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `src/routes/`                       | File-based pages and shared layout                                                                    |
+| `src/lib/components/`               | Expense list, editor, scheduled cards, and receipt dialog                                             |
+| `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                                         |
+| `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                                            |
+| `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                                                    |
+| `src/lib/data/`                     | Supabase fetchers, receipt API client, cache-first retrieval                                          |
+| `src/lib/stores/`                   | Session, expenses, schedules, categories, filters, settings, theme                                    |
+| `src/lib/cache/`                    | Memory and IndexedDB persistence for monthly and pending scheduled expenses                           |
+| `src/lib/types/`                    | Expense, schedule, receipt API, user, category, settings contracts                                    |
+| `src/lib/supabase/`                 | Supabase client and Google OAuth/session helpers                                                      |
+| `src/lib/utils/`                    | Taiwan dates/months, cache keys, loading, logging, icons, device detection                            |
+| `src/app.css`, `src/lib/theme.css`  | Global styles and themes                                                                              |
+| `static/`                           | Icons, favicon, robots file                                                                           |
+| `services/semantic-entry/`          | Python ASGI/LangGraph service, HTTPX Gemini provider/RPC, normalizer, tests, and synthetic evaluation |
+| `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                                                 |
+| `supabase/`                         | Captured public baseline, semantic migrations, and explicitly disposable fixtures                     |
+| `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release                                      |
+| `e2e/`                              | Playwright tests                                                                                      |
 
 ## Routes
 

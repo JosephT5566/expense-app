@@ -46,7 +46,8 @@ jobs:
             GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
             GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
             GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-            SEMANTIC_OPENAI_SECRET: ${{ vars.SEMANTIC_OPENAI_SECRET }}
+            SEMANTIC_GEMINI_SECRET: ${{ vars.SEMANTIC_GEMINI_SECRET }}
+            SEMANTIC_MODEL: ${{ vars.SEMANTIC_MODEL || 'gemini-3.5-flash-lite' }}
             SEMANTIC_MEMBER_NAMES: ${{ vars.SEMANTIC_MEMBER_NAMES }}
             SEMANTIC_ALLOWED_ORIGINS: ${{ vars.SEMANTIC_ALLOWED_ORIGINS }}
             SUPABASE_URL: ${{ vars.PUBLIC_SUPABASE_URL }}
@@ -68,7 +69,8 @@ jobs:
                     'GCP_DEPLOY_SERVICE_ACCOUNT': r'[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com',
                     'GCP_RUNTIME_SERVICE_ACCOUNT': r'[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com',
                     'GCP_WORKLOAD_IDENTITY_PROVIDER': r'projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+',
-                    'SEMANTIC_OPENAI_SECRET': r'[A-Za-z0-9_-]+:[1-9][0-9]*',
+                    'SEMANTIC_MODEL': r'gemini-(?:2\.5-flash(?:-lite)?|3\.5-flash-lite|3\.6-flash|3\.8-flash)',
+                    'SEMANTIC_GEMINI_SECRET': r'[A-Za-z0-9_-]+:[1-9][0-9]*',
                   }
                   for name, pattern in patterns.items():
                     if not re.fullmatch(pattern, os.environ[name]):
@@ -91,7 +93,7 @@ jobs:
                     raise SystemExit('Configure exact HTTPS frontend origins without paths')
                   runtime = {name: os.environ[name] for name in ['SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','SEMANTIC_ALLOWED_ORIGINS']}
                   runtime['SEMANTIC_MEMBER_NAMES'] = json.dumps(member_names, ensure_ascii=False, separators=(',', ':'))
-                  runtime.update(SEMANTIC_MODEL='gpt-5.4-mini',LANGSMITH_TRACING='false',LANGCHAIN_TRACING_V2='false')
+                  runtime.update(SEMANTIC_MODEL=os.environ['SEMANTIC_MODEL'],LANGSMITH_TRACING='false',LANGCHAIN_TRACING_V2='false')
                   Path(os.environ['RUNNER_TEMP'],'semantic-runtime.json').write_text(json.dumps(runtime))
                   image = f"{os.environ['GCP_REGION']}-docker.pkg.dev/{os.environ['GCP_PROJECT_ID']}/{os.environ['GCP_ARTIFACT_REPOSITORY']}/{os.environ['GCP_CLOUD_RUN_SERVICE']}:{os.environ['GITHUB_SHA']}"
                   with open(os.environ['GITHUB_ENV'],'a') as output:
@@ -122,7 +124,7 @@ jobs:
                   service: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
                   image: ${{ env.IMAGE_DIGEST }}
                   secrets: |
-                      OPENAI_API_KEY=${{ vars.SEMANTIC_OPENAI_SECRET }}
+                      GEMINI_API_KEY=${{ vars.SEMANTIC_GEMINI_SECRET }}
                   secrets_update_strategy: overwrite
                   flags: >-
                       --env-vars-file=${{ runner.temp }}/semantic-runtime.json

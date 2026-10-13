@@ -10,13 +10,9 @@ from semantic_entry.provider import Provider
 from semantic_entry.supabase import SupabaseAdapter
 
 COMPLETED = {
-    "status": "completed",
-    "output": [
-        {
-            "type": "message",
-            "content": [{"type": "output_text", "text": json.dumps(RAW)}],
-        }
-    ],
+    "candidates": [
+        {"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(RAW)}]}}
+    ]
 }
 
 
@@ -31,12 +27,17 @@ async def test_structured_provider():
         result = await Provider(client, "synthetic")("午餐851", CONTEXT)
     assert len(calls) == 1
     body = json.loads(calls[0].content)
-    assert body["max_output_tokens"] == 800 and body["reasoning"] == {"effort": "none"}
-    assert body["store"] is False and "tools" not in body
-    assert (
-        body["text"]["format"]["strict"]
-        and not body["text"]["format"]["schema"]["additionalProperties"]
-    )
+    assert calls[0].url.host == "generativelanguage.googleapis.com"
+    assert calls[0].headers["x-goog-api-key"] == "synthetic"
+    assert not calls[0].url.query and "authorization" not in calls[0].headers
+    config = body["generationConfig"]
+    assert config["maxOutputTokens"] == 800 and config["candidateCount"] == 1
+    assert config["thinkingConfig"] == {"thinkingLevel": "MINIMAL"}
+    assert "tools" not in body and "cachedContent" not in body
+    assert config["responseFormat"]["text"]["mimeType"] == "application/json"
+    assert not config["responseFormat"]["text"]["schema"]["additionalProperties"]
+    assert body["contents"] == [{"role": "user", "parts": [{"text": "午餐851"}]}]
+    assert "未信任" in body["systemInstruction"]["parts"][0]["text"]
     assert (
         result["raw"] == RAW
         and result["inputTokens"] is None
@@ -47,26 +48,42 @@ async def test_structured_provider():
 @pytest.mark.parametrize(
     "payload,code",
     [
-        ({"status": "incomplete", "output": []}, "provider_invalid"),
-        (
-            {"status": "completed", "output": [{"content": [{"type": "refusal"}]}]},
-            "provider_refusal",
-        ),
+        ({"candidates": []}, "provider_invalid"),
+        ({"promptFeedback": {"blockReason": "SAFETY"}}, "provider_refusal"),
+        ({"candidates": [{"finishReason": "SAFETY"}]}, "provider_refusal"),
+        ({"candidates": [{"finishReason": "MAX_TOKENS"}]}, "provider_invalid"),
         (
             {
-                "status": "completed",
-                "output": [{"content": [{"type": "output_text", "text": "not json"}]}],
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"text": "not json"}]},
+                    }
+                ]
             },
             "provider_invalid",
         ),
         (
             {
-                "status": "completed",
-                "output": [{"content": [{"type": "output_text", "text": "{}"}]}],
+                "candidates": [
+                    {"finishReason": "STOP", "content": {"parts": [{"text": "{}"}]}}
+                ]
             },
             "provider_invalid",
         ),
         ([], "provider_invalid"),
+        ({"candidates": COMPLETED["candidates"] * 2}, "provider_invalid"),
+        (
+            {
+                "candidates": [
+                    {
+                        "finishReason": "STOP",
+                        "content": {"parts": [{"functionCall": {}}]},
+                    }
+                ]
+            },
+            "provider_invalid",
+        ),
     ],
 )
 async def test_provider_invalid_no_retry(payload, code):
@@ -105,14 +122,14 @@ async def test_provider_timeout():
     "usage",
     [
         {},
-        {"input_tokens": True, "output_tokens": -1},
-        {"input_tokens": 1.5, "output_tokens": "2"},
+        {"promptTokenCount": True, "candidatesTokenCount": -1},
+        {"promptTokenCount": 1.5, "candidatesTokenCount": "2"},
     ],
 )
 async def test_unknown_usage_stays_null(usage):
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
-            lambda r: httpx.Response(200, json={**COMPLETED, "usage": usage})
+            lambda r: httpx.Response(200, json={**COMPLETED, "usageMetadata": usage})
         )
     ) as client:
         result = await Provider(client, "synthetic")("test", CONTEXT)
@@ -230,8 +247,9 @@ async def test_adapter_forbidden_member():
 async def test_non_json_numeric_constants_are_provider_errors(constant):
     extraction = json.dumps(RAW).replace('"amount": 851', '"amount": ' + constant)
     data = {
-        "status": "completed",
-        "output": [{"content": [{"type": "output_text", "text": extraction}]}],
+        "candidates": [
+            {"finishReason": "STOP", "content": {"parts": [{"text": extraction}]}}
+        ]
     }
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json=data))
@@ -272,3 +290,103 @@ async def test_database_jsonb_metadata_on_create_and_recovery(meta):
     assert created == {"expense": {**ROW, "meta": expected_meta}, "replayed": False}
     assert replay == {"expense": {**ROW, "meta": expected_meta}, "replayed": True}
     assert row["meta"] == meta
+
+
+async def test_gemini_split_text_ignores_thoughts_and_counts_usage():
+    text = json.dumps(RAW)
+    data = {
+        "candidates": [
+            {
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [
+                        {"thought": True, "text": "synthetic thinking"},
+                        {"text": text[:20]},
+                        {"text": text[20:], "thoughtSignature": "synthetic"},
+                    ]
+                },
+            }
+        ],
+        "usageMetadata": {
+            "promptTokenCount": 100,
+            "candidatesTokenCount": 40,
+            "thoughtsTokenCount": 5,
+        },
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=data))
+    ) as client:
+        result = await Provider(client, "synthetic")("test", CONTEXT)
+    assert result["raw"] == RAW
+    assert result["inputTokens"] == 100 and result["outputTokens"] == 45
+
+
+async def test_legacy_flash_thinking_budget():
+    calls = []
+
+    def mock(request):
+        calls.append(request)
+        return httpx.Response(200, json=COMPLETED)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        await Provider(client, "synthetic", "gemini-2.5-flash")("test", CONTEXT)
+    assert json.loads(calls[0].content)["generationConfig"]["thinkingConfig"] == {
+        "thinkingBudget": 0
+    }
+
+
+@pytest.mark.parametrize(
+    "key,model",
+    [
+        ("", "gemini-3.5-flash-lite"),
+        ("synthetic", "../escape"),
+        ("synthetic", "gpt-5.4-mini"),
+    ],
+)
+async def test_gemini_configuration_fails_without_network(key, model):
+    def mock(request):
+        pytest.fail("Invalid configuration must not call provider")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        with pytest.raises(SemanticError) as exc:
+            await Provider(client, key, model)("test", CONTEXT)
+    assert exc.value.code == "provider_configuration"
+
+
+@pytest.mark.parametrize("status", [401, 429, 500])
+async def test_gemini_http_errors_do_not_retry(status):
+    calls = []
+
+    def mock(request):
+        calls.append(request)
+        return httpx.Response(
+            status, json={"error": {"message": "private provider details"}}
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        with pytest.raises(SemanticError) as exc:
+            await Provider(client, "synthetic")("test", CONTEXT)
+    assert exc.value.code == "provider_error" and len(calls) == 1
+    assert "private" not in str(exc.value)
+
+
+async def test_runtime_uses_gemini_key_and_configured_model(monkeypatch):
+    from semantic_entry.server import environment_dependencies
+
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-gemini")
+    monkeypatch.setenv("OPENAI_API_KEY", "unused-synthetic-openai")
+    monkeypatch.setenv("SEMANTIC_MODEL", "gemini-3.8-flash")
+    monkeypatch.setenv("SEMANTIC_MEMBER_NAMES", "{}")
+    calls = []
+
+    def mock(request):
+        calls.append(request)
+        return httpx.Response(200, json=COMPLETED)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        result = await environment_dependencies(client).extract_entry("test", CONTEXT)
+    assert result["model"] == "gemini-3.8-flash"
+    assert calls[0].headers["x-goog-api-key"] == "synthetic-gemini"
+    assert json.loads(calls[0].content)["generationConfig"]["thinkingConfig"] == {
+        "thinkingLevel": "LOW"
+    }

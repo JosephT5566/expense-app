@@ -13,7 +13,7 @@ from starlette.routing import Route
 from .contracts import JSON
 from .graph import Dependencies
 from .handler import handle
-from .provider import Provider
+from .provider import DEFAULT_MODEL, Provider
 from .supabase import SupabaseAdapter
 
 # Force external payload tracing off, including environment-enabled tracing.
@@ -44,8 +44,8 @@ def environment_dependencies(client: httpx.AsyncClient) -> Dependencies:
         adapter,
         Provider(
             client,
-            os.environ.get("OPENAI_API_KEY", ""),
-            os.environ.get("SEMANTIC_MODEL", "gpt-5.4-mini"),
+            os.environ.get("GEMINI_API_KEY", ""),
+            os.environ.get("SEMANTIC_MODEL", DEFAULT_MODEL),
         ),
         log,
         tuple(

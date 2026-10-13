@@ -184,3 +184,15 @@ Supabase adapter 在建立結果與 ledger 查詢復原時，將 JSONB `meta` �
 - Workflow YAML／Bash／Python syntax、synthetic runtime config（不設定 fallback）、Markdown local links、`git diff --check`：通過。
 
 沒有修改 SQL，未重跑 SQL integration；沒有 routing 變更，未重跑 subpath E2E。Mocked tests 不驗證 production RLS 或模型分類品質。本次未部署、未執行 production expense transaction，也未修改 Gemini provider。
+
+## 16. Gemini provider
+
+原有分類回詢與 member-name env 設定已 commit 為 `dbfc872`。Service 改用 Gemini Developer API REST generateContent，API key 只放 header；預設 `gemini-3.5-flash-lite`，模型可由 `SEMANTIC_MODEL` 選擇支援的 Flash identifiers。既有 schema 經 responseFormat 提供，僅完整 STOP text output 可解析；safety block、截斷、非 JSON、工具回應等皆停止且不進入寫入。保留 15 秒 deadline、800-token generation cap、單次呼叫無 retry。Usage 轉為原有 wire metadata，output 包含回傳的 candidate／thinking tokens。
+
+部署改讀 `SEMANTIC_GEMINI_SECRET`，綁定 `GEMINI_API_KEY`；live evaluation 同步修改。Member mapping 仍為一般 env，沒有新增 SQL 或 frontend contract 變更。Application tracing 關閉不代表 Gemini 平台資料保留政策，實際模型品質與 hosted secret 注入仍需另外授權驗收。
+
+本次 repository verification：133 backend tests passed；Ruff check／format 與 mypy（12 source files）通過。新增 Gemini request/header/schema、STOP output、safety refusal、MAX_TOKENS、malformed JSON、tools、多候選、分段 text／thought 排除、usage、HTTP 401／429／500 不 retry、invalid model 不出網路與 runtime env wiring 測試。Fixture CLI 40 cases／120 observations／0 paid calls／0 failures。Docker build 與 localhost synthetic container smoke 通過。Workflow YAML／Bash／Python syntax 與 synthetic model/runtime config 通過；secret-binding inspection 初次因測試程式使用錯誤 step index 而失敗，改依 action 名称選取後通過。Changed-file Prettier、Markdown links、`git diff --check` 通過。
+
+本階段僅 backend provider／部署 workflow／文件改動，未重跑 frontend、SQL integration；前階段的 26 Playwright tests 是歷史結果。沒有 hosted deployment、付費 Gemini call 或正式 expense 寫入。Gemini key 的模型權限、schema 接受度、延遲與真實解析品質均為 unverified，下一步建立 Gemini key secret 並完成授權的 hosted／live 驗收。舊 OpenAI 與 member-name secrets 移除前需確認其他服務／revision 沒有引用。
+
+Operator-reported：使用者已完成 GCP 設定與 GitHub variables。此狀態尚未獨立核對 IAM、secret version、OIDC 或實際 variable 值；不視為 hosted deployment／驗收完成。下一步將 branch 整合至 master 後執行手動部署 workflow，確認驗證、OIDC、image push、secret 綁定與 health check，再安排授權的真實登入與寫入驗收。
