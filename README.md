@@ -94,7 +94,7 @@ Disposable SQL setup, backend environment values, and release/IAM instructions a
 
 For semantic browser tests, use `PUBLIC_SEMANTIC_ENTRY_URL=https://semantic.example.test npm run test:e2e -- e2e/semantic-entry.test.ts`. To verify the Pages path, also set `BASE_PATH=/expense-app E2E_BASE_PATH=/expense-app`. The carousel specs still expect root paths.
 
-See the [中文 branch 開發紀錄](docs/evidence/semantic-entry/branch-notes.zh-TW.md), [evidence index](docs/evidence/semantic-entry/README.md), [design](docs/superpowers/specs/2026-10-11-semantic-expense-entry-design.md), and [implementation plan](docs/superpowers/plans/2026-10-11-semantic-expense-entry.md). Local implementation is available; service/schema type alignment, paid model quality, and hosted acceptance remain outstanding.
+See the [evidence index](docs/evidence/semantic-entry/README.md), [design](docs/superpowers/specs/2026-10-11-semantic-expense-entry-design.md), and [implementation plan](docs/superpowers/plans/2026-10-11-semantic-expense-entry.md). Local implementation is available; service/schema type alignment, paid model quality, and hosted acceptance remain outstanding.
 
 ### Database migration workflow
 

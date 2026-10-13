@@ -2,7 +2,7 @@
 
 Evidence is scoped to its environment. Local implementation and fixtures do not establish production database compatibility, hosted authentication, or paid model extraction quality.
 
-中文整體紀錄與最新功能摘要見 [branch 開發紀錄](branch-notes.zh-TW.md)。以下各階段資料保留當時的驗證範圍；目前契約以 [service contracts](../../database.md#semantic-entry-service) 為準。
+以下各階段資料保留當時的驗證範圍；目前契約以 [service contracts](../../database.md#semantic-entry-service) 為準。
 
 ## Database baseline and adoption — 2026-10-13
 
