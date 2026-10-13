@@ -5,8 +5,16 @@ node_modules
 .vercel
 .netlify
 .wrangler
-/.svelte-kit
+.svelte-kit
 /build
+services/semantic-entry/dist
+services/semantic-entry/.venv
+**/__pycache__/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+services/semantic-entry/evals/runs
+.superpowers/sdd/
 
 # OS
 .DS_Store
@@ -21,3 +29,10 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Playwright artifacts
+/test-results
+/playwright-report
+
+# Short-lived GitHub OIDC credentials (never commit)
+gha-creds-*.json

@@ -1,0 +1,80 @@
+name: Supabase Database Migrations
+
+on:
+    pull_request:
+        branches: [master]
+        paths:
+            - 'supabase/migrations/**'
+            - 'supabase/tests/**'
+            - 'supabase/fixtures/semantic-entry-auth-bootstrap.sql'
+            - 'services/semantic-entry/scripts/baseline-db-test.sh'
+            - '.github/workflows/supabase-migrations.yml'
+    workflow_dispatch:
+        inputs:
+            dry_run:
+                description: 'Preview pending migrations without applying them'
+                type: boolean
+                default: true
+
+permissions:
+    contents: read
+
+jobs:
+    verify:
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            - uses: actions/checkout@v4
+            - name: Verify complete schema chain on a disposable database
+              run: services/semantic-entry/scripts/baseline-db-test.sh
+
+    migrate:
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+        needs: verify
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        environment: supabase-production
+        concurrency:
+            group: supabase-production-migrations
+            cancel-in-progress: false
+        env:
+            SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
+            SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+            SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+            CLI_WORKDIR: ${{ runner.temp }}/jopie-supabase-production
+            HISTORY_FILE: ${{ runner.temp }}/jopie-baseline-history.json
+        steps:
+            - uses: actions/checkout@v4
+            - uses: supabase/setup-cli@v3
+              with:
+                  version: 2.120.0
+            - name: Validate target and initialize isolated production workspace
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  [[ "$SUPABASE_PROJECT_REF" == "rqbjtyqxoqhkyjoywzrp" ]] || { echo 'Unexpected Supabase target'; exit 1; }
+                  [[ -n "$SUPABASE_ACCESS_TOKEN" ]] || { echo 'Missing Supabase access token'; exit 1; }
+                  mkdir -p "$CLI_WORKDIR"
+                  supabase --workdir "$CLI_WORKDIR" init
+                  mkdir -p "$CLI_WORKDIR/supabase/migrations"
+                  cp supabase/migrations/*.sql "$CLI_WORKDIR/supabase/migrations/"
+                  supabase --workdir "$CLI_WORKDIR" link --project-ref "$SUPABASE_PROJECT_REF"
+            - name: Require the reviewed baseline to be already adopted
+              shell: bash
+              run: |
+                  set -euo pipefail
+                  supabase --workdir "$CLI_WORKDIR" db query --linked "select count(*) = 2 as baseline_ready from supabase_migrations.schema_migrations where version in ('20261011000000','202610120001');" > "$HISTORY_FILE"
+                  python3 - <<'PY'
+                  import json, os
+                  from pathlib import Path
+                  data = json.loads(Path(os.environ['HISTORY_FILE']).read_text())
+                  if data.get('rows', [{}])[0].get('baseline_ready') is not True:
+                      raise SystemExit('Baseline adoption required; do not recreate existing tables automatically')
+                  PY
+            - name: Preview pending migrations
+              run: supabase --workdir "$CLI_WORKDIR" db push --dry-run
+            - name: Apply reviewed pending migrations
+              if: inputs.dry_run == false
+              run: supabase --workdir "$CLI_WORKDIR" db push --yes
+            - name: Show migration status
+              run: supabase --workdir "$CLI_WORKDIR" migration list

@@ -1,0 +1,7 @@
+**
+!services/
+!services/semantic-entry/
+!services/semantic-entry/pyproject.toml
+!services/semantic-entry/uv.lock
+!services/semantic-entry/semantic_entry/
+!services/semantic-entry/semantic_entry/*.py
