@@ -1,10 +1,21 @@
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import httpx
 
-from .contracts import JSON, parse_completed_result, parse_expense_row
+from .contracts import JSON, object_, parse_completed_result, parse_expense_row
 from .errors import SemanticError
+
+
+def database_expense(raw: object) -> JSON:
+    """Adapt JSONB metadata to the existing string-based browser contract."""
+    row = dict(object_(raw))
+    if "meta" in row and not isinstance(row["meta"], str):
+        row["meta"] = json.dumps(
+            row["meta"], ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        )
+    return parse_expense_row(row)
 
 
 class SupabaseAdapter:
@@ -146,7 +157,7 @@ class SupabaseAdapter:
             raise SemanticError(409, "conflict")
         try:
             return {
-                "expense": parse_expense_row(data[0].get("result")),
+                "expense": database_expense(data[0].get("result")),
                 "replayed": True,
             }
         except (ValueError, TypeError):
@@ -174,6 +185,8 @@ class SupabaseAdapter:
             uncertain=True,
         )
         try:
-            return parse_completed_result(data)
+            result = dict(object_(data))
+            result["expense"] = database_expense(result.get("expense"))
+            return parse_completed_result(result)
         except (ValueError, TypeError):
             raise SemanticError(504, "persist_uncertain", True) from None

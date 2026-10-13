@@ -1,6 +1,6 @@
 # Semantic entry service deployment
 
-The service is implemented locally; hosted acceptance remains unverified. On 2026-10-13 the existing public schema and semantic objects were reviewed, migration history was adopted, and the tested citext trigger fix was applied to the user-designated Supabase project. See [scoped database evidence](evidence/semantic-entry/2026-10-13-database-baseline.md). Production metadata inspection and localhost transaction tests do not establish real-user hosted behavior. The service's string-only `meta` contract and amount bound still require alignment with the actual JSONB／numeric schema before release. Do not apply `supabase/fixtures/` to production.
+The service is implemented locally; hosted acceptance remains unverified. On 2026-10-13 the existing public schema and semantic objects were reviewed, migration history was adopted, and the tested citext trigger fix was applied to the user-designated Supabase project. See [scoped database evidence](evidence/semantic-entry/2026-10-13-database-baseline.md). Production metadata inspection and localhost transaction tests do not establish real-user hosted behavior. The service adapts JSONB metadata to the existing string wire contract and validates whole-TWD amounts against the actual numeric column capacity. Hosted acceptance and fallback-category configuration still need verification. Do not apply `supabase/fixtures/` to production.
 
 ## Local container
 

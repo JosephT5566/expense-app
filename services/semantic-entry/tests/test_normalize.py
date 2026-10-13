@@ -143,3 +143,19 @@ def test_nullable_fields_cannot_be_missing():
 def test_invalid_snapshot(patch):
     with pytest.raises(ValueError):
         parse_completed_result({"expense": {**ROW, **patch}, "replayed": True})
+
+
+@pytest.mark.parametrize("scope", ["personal", "household"])
+def test_database_amount_capacity(scope):
+    raw = {**RAW, "scope": scope}
+    if scope == "household":
+        raw.update(hasSharedIntent=True, splitMemberIds=["a", "b"])
+    valid = normalize_extraction({**raw, "amount": 9_999_999_999}, CONTEXT)
+    assert valid["status"] == "valid"
+    assert sum(valid["expense"]["shares_json"].values()) == 9_999_999_999
+    for amount in (10_000_000_000, 2**53 - 1):
+        rejected = normalize_extraction({**raw, "amount": amount}, CONTEXT)
+        assert rejected == {
+            "status": "rejected",
+            "issues": [{"field": "amount", "code": "invalid"}],
+        }

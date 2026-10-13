@@ -159,3 +159,7 @@ Service 完成寫入後，前端更新既有 expense store／cache，不再透�
 ## 12. 後續更新：2026-10-13 資料庫 migration 接管
 
 已登入 CLI 並完成既有 public schema baseline、migration history 接管及 citext trigger 修正。新增完整 schema chain 的本機測試與手動 migration Action。前述 2026-10-12 的「尚未操作 production SQL」與「尚無正式 schema 證據」是當時的歷史紀錄；最新範圍、操作結果與 service 相容性待辦見 [資料庫接管紀錄](2026-10-13-database-baseline.md)。
+
+## 13. Service 與實際 schema 對齊
+
+Supabase adapter 在建立結果與 ledger 查詢復原時，將 JSONB `meta` 轉成 compact JSON 字串，保留前端既有 contract；既有字串原樣保留。解析驗證限制台幣整數金額為 1 到 9,999,999,999 元，超過上限會回詢並且不進入 RPC。此階段沒有新增 migration 或正式資料庫操作。Backend unit tests、Ruff 與 mypy 的最新結果見 [相容性驗證](2026-10-13-service-schema-compatibility.md)。

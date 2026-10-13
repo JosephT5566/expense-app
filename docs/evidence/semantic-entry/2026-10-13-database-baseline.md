@@ -70,3 +70,5 @@ Semantic objects 從 baseline 分離，仍由既有 `202610120001_semantic_entry
 3. 只讀檢查未找到名為「其他」的 expense category；`SEMANTIC_OTHER_CATEGORY_ID` 必須明確選定既有 expense category。沒有新增或修改正式 categories。
 
 下一步先處理上述 service contract 差異，再設定 migration workflow environment／secrets，執行授權的 hosted CI 與 service 驗收。部署設定見 [deployment guide](../../semantic-entry-deployment.md#production-migrations)。
+
+上述第 1、2 項差異後續已完成 service 修正；驗證範圍見 [schema 相容性紀錄](2026-10-13-service-schema-compatibility.md)。本文件前述差異保留為資料庫接管當時的發現。

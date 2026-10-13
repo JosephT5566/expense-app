@@ -240,3 +240,36 @@ async def test_non_json_numeric_constants_are_provider_errors(constant):
         with pytest.raises(SemanticError) as exc:
             await Provider(client, "synthetic")("test", CONTEXT)
     assert exc.value.status == 502 and exc.value.code == "provider_invalid"
+
+
+@pytest.mark.parametrize(
+    "meta", [{}, {"來源": ["語意", 1, None]}, [1, True], None, 42, "legacy"]
+)
+async def test_database_jsonb_metadata_on_create_and_recovery(meta):
+    row = {**ROW, "meta": meta}
+    expected_meta = (
+        meta
+        if isinstance(meta, str)
+        else json.dumps(
+            meta, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+        )
+    )
+
+    def mock(request):
+        data = (
+            {"expense": row, "replayed": False}
+            if "create_semantic" in request.url.path
+            else [{"input_hash": "a" * 64, "result": row}]
+        )
+        return httpx.Response(200, json=data)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        adapter = SupabaseAdapter(
+            client, "https://synthetic.test", "synthetic-public", {}, "other", "t"
+        )
+        adapter.verified = {"id": "a", "email": "a@example.test"}
+        created = await adapter.persist_expense(REQUEST_ID, "a" * 64, {})
+        replay = await adapter.lookup_completed(REQUEST_ID, "a" * 64)
+    assert created == {"expense": {**ROW, "meta": expected_meta}, "replayed": False}
+    assert replay == {"expense": {**ROW, "meta": expected_meta}, "replayed": True}
+    assert row["meta"] == meta

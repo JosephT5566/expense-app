@@ -41,6 +41,7 @@ async def test_answer_resolves_same_expense_and_changes_payload_hash(setup):
         {"scope": "household", "hasSharedIntent": True},
         {"date": {"kind": "absolute", "value": "2026-02-30"}},
         {"amount": 0},
+        {"amount": 10_000_000_000},
         {"note": None},
         {"currency": "USD"},
     ],

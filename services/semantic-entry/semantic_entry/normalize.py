@@ -3,6 +3,9 @@ from typing import Any
 
 from .contracts import JSON, exact_keys, object_, safe_integer, trim
 
+# Existing expenses.amount is numeric(12,2); semantic entry accepts whole TWD.
+MAX_EXPENSE_AMOUNT = 9_999_999_999
+
 
 def parse_extraction(raw: Any) -> JSON:
     r = object_(raw)
@@ -76,7 +79,7 @@ def normalize_extraction(raw: Any, ctx: JSON) -> JSON:
         issue("note", "missing")
     if r["amount"] is None:
         issue("amount", "missing")
-    elif not safe_integer(r["amount"], 1):
+    elif not safe_integer(r["amount"], 1) or r["amount"] > MAX_EXPENSE_AMOUNT:
         issue("amount", "invalid")
     if r["currency"] not in (None, "TWD"):
         issue("currency", "unsupported")

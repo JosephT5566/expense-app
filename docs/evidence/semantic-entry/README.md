@@ -91,3 +91,5 @@ One fresh read-only whole-branch reviewer found two Important issues: a retry fa
 Unresolved attempts now live in account-scoped browser localStorage without tokens, are restored as uncertain, and are removed after a definite result. This intentionally retains the description on that browser until completion or site-storage cleanup. Server ledgers/logs still do not store raw input text. Later rejection/provider/quota errors do not prove the original accepted operation failed.
 
 The reviewer deferred production schema/RLS, paid model quality, hosted IAM/cold starts/release execution, Linux Supabase bootstrap, inherited general cache partitioning, and ordinary pagination consistency. Those boundaries remain explicit; no external acceptance claim follows from the review. See the [decision record](decisions.md) for all execution rulings and their costs.
+
+- [2026-10-13 service schema compatibility](2026-10-13-service-schema-compatibility.md): JSONB response adaptation and whole-TWD amount limits.
