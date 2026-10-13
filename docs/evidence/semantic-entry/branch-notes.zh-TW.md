@@ -155,3 +155,7 @@ Service 完成寫入後，前端更新既有 expense store／cache，不再透�
 5. 經授權後進行實際模型評估，記錄品質、延遲、token usage 與費用；目前沒有付費模型驗收證據。
 
 目前沒有 operator-reported 的正式環境成功結果。本次工作未 push、merge、部署、修改 production SQL／IAM 或呼叫付費模型。設定與上線步驟見 [部署指南](../../semantic-entry-deployment.md)。
+
+## 12. 後續更新：2026-10-13 資料庫 migration 接管
+
+已登入 CLI 並完成既有 public schema baseline、migration history 接管及 citext trigger 修正。新增完整 schema chain 的本機測試與手動 migration Action。前述 2026-10-12 的「尚未操作 production SQL」與「尚無正式 schema 證據」是當時的歷史紀錄；最新範圍、操作結果與 service 相容性待辦見 [資料庫接管紀錄](2026-10-13-database-baseline.md)。

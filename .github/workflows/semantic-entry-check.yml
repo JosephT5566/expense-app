@@ -27,6 +27,8 @@ jobs:
             - run: uv run --directory services/semantic-entry --locked python -m semantic_entry.evaluation --mode fixture --out /tmp/jopie-semantic-eval
             - run: docker build -f services/semantic-entry/Dockerfile -t jopie-semantic-entry .
             - run: services/semantic-entry/scripts/container-smoke.sh
+            - name: Verify captured public baseline and semantic migration chain
+              run: services/semantic-entry/scripts/baseline-db-test.sh
             - uses: supabase/setup-cli@v3
               with:
                   version: 2.120.0

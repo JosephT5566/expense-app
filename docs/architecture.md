@@ -1,6 +1,6 @@
 # App architecture
 
-JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Python 3.12/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, draft SQL, and disposable fixtures; it contains no SvelteKit server routes or receipt-analysis backend. Hosted service and production SQL compatibility remain unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
+JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Python 3.12/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, captured public baseline, semantic migrations, and disposable fixtures; it contains no SvelteKit server routes or receipt-analysis backend. Live public-schema metadata and the trigger fix were verified on 2026-10-13; hosted service behavior and the remaining response/type alignment are unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
 
 ## Source map
 
@@ -21,7 +21,7 @@ JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. 
 | `static/`                           | Icons, favicon, robots file                                                                    |
 | `services/semantic-entry/`          | Python ASGI/LangGraph service, HTTPX provider/RPC, normalizer, tests, and synthetic evaluation |
 | `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                                          |
-| `supabase/`                         | Draft semantic RPC migration and explicitly disposable fixtures                                |
+| `supabase/`                         | Captured public baseline, semantic migrations, and explicitly disposable fixtures              |
 | `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release                               |
 | `e2e/`                              | Playwright tests                                                                               |
 

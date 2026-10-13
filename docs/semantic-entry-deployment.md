@@ -1,6 +1,6 @@
 # Semantic entry service deployment
 
-The service is implemented locally; hosted deployment is not verified. The SQL in `supabase/migrations/202610120001_semantic_entry.sql` is a **draft tested against a synthetic frontend-contract fixture**, not a migration confirmed compatible with the deployed database. Review the current schema, policies, triggers, grants, defaults, and category IDs before applying it. Do not apply `supabase/fixtures/` to production.
+The service is implemented locally; hosted acceptance remains unverified. On 2026-10-13 the existing public schema and semantic objects were reviewed, migration history was adopted, and the tested citext trigger fix was applied to the user-designated Supabase project. See [scoped database evidence](evidence/semantic-entry/2026-10-13-database-baseline.md). Production metadata inspection and localhost transaction tests do not establish real-user hosted behavior. The service's string-only `meta` contract and amount bound still require alignment with the actual JSONB／numeric schema before release. Do not apply `supabase/fixtures/` to production.
 
 ## Local container
 
@@ -48,6 +48,30 @@ Set the frontend's public URL to the service origin, rebuild under the GitHub Pa
 The existing POST endpoint now supports bounded clarification history and SSE state events; no new agent endpoint or conversation table is required. See [wire and idempotency contracts](database.md#semantic-entry-service). The hosting path must forward `text/event-stream` incrementally without buffering. A `persisting` event precedes the RPC; accepted writes continue in an in-process task after response disconnection, subject to the request deadline and instance lifetime. Verify this on the hosted path, including proxy buffering, lost responses, cold starts, and instance shutdown. Only UUID recovery is stored by the browser.
 
 Hosted acceptance still requires a verified-user smoke test, rejected-input zero-write checks, same-request concurrency, a lost-response retry, edited/deleted expense replay, cross-account isolation, real Taiwan-day quota behavior, subpath navigation/session propagation, observed logs without private data, cold start/deadline behavior, and budget/usage monitoring. Local mocks and container success do not establish these results. Paid live evaluation requires separate authorization and must never persist expenses.
+
+## Production migrations
+
+The chain is `20261011000000_existing_public_baseline.sql` → `202610120001_semantic_entry.sql` → `202610130001_semantic_trigger_citext.sql`. The baseline captures existing public schema without application data. Its older version establishes ordering; it was captured on 2026-10-13. On the designated project, baseline and existing semantic migration were recorded as applied after verification; only the trigger fix was executed. Never rerun adopted schema DDL or mark unverified changes applied.
+
+The repository's `supabase/config.toml` remains the disposable test configuration. Production CLI operations use an initialized independent workdir with only the reviewed migration files. Compare `migration list`, review `db push --dry-run`, then apply pending changes with `db push --yes`. Future migrations must follow the adopted chain; do not edit applied files or run a remote reset.
+
+`.github/workflows/supabase-migrations.yml` verifies the full schema chain on PRs. Production execution is manual, master-only, defaults to dry-run, checks the designated project and adopted baseline, and serializes migration jobs. Create the GitHub `supabase-production` environment with:
+
+| Setting                                | Purpose                                                               |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| Variable `SUPABASE_PROJECT_REF`        | The designated project ref, enforced by the workflow                  |
+| Secret `SUPABASE_ACCESS_TOKEN`         | CLI platform authentication; never put this in public frontend config |
+| Optional secret `SUPABASE_DB_PASSWORD` | Database connection password if CLI temporary login is unavailable    |
+
+Configure environment reviewers as appropriate. First run with the default `dry_run=true`, review pending changes, then explicitly use `dry_run=false` for an authorized apply. The workflow does not bootstrap migration history, seed app settings, or modify Cloud Run. Hosted workflow execution remains unverified.
+
+For a fresh local chain test without production access:
+
+```sh
+services/semantic-entry/scripts/baseline-db-test.sh
+```
+
+This uses a disposable PostgreSQL 17 container, synthetic auth helpers and data, and removes its container on exit. It verifies actual public-schema triggers/types plus semantic replay/quota behavior; it does not verify GoTrue or the entire Supabase platform.
 
 ## Disposable database tests
 

@@ -90,8 +90,17 @@ node --experimental-strip-types packages/semantic-entry-contract/tests/python-pa
 
 Fixture mode uses 40 synthetic cases, five in each of eight groups, repeated three times. It does not read the model key, contact a provider, or persist expenses. Its results measure the normalizer/scorer against authored raw outputs, not model extraction quality. Unknown usage/pricing remains null. For a separately authorized live evaluation, `uv run --directory services/semantic-entry --locked python -m semantic_entry.evaluation --mode live --out /tmp/jopie-semantic-live-eval` calls only the provider, caps attempts at 120, and never imports the persistence adapter. Optional cost assumptions use `SEMANTIC_INPUT_USD_PER_MILLION`, `SEMANTIC_OUTPUT_USD_PER_MILLION`, `SEMANTIC_PRICING_SOURCE`, and `SEMANTIC_PRICING_AS_OF`; estimates are not bills.
 
-Disposable SQL setup, backend environment values, and release/IAM instructions are in [deployment setup](docs/semantic-entry-deployment.md). Verify the actual deployed expense schema/RLS and fallback category before applying the draft RPC. The checked-in test schema is synthetic and must never be applied to production.
+Disposable SQL setup, backend environment values, and release/IAM instructions are in [deployment setup](docs/semantic-entry-deployment.md). The public baseline and existing semantic migration history were adopted on 2026-10-13, and a trigger type fix was applied. See [database adoption evidence](docs/evidence/semantic-entry/2026-10-13-database-baseline.md) for scope and remaining service/schema compatibility gaps. The checked-in test schema is synthetic and must never be applied to production.
 
 For semantic browser tests, use `PUBLIC_SEMANTIC_ENTRY_URL=https://semantic.example.test npm run test:e2e -- e2e/semantic-entry.test.ts`. To verify the Pages path, also set `BASE_PATH=/expense-app E2E_BASE_PATH=/expense-app`. The carousel specs still expect root paths.
 
-See the [中文 branch 開發紀錄](docs/evidence/semantic-entry/branch-notes.zh-TW.md), [evidence index](docs/evidence/semantic-entry/README.md), [design](docs/superpowers/specs/2026-10-11-semantic-expense-entry-design.md), and [implementation plan](docs/superpowers/plans/2026-10-11-semantic-expense-entry.md). Local implementation is available; production compatibility, paid model quality, and hosted acceptance remain unverified.
+See the [中文 branch 開發紀錄](docs/evidence/semantic-entry/branch-notes.zh-TW.md), [evidence index](docs/evidence/semantic-entry/README.md), [design](docs/superpowers/specs/2026-10-11-semantic-expense-entry-design.md), and [implementation plan](docs/superpowers/plans/2026-10-11-semantic-expense-entry.md). Local implementation is available; service/schema type alignment, paid model quality, and hosted acceptance remain outstanding.
+
+### Database migration workflow
+
+`supabase-migrations.yml` validates the complete captured schema chain on PRs and supports master-only manual production migration with dry-run enabled by default. It requires the reviewed baseline to be already adopted and uses an isolated CLI workspace. Configure the environment and secrets described in [production migrations](docs/semantic-entry-deployment.md#production-migrations); no hosted workflow run is claimed.
+
+```sh
+# Disposable localhost full schema-chain assertions, no production access.
+services/semantic-entry/scripts/baseline-db-test.sh
+```

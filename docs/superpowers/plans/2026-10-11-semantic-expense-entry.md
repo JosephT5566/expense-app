@@ -72,6 +72,18 @@ User-approved behavior: no editable draft or confirmation step. Insufficient/rep
 - Pages subpath `BASE_PATH=/expense-app E2E_BASE_PATH=/expense-app npm run test:e2e -- e2e/semantic-entry.test.ts`: 26 passed. Playwright's web-server command completed the Pages-base-path build before browser navigation/session and semantic-flow verification.
 - **Unverified/operator work:** deployed SQL/RLS, hosted CI, real model clarification quality, hosted SSE buffering/disconnect behavior, and production Cloud Run/instance lifecycle. No live model call, production database change, deployment, or push was performed. Validate these in hosted acceptance before release.
 
+## Database adoption update — 2026-10-13
+
+The user-designated Supabase project was linked in an isolated CLI workspace. Existing public schema was captured without data; existing semantic objects matched the original migration, so baseline and original semantic versions were recorded as applied rather than replayed. A locally reproduced trigger citext-resolution failure was fixed by `202610130001_semantic_trigger_citext.sql` and applied. Local/remote migration history now matches and final dry-run reports no pending changes. See [scoped database evidence](../../evidence/semantic-entry/2026-10-13-database-baseline.md).
+
+- [x] Capture public baseline, including actual extension dependencies, without expense/member/category data.
+- [x] Verify full chain and share trigger locally; compare live metadata; adopt existing history and apply only the verified trigger fix.
+- [x] Add local full-chain test and manual migration workflow with default dry-run and baseline/target checks.
+- [ ] Align service `meta` adaptation with actual JSONB output and the safe integer bound with `numeric(12,2)` capacity; verify configured fallback category.
+- [ ] Configure GitHub migration environment/secrets and perform an authorized hosted workflow run; service/auth/SSE/model acceptance remains outstanding.
+
+Earlier evidence sections retain their historical scope. The migration workflow has not run on GitHub, and no production expense RPC or paid model call was executed during database adoption.
+
 ## Current Python service structure
 
 | Files                                                                                                                         | Responsibility                                                                                              |
