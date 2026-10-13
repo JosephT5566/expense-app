@@ -78,7 +78,22 @@ async function setup(
 			const url = new URL(route.request().url());
 			const offset = Number(url.searchParams.get('offset') ?? 0);
 			const limit = Number(url.searchParams.get('limit') ?? rows.length);
-			await route.fulfill({ json: rows.slice(offset, offset + limit) });
+			// Buffered days fetch neighbouring months too. Match PostgREST date filters
+			// before pagination so October rows cannot enter September's cache.
+			const bounds = url.searchParams.getAll('ts');
+			const matching = rows.filter((row) =>
+				bounds.every((bound) => {
+					const separator = bound.indexOf('.');
+					const operator = bound.slice(0, separator);
+					const value = Date.parse(bound.slice(separator + 1));
+					return operator === 'gte'
+						? Date.parse(row.ts) >= value
+						: operator === 'lte'
+							? Date.parse(row.ts) <= value
+							: true;
+				})
+			);
+			await route.fulfill({ json: matching.slice(offset, offset + limit) });
 		} else {
 			await route.fulfill({ json: [] });
 		}
@@ -108,6 +123,29 @@ async function setup(
 	};
 }
 const submit = (page: Page) => page.getByRole('button', { name: '送出記帳', exact: true }).click();
+async function cachedMonth(page: Page, month: string) {
+	return page.evaluate(
+		(key) =>
+			new Promise<unknown>((resolve, reject) => {
+				const opening = indexedDB.open('keyval-store');
+				opening.onerror = () => reject(opening.error);
+				opening.onsuccess = () => {
+					const db = opening.result;
+					const transaction = db.transaction('keyval', 'readonly');
+					const request = transaction.objectStore('keyval').get(key);
+					transaction.oncomplete = () => {
+						db.close();
+						resolve(request.result?.data ?? null);
+					};
+					transaction.onabort = () => {
+						db.close();
+						reject(transaction.error);
+					};
+				};
+			}),
+		`monthly-expenses:${month}`
+	);
+}
 test('one click automatically creates and patches store/cache without expense REST writes', async ({
 	page
 }) => {
@@ -237,13 +275,18 @@ test('replay removes a deleted expense from store and cache', async ({ page }) =
 		},
 		[row]
 	);
+	await expect.poll(() => cachedMonth(page, '2026-10')).toEqual([row]);
+	await expect.poll(() => cachedMonth(page, '2026-09')).toEqual([]);
 	await submit(page);
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
 	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
 	).toHaveCount(0);
+	await expect.poll(() => cachedMonth(page, '2026-10')).toEqual([]);
 	await page.reload();
+	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0);
+	await expect.poll(() => cachedMonth(page, '2026-10')).toEqual([]);
 	await expect(page.getByText('語意午餐', { exact: true })).toHaveCount(0);
 });
 test('processing locks close, Escape and outside interaction until completion', async ({
@@ -263,7 +306,11 @@ test('processing locks close, Escape and outside interaction until completion', 
 		page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
 	).toHaveCount(0);
 	await page.keyboard.press('Escape');
+	// Bits UI debounces outside pointerdown by 10ms. Flush that callback while
+	// the request is still pending, before releasing the mocked response.
+	await page.clock.install({ time: new Date('2026-10-01T12:00:00+08:00') });
 	await page.mouse.click(2, 2);
+	await page.clock.runFor(20);
 	await expect(page.getByRole('dialog')).toBeVisible();
 	release();
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();

@@ -196,3 +196,13 @@ Supabase adapter 在建立結果與 ledger 查詢復原時，將 JSONB `meta` �
 本階段僅 backend provider／部署 workflow／文件改動，未重跑 frontend、SQL integration；前階段的 26 Playwright tests 是歷史結果。沒有 hosted deployment、付費 Gemini call 或正式 expense 寫入。Gemini key 的模型權限、schema 接受度、延遲與真實解析品質均為 unverified，下一步建立 Gemini key secret 並完成授權的 hosted／live 驗收。舊 OpenAI 與 member-name secrets 移除前需確認其他服務／revision 沒有引用。
 
 Operator-reported：使用者已完成 GCP 設定與 GitHub variables。此狀態尚未獨立核對 IAM、secret version、OIDC 或實際 variable 值；不視為 hosted deployment／驗收完成。下一步將 branch 整合至 master 後執行手動部署 workflow，確認驗證、OIDC、image push、secret 綁定與 health check，再安排授權的真實登入與寫入驗收。
+
+## 17. CI E2E fixture 與互動同步修正
+
+使用者回報 Semantic Entry Check 在 replay deletion reload 與 processing outside-click 兩個案例失敗（CI log 為 operator-reported）。原本兩個案例在本機各重跑五次，10 passed，未直接重現 CI 失敗。Source inspection 找到兩個可造成結果依執行順序變動的測試條件：expense mock 忽略 PostgREST 的 `ts` gte/lte，導致同一筆 October expense 也能被存入 September cache；Bits UI outside pointerdown callback 有 10ms debounce，測試會在 callback 執行前釋放 completion response，callback 就可能在 modal 已完成後執行。
+
+修改僅限 `e2e/semantic-entry.test.ts`：mock 先按實際日期篩選再分頁；刪除案例直接檢查 October／September IndexedDB cache，確認 replay 後與 reload 後 October 為空；outside-click 案例透過 Playwright clock 執行 pending callback 後才釋放回應。沒有延長 expect timeout、加入測試 retry 或修改應用程式。
+
+Repository-verified：使用 CI 的 synthetic PUBLIC env，`npm run test:e2e -- e2e/semantic-entry.test.ts e2e/daily-carousel.test.ts --workers=2 --repeat-each=2` 為 58 passed（兩輪 29 tests），browser path 使用 `/tmp/jopie-playwright`。`npm run check` 為 0 errors／6 existing warnings；`npm run lint` 在 Prettier 階段失敗，122 個既有格式問題，未進入 whole-repository ESLint。Changed-file ESLint 與 Prettier 通過。Backend／SQL／container 未修改，未重跑其 checks。新的 GitHub Linux run 尚未執行，需推送修正後重跑 CI 確認。
+
+Pages base path verification：同一組 synthetic env 加上 `BASE_PATH=/expense-app E2E_BASE_PATH=/expense-app`，執行 `npm run test:e2e -- e2e/semantic-entry.test.ts --workers=2` 為 26 passed（同一 spec 依 Playwright 設定實際使用 1 worker）。這是本機 mocked browser 證據，並非 GitHub hosted run。
