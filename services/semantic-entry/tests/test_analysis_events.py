@@ -38,6 +38,60 @@ async def test_versioned_analysis_events_preserve_decisions(setup, accept, analy
     adapter.persist_expense.assert_not_awaited()
 
 
+async def test_full_queue_disconnect_before_rpc_does_not_retain_operation(setup):
+    from semantic_entry.handler import _operations, stream_operation
+
+    deps, adapter = setup
+    returned = asyncio.Event()
+
+    async def stream(text, context, callback):
+        for _ in range(65):
+            await callback("字")
+        returned.set()
+        return deps.extract_entry.return_value
+
+    deps.stream_entry = stream
+    baseline = set(_operations)
+    response = stream_operation(REQUEST, "t", deps, 0.15, include_analysis=True)
+    assert b"analysis_delta" in await anext(response)
+    await asyncio.wait_for(returned.wait(), 1)
+    await asyncio.sleep(0.02)
+    await response.aclose()
+    await asyncio.sleep(0.2)
+    retained = set(_operations) - baseline
+    try:
+        assert not retained
+        adapter.persist_expense.assert_not_awaited()
+    finally:
+        for task in retained:
+            task.cancel()
+        await asyncio.gather(*retained, return_exceptions=True)
+
+
+async def test_full_queue_timeout_delivers_terminal_error(setup):
+    from semantic_entry.handler import stream_operation
+
+    deps, adapter = setup
+    filled = asyncio.Event()
+
+    async def stream(text, context, callback):
+        for i in range(100):
+            if i == 65:
+                filled.set()
+            await callback("字")
+        return deps.extract_entry.return_value
+
+    deps.stream_entry = stream
+    response = stream_operation(REQUEST, "t", deps, 0.5, include_analysis=True)
+    assert b"analysis_delta" in await anext(response)
+    await asyncio.wait_for(filled.wait(), 1)
+    await asyncio.sleep(0.6)
+    frame = await asyncio.wait_for(anext(response), 0.1)
+    assert b"event: error" in frame
+    await response.aclose()
+    adapter.persist_expense.assert_not_awaited()
+
+
 async def test_analysis_before_persist_and_result(setup):
     deps, adapter = setup
     events = []

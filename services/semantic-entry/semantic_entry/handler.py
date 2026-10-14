@@ -29,6 +29,7 @@ async def stream_operation(
 ) -> AsyncIterator[bytes]:
     events: asyncio.Queue[tuple[str, JSON]] = asyncio.Queue(maxsize=64)
     writing = False
+    connected = True
     seq = 0
     analysis_size = 0
 
@@ -47,8 +48,24 @@ async def stream_operation(
 
     async def persisting(payload: JSON) -> None:
         nonlocal writing
-        writing = True
         await events.put(("persisting", payload))
+        # No await between this transition and returning to the RPC caller.
+        writing = True
+
+    def failure(error: SemanticError) -> None:
+        if not connected:
+            return
+        if events.full():
+            # A deadline must still terminate a slow stream. Drop only queued
+            # analysis; preserve the writing signal and the terminal error.
+            retained = []
+            while not events.empty():
+                event = events.get_nowait()
+                if event[0] != "analysis_delta":
+                    retained.append(event)
+            for event in retained:
+                events.put_nowait(event)
+        events.put_nowait(("error", error_payload(error)))
 
     async def operation() -> None:
         try:
@@ -62,15 +79,11 @@ async def stream_operation(
                 )
                 await events.put(("result", result))
         except TimeoutError:
-            await events.put(
-                ("error", error_payload(SemanticError(504, "persist_uncertain", True)))
-            )
+            failure(SemanticError(504, "persist_uncertain", True))
         except SemanticError as e:
-            await events.put(("error", error_payload(e)))
+            failure(e)
         except Exception:
-            await events.put(
-                ("error", error_payload(SemanticError(502, "service_error", writing)))
-            )
+            failure(SemanticError(502, "service_error", writing))
 
     task = asyncio.create_task(operation())
     _operations.add(task)
@@ -82,6 +95,10 @@ async def stream_operation(
             if name in ("result", "error"):
                 break
     finally:
+        connected = False
+        # Release a result enqueue that raced with disconnection after RPC.
+        while not events.empty():
+            events.get_nowait()
         if not task.done() and not writing:
             task.cancel()
             with suppress(asyncio.CancelledError):
