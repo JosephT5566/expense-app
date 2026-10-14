@@ -230,11 +230,18 @@ async def test_adapter_caller_and_owner_filters():
             client,
             "https://synthetic.test",
             "synthetic-public",
-            {"a@example.test": "甲"},
+            {
+                "a@example.test": "甲",
+                "b@example.test": "派大",
+                "outside@example.test": "外人",
+            },
             "synthetic-caller",
         )
         user = await adapter.authenticate()
-        assert len((await adapter.load_context(user))["members"]) == 2
+        assert (await adapter.load_context(user))["members"] == [
+            {"id": "member-0", "email": "a@example.test", "name": "甲"},
+            {"id": "member-1", "email": "b@example.test", "name": "派大"},
+        ]
         assert await adapter.lookup_completed(REQUEST_ID, "a" * 64) == {
             "expense": ROW,
             "replayed": True,
@@ -542,3 +549,147 @@ async def test_error_body_read_failure_preserves_known_http_status():
         "upstreamHttpStatus": 403,
         "exceptionType": "ReadError",
     }
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    "output,stage",
+    [
+        ("private-input not JSON", "json"),
+        (json.dumps({"analysis": "分攤對象不明", "extraction": {}}), "envelope"),
+    ],
+)
+async def test_invalid_output_identifies_safe_validation_stage(
+    streaming, output, stage
+):
+    payload = {
+        "candidates": [
+            {"finishReason": "STOP", "content": {"parts": [{"text": output}]}}
+        ]
+    }
+
+    def mock(request):
+        if streaming:
+            return httpx.Response(200, content="data: " + json.dumps(payload) + "\n\n")
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        provider = Provider(client, "private-key")
+        with pytest.raises(SemanticError) as exc:
+            if streaming:
+                await provider.stream(
+                    "private-input", CONTEXT, lambda text: asyncio.sleep(0)
+                )
+            else:
+                await provider("private-input", CONTEXT)
+    assert exc.value.code == "provider_invalid"
+    assert exc.value.diagnostics == {
+        "validationStage": "analysis" if streaming and stage == "json" else stage,
+        "exceptionType": "JSONDecodeError"
+        if not streaming and stage == "json"
+        else "ValueError",
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_token_limit_is_diagnosed_without_partial_extraction(streaming):
+    payload = {"candidates": [{"finishReason": "MAX_TOKENS"}]}
+
+    def mock(request):
+        if streaming:
+            return httpx.Response(200, content="data: " + json.dumps(payload) + "\n\n")
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        provider = Provider(client, "synthetic")
+        with pytest.raises(SemanticError) as exc:
+            if streaming:
+                await provider.stream("test", CONTEXT, lambda text: asyncio.sleep(0))
+            else:
+                await provider("test", CONTEXT)
+    assert exc.value.code == "provider_invalid"
+    assert exc.value.diagnostics == {
+        "validationStage": "candidate",
+        "finishReason": "MAX_TOKENS",
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize(
+    "text,ids,shares",
+    [
+        (
+            "今天午餐500麥當勞平分",
+            ["a", "b", "c"],
+            {"a@example.test": 168, "b@example.test": 166, "c@example.test": 166},
+        ),
+        (
+            "今天午餐500麥當勞與派大平分",
+            ["a", "b"],
+            {"a@example.test": 250, "b@example.test": 250},
+        ),
+        ("今天午餐500麥當勞與陌生人平分", None, None),
+        ("今天午餐500麥當勞與派大平分", ["a", "__ambiguous__"], None),
+    ],
+)
+async def test_shared_extraction_calculates_shares_or_requests_members(
+    streaming, text, ids, shares
+):
+    from semantic_entry.clarification import clarification_result
+
+    context = {
+        **CONTEXT,
+        "members": [
+            {"id": "a", "email": "a@example.test", "name": "甲"},
+            {"id": "b", "email": "b@example.test", "name": "派大"},
+            {"id": "c", "email": "c@example.test", "name": "丙"},
+        ],
+    }
+    raw = {
+        **RAW,
+        "note": "午餐麥當勞",
+        "amount": 500,
+        "scope": "household",
+        "hasSharedIntent": True,
+        "splitMemberIds": ids,
+    }
+    payload = {
+        "candidates": [
+            {
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {"analysis": "已辨識共同午餐支出。", "extraction": raw}
+                            )
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+
+    def mock(request):
+        if streaming:
+            return httpx.Response(200, content="data: " + json.dumps(payload) + "\n\n")
+        return httpx.Response(200, json=payload)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        provider = Provider(client, "synthetic")
+        result = (
+            await provider.stream(text, context, lambda delta: asyncio.sleep(0))
+            if streaming
+            else await provider(text, context)
+        )
+    validation = normalize_extraction(result["raw"], context)
+    if shares is None:
+        response = clarification_result(validation, {"requestId": REQUEST_ID})
+        assert response["status"] == "needs_input"
+        assert "expense" not in response
+        assert response["issues"][0]["code"] == "ambiguous_member"
+    else:
+        expense = validation["expense"]
+        assert expense["shares_json"] == shares
+        assert expense["payer_email"] == "a@example.test"
+        assert expense["is_settled"] is False
