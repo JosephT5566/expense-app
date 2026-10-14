@@ -5,10 +5,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from starlette.applications import Starlette
-from starlette.requests import Request
+from fastapi import FastAPI, Request
 from starlette.responses import Response
-from starlette.routing import Route
 
 from .contracts import JSON
 from .graph import Dependencies
@@ -56,9 +54,9 @@ def environment_dependencies(client: httpx.AsyncClient) -> Dependencies:
     )
 
 
-def create_app(deps: Dependencies | None = None) -> Starlette:
+def create_app(deps: Dependencies | None = None) -> FastAPI:
     @asynccontextmanager
-    async def lifespan(app: Starlette) -> AsyncIterator[None]:
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with httpx.AsyncClient(
             timeout=30, transport=httpx.AsyncHTTPTransport(retries=0)
         ) as client:
@@ -68,27 +66,44 @@ def create_app(deps: Dependencies | None = None) -> Starlette:
     async def endpoint(request: Request) -> Response:
         return await handle(request, deps or request.app.state.deps)
 
-    # Catch all paths/methods so API errors have the same wire shape.
-    return Starlette(
-        routes=[
-            Route(
-                "/{path:path}",
-                endpoint,
-                methods=[
-                    "GET",
-                    "POST",
-                    "OPTIONS",
-                    "HEAD",
-                    "PUT",
-                    "PATCH",
-                    "DELETE",
-                    "TRACE",
-                    "CONNECT",
-                ],
-            )
-        ],
+    app = FastAPI(
         lifespan=lifespan,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
+        redirect_slashes=False,
     )
+    # Read Request directly so the portable validators, body limit and wire
+    # errors remain authoritative instead of FastAPI's automatic validation.
+    app.add_api_route("/health", endpoint, methods=["GET"], name="health")
+    app.add_api_route(
+        "/semantic-entry", endpoint, methods=["POST"], name="create_entry"
+    )
+    app.add_api_route(
+        "/semantic-entry/{requestId}",
+        endpoint,
+        methods=["GET"],
+        name="lookup_entry",
+    )
+    # Last route preserves CORS preflight and JSON errors for unknown paths
+    # and unsupported methods, including origin checks before route errors.
+    app.add_api_route(
+        "/{path:path}",
+        endpoint,
+        methods=[
+            "GET",
+            "POST",
+            "OPTIONS",
+            "HEAD",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "TRACE",
+            "CONNECT",
+        ],
+        include_in_schema=False,
+    )
+    return app
 
 
 def main() -> None:

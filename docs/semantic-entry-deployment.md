@@ -44,7 +44,7 @@ Confirm project, region, budget, IAM permissions, Secret Manager access, actual 
 
 Set the frontend's public URL to the service origin, rebuild under the GitHub Pages base path, and configure the frontend origin in CORS. The backend uses the Gemini Developer API with an API key, not Vertex AI. The runtime account needs Secret Manager Secret Accessor on the Gemini key secret; it does not need Vertex AI permissions for this adapter. No member-name secret is required.
 
-The service accepts `POST /semantic-entry`, `GET /semantic-entry/:requestId`, `OPTIONS`, and `GET /health`. It uses one structured model call, an 800-token output cap, minimal thinking for the default model, a 15-second model deadline, and no model retries. [Gemini structured output reference](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) and [model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite).
+The service uses FastAPI with Uvicorn and accepts `POST /semantic-entry`, `GET /semantic-entry/:requestId`, `OPTIONS`, and `GET /health`. It uses one structured model call, an 800-token output cap, minimal thinking for the default model, a 15-second model deadline, and no model retries. [Gemini structured output reference](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) and [model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite).
 
 The existing POST endpoint now supports bounded clarification history and SSE state events; no new agent endpoint or conversation table is required. See [wire and idempotency contracts](database.md#semantic-entry-service). The hosting path must forward `text/event-stream` incrementally without buffering. A `persisting` event precedes the RPC; accepted writes continue in an in-process task after response disconnection, subject to the request deadline and instance lifetime. Verify this on the hosted path, including proxy buffering, lost responses, cold starts, and instance shutdown. Only UUID recovery is stored by the browser.
 
@@ -104,6 +104,8 @@ docker rm -f jopie-semantic-test-rest jopie-semantic-test-db
 These commands initialize a fresh stack; they are not a rerunnable migration procedure. Full Supabase Linux CI remains unverified until its workflow executes.
 
 ## GitHub Actions release
+
+FastAPI routing retains the existing `python -m semantic_entry.server` container entrypoint and `PORT` handling. Automatic API documentation endpoints are disabled.
 
 The public health endpoint is `/health`. Avoid `/healthz`: Cloud Run reserves some URL paths ending in `z`, which can return a Google frontend 404 before reaching the container. See [Cloud Run reserved URL paths](https://docs.cloud.google.com/run/docs/known-issues#reserved-url-paths). After pushing the endpoint and workflow changes to `master`, start a new workflow run; rerunning an old run uses its original source revision.
 
