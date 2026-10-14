@@ -835,7 +835,10 @@ test('analysis is plain text and is cleared for the next operation', async ({ pa
 	await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
 });
 
-test('analysis clears on clarification and does not enter question history', async ({ page }) => {
+test('chat preserves earlier messages and analysis without sending analysis in question history', async ({
+	page
+}, testInfo) => {
+	await page.setViewportSize({ width: 390, height: 844 });
 	let release!: () => void;
 	const wait = new Promise<void>((resolve) => {
 		release = resolve;
@@ -857,17 +860,28 @@ test('analysis clears on clarification and does not enter question history', asy
 	});
 	try {
 		await submit(page);
+		const conversation = page.getByRole('region', { name: '本次對話' });
+		await expect(conversation.getByLabel('你的訊息')).toHaveText(['午餐100']);
 		await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('第一輪摘要');
 		await expect(page.getByText('這筆支出的台幣總金額是多少？', { exact: true })).toBeVisible();
 		await page.getByLabel('補充資訊').fill('100');
 		await page.getByRole('button', { name: '送出補充', exact: true }).click();
 		await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
+		await expect(conversation.getByLabel('先前的分析摘要')).toHaveText('第一輪摘要');
+		await expect(conversation.getByLabel('你的訊息')).toHaveText(['午餐100', '100']);
+		await expect(
+			conversation.getByText('這筆支出的台幣總金額是多少？', { exact: true })
+		).toBeVisible();
 		await expect.poll(() => s.posts.length).toBe(2);
 		expect(s.posts[1].history).toEqual([
 			{ question: '這筆支出的台幣總金額是多少？', answer: '100' }
 		]);
 		release();
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		await page.screenshot({ path: testInfo.outputPath('chat.png') });
+		await page.getByRole('button', { name: '新增另一筆', exact: true }).click();
+		await expect(conversation.getByLabel('你的訊息')).toHaveCount(0);
+		await expect(conversation.getByLabel('先前的分析摘要')).toHaveCount(0);
 	} finally {
 		release();
 	}

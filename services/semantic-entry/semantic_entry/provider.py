@@ -63,10 +63,53 @@ class Provider:
                 "maxOutputTokens": 800,
                 "thinkingConfig": thinking,
                 "responseFormat": {
-                    "text": {"mimeType": "application/json", "schema": PROVIDER_SCHEMA}
+                    "text": {"mimeType": "APPLICATION_JSON", "schema": PROVIDER_SCHEMA}
                 },
             },
         }
+
+    @staticmethod
+    async def http_error(response: httpx.Response) -> SemanticError:
+        diagnostics: JSON = {"upstreamHttpStatus": response.status_code}
+        # Provider errors may echo private input. Retain only allowlisted metadata.
+        body = bytearray()
+        try:
+            async for chunk in response.aiter_bytes():
+                if len(body) + len(chunk) > 8192:
+                    break
+                body.extend(chunk)
+            else:
+                try:
+                    data = load_json(bytes(body))
+                    error = data.get("error", {}) if isinstance(data, dict) else {}
+                    if isinstance(error, dict):
+                        if error.get("status") in (
+                            "INVALID_ARGUMENT",
+                            "UNAUTHENTICATED",
+                            "PERMISSION_DENIED",
+                            "NOT_FOUND",
+                            "RESOURCE_EXHAUSTED",
+                            "INTERNAL",
+                            "UNAVAILABLE",
+                            "FAILED_PRECONDITION",
+                            "DEADLINE_EXCEEDED",
+                        ):
+                            diagnostics["upstreamCode"] = error["status"]
+                        message = error.get("message")
+                        if isinstance(message, str):
+                            match = re.search(r"Invalid value at '([^']+)'", message)
+                            if match and match[1] in {
+                                "generation_config.response_format.text.mime_type",
+                                "generation_config.response_format.text.schema",
+                                "generation_config.thinking_config.thinking_level",
+                                "generation_config.max_output_tokens",
+                            }:
+                                diagnostics["upstreamField"] = match[1]
+                except (ValueError, TypeError, UnicodeError):
+                    pass
+        except httpx.HTTPError as error:
+            diagnostics["exceptionType"] = type(error).__name__
+        return SemanticError(502, "provider_error", diagnostics=diagnostics)
 
     def result(self, envelope: JSON, usage: JSON) -> JSON:
         output = usage.get("candidatesTokenCount")
@@ -136,7 +179,7 @@ class Provider:
                     json=body,
                 )
                 if not response.is_success:
-                    raise SemanticError(502, "provider_error")
+                    raise await self.http_error(response)
                 data = load_json(response.content)
                 candidate = self.candidate(data)
                 if not candidate or candidate.get("finishReason") != "STOP":
@@ -147,8 +190,10 @@ class Provider:
                 return self.result(envelope, data.get("usageMetadata") or {})
         except (TimeoutError, httpx.TimeoutException):
             raise SemanticError(504, "provider_timeout") from None
-        except httpx.HTTPError:
-            raise SemanticError(502, "provider_error") from None
+        except httpx.HTTPError as e:
+            raise SemanticError(
+                502, "provider_error", diagnostics={"exceptionType": type(e).__name__}
+            ) from None
         except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
             raise SemanticError(502, "provider_invalid") from None
 
@@ -169,7 +214,7 @@ class Provider:
                     json=body,
                 ) as response:
                     if not response.is_success:
-                        raise SemanticError(502, "provider_error")
+                        raise await self.http_error(response)
                     async for payload in iter_sse_data(response.aiter_bytes()):
                         data = load_provider_json(payload)
                         candidate = self.candidate(data)
@@ -190,7 +235,9 @@ class Provider:
                 return self.result(envelope, usage)
         except (TimeoutError, httpx.TimeoutException):
             raise SemanticError(504, "provider_timeout") from None
-        except httpx.HTTPError:
-            raise SemanticError(502, "provider_error") from None
+        except httpx.HTTPError as e:
+            raise SemanticError(
+                502, "provider_error", diagnostics={"exceptionType": type(e).__name__}
+            ) from None
         except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
             raise SemanticError(502, "provider_invalid") from None

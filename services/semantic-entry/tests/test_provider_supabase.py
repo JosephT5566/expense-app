@@ -45,7 +45,7 @@ async def test_structured_provider():
     assert config["maxOutputTokens"] == 800 and config["candidateCount"] == 1
     assert config["thinkingConfig"] == {"thinkingLevel": "MINIMAL"}
     assert "tools" not in body and "cachedContent" not in body
-    assert config["responseFormat"]["text"]["mimeType"] == "application/json"
+    assert config["responseFormat"]["text"]["mimeType"] == "APPLICATION_JSON"
     assert not config["responseFormat"]["text"]["schema"]["additionalProperties"]
     assert body["contents"] == [{"role": "user", "parts": [{"text": "午餐851"}]}]
     assert "未信任" in body["systemInstruction"]["parts"][0]["text"]
@@ -402,4 +402,96 @@ async def test_runtime_uses_gemini_key_and_configured_model(monkeypatch):
     assert calls[0].headers["x-goog-api-key"] == "synthetic-gemini"
     assert json.loads(calls[0].content)["generationConfig"]["thinkingConfig"] == {
         "thinkingLevel": "LOW"
+    }
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_provider_error_retains_safe_upstream_diagnostics(streaming):
+    message = (
+        "Invalid value at 'generation_config.response_format.text.mime_type' "
+        "(type.googleapis.com/google.ai.generativelanguage.v1beta.TextResponseFormat.MimeType), "
+        '"application/json" private-key private-user-input a@example.test'
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                400, json={"error": {"status": "INVALID_ARGUMENT", "message": message}}
+            )
+        )
+    ) as client:
+        provider = Provider(client, "private-key")
+        with pytest.raises(SemanticError) as exc:
+            if streaming:
+                await provider.stream(
+                    "private-user-input", CONTEXT, lambda text: asyncio.sleep(0)
+                )
+            else:
+                await provider("private-user-input", CONTEXT)
+    assert exc.value.diagnostics == {
+        "upstreamHttpStatus": 400,
+        "upstreamCode": "INVALID_ARGUMENT",
+        "upstreamField": "generation_config.response_format.text.mime_type",
+    }
+    assert not any(
+        value in str(exc.value.diagnostics)
+        for value in ("private-key", "private-user-input", "a@example.test")
+    )
+
+
+@pytest.mark.parametrize("payload", [b"not JSON", b"x" * 9000, b'{"error":"private"}'])
+async def test_provider_error_with_unusable_body_preserves_http_status(payload):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(503, content=payload))
+    ) as client:
+        with pytest.raises(SemanticError) as exc:
+            await Provider(client, "synthetic")("test", CONTEXT)
+    assert exc.value.diagnostics == {"upstreamHttpStatus": 503}
+
+
+async def test_transport_error_keeps_only_exception_type():
+    def mock(request):
+        raise httpx.ConnectError("private-key private-user-input")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        with pytest.raises(SemanticError) as exc:
+            await Provider(client, "private-key")("private-user-input", CONTEXT)
+    assert exc.value.diagnostics == {"exceptionType": "ConnectError"}
+
+
+@pytest.mark.parametrize(
+    "message", ["private-key a@example.test", "Invalid value at 'private-user-input'"]
+)
+async def test_provider_does_not_log_unrecognized_upstream_message(message):
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                403,
+                json={"error": {"status": "private-user-input", "message": message}},
+            )
+        )
+    ) as client:
+        with pytest.raises(SemanticError) as exc:
+            await Provider(client, "private-key")("test", CONTEXT)
+    assert exc.value.diagnostics == {"upstreamHttpStatus": 403}
+
+
+async def test_error_body_read_failure_preserves_known_http_status():
+    class BrokenStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'{"error":'
+            raise httpx.ReadError("private-key connection detail")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(403, stream=BrokenStream())
+        )
+    ) as client:
+        with pytest.raises(SemanticError) as exc:
+            await Provider(client, "private-key").stream(
+                "test", CONTEXT, lambda text: asyncio.sleep(0)
+            )
+    assert exc.value.code == "provider_error"
+    assert exc.value.diagnostics == {
+        "upstreamHttpStatus": 403,
+        "exceptionType": "ReadError",
     }

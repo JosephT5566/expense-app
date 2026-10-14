@@ -9,7 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .contracts import JSON, load_json, parse_request, request_id
-from .errors import SemanticError
+from .errors import SemanticError, log_failure
 from .graph import Dependencies, invoke
 
 # Strong references only for bounded in-flight requests; no conversation storage.
@@ -27,6 +27,7 @@ async def stream_operation(
     deadline: float,
     include_analysis: bool = False,
 ) -> AsyncIterator[bytes]:
+    started = asyncio.get_running_loop().time()
     events: asyncio.Queue[tuple[str, JSON]] = asyncio.Queue(maxsize=64)
     writing = False
     connected = True
@@ -79,7 +80,15 @@ async def stream_operation(
                 )
                 await events.put(("result", result))
         except TimeoutError:
-            failure(SemanticError(504, "persist_uncertain", True))
+            error = SemanticError(504, "persist_uncertain", True)
+            log_failure(
+                deps.log,
+                "deadline",
+                error,
+                parsed["requestId"],
+                int((asyncio.get_running_loop().time() - started) * 1000),
+            )
+            failure(error)
         except SemanticError as e:
             failure(e)
         except Exception:
@@ -121,9 +130,21 @@ def accepts_analysis(value: str) -> bool:
 
 
 async def handle(request: Request, deps: Dependencies) -> Response:
+    operation_start = asyncio.get_running_loop().time()
+    identifier: str | None = None
+    active_node = "request"
+    graph_started = False
     cors = {"Vary": "Origin", "Cache-Control": "no-store"}
 
     def error(e: SemanticError) -> JSONResponse:
+        if not graph_started or active_node == "deadline":
+            log_failure(
+                deps.log,
+                active_node,
+                e,
+                identifier,
+                int((asyncio.get_running_loop().time() - operation_start) * 1000),
+            )
         return JSONResponse(
             {"error": {"code": e.code, "uncertain": e.uncertain}},
             e.status,
@@ -170,8 +191,11 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                 except ValueError:
                     raise SemanticError(400, "invalid_request") from None
                 adapter = deps.create_adapter(bearer[1])
+                active_node = "authenticate"
                 user = await adapter.authenticate()
+                active_node = "load_context"
                 await adapter.load_context(user)
+                active_node = "lookup"
                 saved = await adapter.lookup_completed(identifier)
                 return JSONResponse(
                     {"status": "completed", "requestId": identifier, **saved}
@@ -206,11 +230,14 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                     media_type="text/event-stream",
                     headers={**cors, "X-Accel-Buffering": "no"},
                 )
+            identifier = parsed["requestId"]
+            graph_started = True
             result = await invoke(parsed, bearer[1], deps)
             return JSONResponse(
                 result, 422 if result["status"] == "rejected" else 200, headers=cors
             )
     except TimeoutError:
+        active_node = "deadline"
         return error(SemanticError(504, "persist_uncertain", True))
     except SemanticError as e:
         return error(e)

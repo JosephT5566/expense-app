@@ -274,3 +274,181 @@ async def test_deadline_includes_slow_body(setup):
     )
     assert response.status_code == 504
     adapter.authenticate.assert_not_awaited()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_failure_logs_node_and_safe_message_without_changing_wire(
+    setup, streaming
+):
+    deps, adapter = setup
+    deps.extract_entry.side_effect = SemanticError(502, "provider_error")
+    response = await client_response(
+        deps,
+        json=REQUEST,
+        headers={
+            "Authorization": "Bearer private-token",
+            "Accept": "text/event-stream" if streaming else "application/json",
+        },
+    )
+    if streaming:
+        assert response.status_code == 200
+        assert '"code":"provider_error","uncertain":false' in response.text
+    else:
+        assert response.status_code == 502
+        assert response.json() == {
+            "error": {"code": "provider_error", "uncertain": False}
+        }
+    errors = [
+        call.args[0]
+        for call in deps.log.call_args_list
+        if call.args[0]["status"] == "error"
+    ]
+    assert len(errors) == 1
+    assert errors[0]["node"] == "extract"
+    assert errors[0]["requestId"] == REQUEST_ID
+    assert errors[0]["errorCode"] == "provider_error"
+    assert errors[0]["errorMessage"]
+    assert errors[0]["severity"] == "ERROR"
+    adapter.persist_expense.assert_not_awaited()
+
+
+async def test_unexpected_exception_is_logged_without_private_exception_text(setup):
+    deps, _ = setup
+    deps.extract_entry.side_effect = ValueError("private-token a@example.test 午餐851")
+    with pytest.raises(ValueError):
+        await invoke(REQUEST, "private-token", deps)
+    event = deps.log.call_args.args[0]
+    assert event["node"] == "extract" and event["errorCode"] == "service_error"
+    assert event["exceptionType"] == "ValueError"
+    assert not any(
+        secret in str(event) for secret in ("private-token", "a@example", "午餐")
+    )
+
+
+async def test_failure_logger_exception_does_not_replace_service_error(setup):
+    deps, _ = setup
+    deps.log.side_effect = RuntimeError("logger unavailable")
+    deps.extract_entry.side_effect = SemanticError(502, "provider_error")
+    with pytest.raises(SemanticError) as exc:
+        await invoke(REQUEST, "t", deps)
+    assert exc.value.code == "provider_error"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_real_provider_failure_reaches_structured_log(setup, streaming):
+    from semantic_entry.provider import Provider
+
+    deps, _ = setup
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "status": "INVALID_ARGUMENT",
+                        "message": "Invalid value at 'generation_config.response_format.text.mime_type': private-token 午餐851",
+                    }
+                },
+            )
+        )
+    ) as provider_client:
+        provider = Provider(provider_client, "private-key")
+        deps.extract_entry = provider
+        deps.stream_entry = provider.stream
+        await client_response(
+            deps,
+            json=REQUEST,
+            headers={
+                "Authorization": "Bearer private-token",
+                "Accept": "text/event-stream; semantic-version=2"
+                if streaming
+                else "application/json",
+            },
+        )
+    event = deps.log.call_args.args[0]
+    assert event["errorCode"] == "provider_error" and event["node"] == "extract"
+    assert event["upstreamHttpStatus"] == 400
+    assert event["upstreamCode"] == "INVALID_ARGUMENT"
+    assert (
+        event["errorMessage"]
+        == "Gemini rejected parameter: generation_config.response_format.text.mime_type."
+    )
+    assert not any(
+        secret in str(event)
+        for secret in ("private-token", "private-key", "午餐", "a@example")
+    )
+
+
+@pytest.mark.parametrize(
+    "method,node",
+    [
+        ("authenticate", "authenticate"),
+        ("load_context", "load_context"),
+        ("lookup_completed", "lookup"),
+        ("consume_quota", "quota"),
+        ("persist_expense", "persist"),
+    ],
+)
+async def test_failure_identifies_database_stage(setup, method, node):
+    deps, adapter = setup
+    getattr(adapter, method).side_effect = SemanticError(502, "database_error")
+    with pytest.raises(SemanticError):
+        await invoke(REQUEST, "private-token", deps)
+    assert deps.log.call_args.args[0]["node"] == node
+    assert deps.log.call_args.args[0]["errorCode"] == "database_error"
+
+
+async def test_status_lookup_failure_has_sanitized_log(setup):
+    deps, adapter = setup
+    adapter.lookup_completed.side_effect = SemanticError(502, "database_error")
+    response = await client_response(
+        deps,
+        method="GET",
+        path=f"/semantic-entry/{REQUEST_ID}",
+        headers={"Authorization": "Bearer private-token"},
+    )
+    assert response.status_code == 502
+    event = deps.log.call_args.args[0]
+    assert event["node"] == "lookup" and event["requestId"] == REQUEST_ID
+    assert event["errorCode"] == "database_error"
+
+
+async def test_stream_request_timeout_is_logged(setup):
+    deps, _ = setup
+    deps.http_deadline = 0.02
+
+    async def slow_extract(text, context):
+        await asyncio.sleep(1)
+
+    deps.extract_entry = slow_extract
+    response = await client_response(
+        deps,
+        json=REQUEST,
+        headers={"Authorization": "Bearer t", "Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200 and '"code":"persist_uncertain"' in response.text
+    errors = [
+        call.args[0]
+        for call in deps.log.call_args_list
+        if call.args[0]["status"] == "error"
+    ]
+    assert len(errors) == 1 and errors[0]["node"] == "deadline"
+    assert errors[0]["errorCode"] == "persist_uncertain"
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_adapter_initialization_failure_is_logged(setup, streaming):
+    deps, _ = setup
+    deps.create_adapter.side_effect = RuntimeError("private-token initialization")
+    response = await client_response(
+        deps,
+        json=REQUEST,
+        headers={
+            "Authorization": "Bearer private-token",
+            "Accept": "text/event-stream" if streaming else "application/json",
+        },
+    )
+    assert response.status_code == (200 if streaming else 502)
+    event = deps.log.call_args.args[0]
+    assert event["node"] == "initialize" and event["errorCode"] == "service_error"
+    assert "private-token" not in str(event)
