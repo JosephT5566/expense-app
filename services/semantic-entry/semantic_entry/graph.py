@@ -10,7 +10,7 @@ from langsmith import tracing_context
 
 from .clarification import clarification_result
 from .contracts import JSON, parse_request
-from .errors import SemanticError
+from .errors import SemanticError, error_details, log_failure
 from .normalize import normalize_extraction
 from .prompt import PROMPT_VERSION
 from .provider_stream import AnalysisCallback
@@ -73,14 +73,25 @@ async def invoke(
     on_analysis: AnalysisCallback | None = None,
 ) -> JSON:
     request = parse_request(request)
-    adapter = deps.create_adapter(token)
     start = time.monotonic()
+    try:
+        adapter = deps.create_adapter(token)
+    except Exception as error:
+        log_failure(
+            deps.log,
+            "initialize",
+            error,
+            request["requestId"],
+            int((time.monotonic() - start) * 1000),
+        )
+        raise
     digest = input_hash(request)
+    active_node = "authenticate"
 
     def elapsed() -> int:
         return int((time.monotonic() - start) * 1000)
 
-    def log(node: str, status: str) -> None:
+    def log(node: str, status: str, details: JSON | None = None) -> None:
         try:
             if deps.log:
                 deps.log(
@@ -89,6 +100,7 @@ async def invoke(
                         "node": node,
                         "status": status,
                         "elapsedMs": elapsed(),
+                        **(details or {}),
                     }
                 )
         except Exception:
@@ -105,14 +117,20 @@ async def invoke(
         }
 
     async def authenticate(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "authenticate"
         user = await adapter.authenticate()
         log("authenticate", "ok")
         return {"user": user}
 
     async def load_context(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "load_context"
         return {"context": await adapter.load_context(state["user"])}
 
     async def lookup(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "lookup"
         saved = await adapter.lookup_completed(request["requestId"], digest)
         return (
             {
@@ -128,11 +146,15 @@ async def invoke(
         )
 
     async def quota(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "quota"
         if not await adapter.consume_quota():
             raise SemanticError(429, "quota_exceeded")
         return {}
 
     async def extract(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "extract"
         text = (
             conversation_payload(request) if request.get("history") else request["text"]
         )
@@ -150,6 +172,8 @@ async def invoke(
         }
 
     def validate(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "validate"
         validation = normalize_extraction(state["extraction"]["raw"], state["context"])
         result = {"validation": validation}
         if validation["status"] == "rejected":
@@ -157,6 +181,8 @@ async def invoke(
         return result
 
     async def persist(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "persist"
         if state["validation"]["status"] != "valid":
             raise SemanticError(502, "invalid_graph_state")
         if on_persisting:
@@ -170,9 +196,16 @@ async def invoke(
         except SemanticError as e:
             if not e.uncertain:
                 raise
-            raise SemanticError(504, "persist_uncertain", True) from None
-        except Exception:
-            raise SemanticError(504, "persist_uncertain", True) from None
+            raise SemanticError(
+                504, "persist_uncertain", True, diagnostics=e.diagnostics
+            ) from None
+        except Exception as e:
+            raise SemanticError(
+                504,
+                "persist_uncertain",
+                True,
+                diagnostics={"exceptionType": type(e).__name__},
+            ) from None
         return {
             "result": {
                 "status": "created",
@@ -183,6 +216,8 @@ async def invoke(
         }
 
     def emit(state: State) -> JSON:
+        nonlocal active_node
+        active_node = "emit"
         log("emit_result", state["result"]["status"])
         return {}
 
@@ -215,6 +250,10 @@ async def invoke(
         ),
     )
     # No checkpointer, state persistence, tools or externally enabled payload tracing.
-    with tracing_context(enabled=False):
-        final = await graph.compile().ainvoke({}, config={"callbacks": []})
-    return final["result"]
+    try:
+        with tracing_context(enabled=False):
+            final = await graph.compile().ainvoke({}, config={"callbacks": []})
+        return final["result"]
+    except Exception as error:
+        log(active_node, "error", error_details(error))
+        raise
