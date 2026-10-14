@@ -121,7 +121,7 @@
 		"text": "甲乙午餐851元均分",
 		"context": {
 			"today": "2026-03-01",
-			"currentUserEmail": "a@example.test",
+			"currentUserEmail": "c@example.test",
 			"members": [
 				{
 					"id": "a",
@@ -132,6 +132,11 @@
 					"id": "b",
 					"email": "b@example.test",
 					"name": "乙"
+				},
+				{
+					"id": "c",
+					"email": "c@example.test",
+					"name": "丙"
 				}
 			],
 			"categories": [
@@ -163,7 +168,7 @@
 				"amount": 851,
 				"currency": "TWD",
 				"ts": "2026-02-28T16:00:00.000Z",
-				"payer_email": "a@example.test",
+				"payer_email": "c@example.test",
 				"scope": "household",
 				"shares_json": {
 					"a@example.test": 426,
@@ -1103,7 +1108,7 @@
 	{
 		"id": "splits-1",
 		"group": "splits",
-		"text": "大家均分午餐851",
+		"text": "今天午餐500麥當勞平分",
 		"context": {
 			"today": "2026-03-01",
 			"currentUserEmail": "a@example.test",
@@ -1116,7 +1121,12 @@
 				{
 					"id": "b",
 					"email": "b@example.test",
-					"name": "乙"
+					"name": "派大"
+				},
+				{
+					"id": "c",
+					"email": "c@example.test",
+					"name": "丙"
 				}
 			],
 			"categories": [
@@ -1127,28 +1137,37 @@
 			]
 		},
 		"raw": {
-			"note": "午餐",
-			"amount": 851,
+			"note": "午餐麥當勞",
+			"amount": 500,
 			"currency": null,
 			"date": {
-				"kind": "missing",
+				"kind": "today",
 				"value": null
 			},
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": true,
-			"splitMemberIds": null,
+			"splitMemberIds": ["a", "b", "c"],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
 		"expected": {
-			"status": "rejected",
-			"issues": [
-				{
-					"field": "splitMemberIds",
-					"code": "ambiguous_member"
-				}
-			]
+			"status": "valid",
+			"fields": {
+				"note": "午餐麥當勞",
+				"amount": 500,
+				"currency": "TWD",
+				"ts": "2026-02-28T16:00:00.000Z",
+				"payer_email": "a@example.test",
+				"scope": "household",
+				"shares_json": {
+					"a@example.test": 168,
+					"b@example.test": 166,
+					"c@example.test": 166
+				},
+				"category_id": "11111111-1111-4111-8111-111111111111",
+				"is_settled": false
+			}
 		}
 	},
 	{
@@ -1315,7 +1334,7 @@
 	{
 		"id": "splits-5",
 		"group": "splits",
-		"text": "甲乙丙均分午餐851",
+		"text": "今天午餐500麥當勞與派大兩人平分",
 		"context": {
 			"today": "2026-03-01",
 			"currentUserEmail": "a@example.test",
@@ -1328,7 +1347,7 @@
 				{
 					"id": "b",
 					"email": "b@example.test",
-					"name": "乙"
+					"name": "派大"
 				},
 				{
 					"id": "c",
@@ -1344,33 +1363,32 @@
 			]
 		},
 		"raw": {
-			"note": "午餐",
-			"amount": 851,
+			"note": "午餐麥當勞",
+			"amount": 500,
 			"currency": null,
 			"date": {
-				"kind": "missing",
+				"kind": "today",
 				"value": null
 			},
 			"payerId": null,
 			"scope": "household",
-			"hasSharedIntent": false,
-			"splitMemberIds": ["c", "b", "a"],
+			"hasSharedIntent": true,
+			"splitMemberIds": ["a", "b"],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
 		"expected": {
 			"status": "valid",
 			"fields": {
-				"note": "午餐",
-				"amount": 851,
+				"note": "午餐麥當勞",
+				"amount": 500,
 				"currency": "TWD",
 				"ts": "2026-02-28T16:00:00.000Z",
 				"payer_email": "a@example.test",
 				"scope": "household",
 				"shares_json": {
-					"a@example.test": 285,
-					"b@example.test": 283,
-					"c@example.test": 283
+					"a@example.test": 250,
+					"b@example.test": 250
 				},
 				"category_id": "11111111-1111-4111-8111-111111111111",
 				"is_settled": false

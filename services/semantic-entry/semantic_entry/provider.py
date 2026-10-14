@@ -145,6 +145,15 @@ class Provider:
         candidate = candidates[0]
         if candidate.get("finishReason") in BLOCKED:
             raise SemanticError(502, "provider_refusal")
+        if candidate.get("finishReason") == "MAX_TOKENS":
+            raise SemanticError(
+                502,
+                "provider_invalid",
+                diagnostics={
+                    "validationStage": "candidate",
+                    "finishReason": "MAX_TOKENS",
+                },
+            )
         if candidate.get("finishReason") not in (None, "STOP"):
             raise ValueError("Incomplete output")
         return candidate
@@ -171,6 +180,7 @@ class Provider:
 
     async def __call__(self, text: str, context: JSON) -> JSON:
         body = self.request_body(text, context)
+        stage = "response"
         try:
             async with asyncio.timeout(self.deadline):
                 response = await self.client.post(
@@ -181,12 +191,17 @@ class Provider:
                 if not response.is_success:
                     raise await self.http_error(response)
                 data = load_json(response.content)
+                stage = "candidate"
                 candidate = self.candidate(data)
                 if not candidate or candidate.get("finishReason") != "STOP":
                     raise ValueError("Incomplete output")
-                envelope = parse_provider_envelope(
-                    load_provider_json(self.text(candidate))
-                )
+                stage = "content"
+                output = self.text(candidate)
+                stage = "json"
+                raw = load_provider_json(output)
+                stage = "envelope"
+                envelope = parse_provider_envelope(raw)
+                stage = "usage"
                 return self.result(envelope, data.get("usageMetadata") or {})
         except (TimeoutError, httpx.TimeoutException):
             raise SemanticError(504, "provider_timeout") from None
@@ -194,8 +209,15 @@ class Provider:
             raise SemanticError(
                 502, "provider_error", diagnostics={"exceptionType": type(e).__name__}
             ) from None
-        except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
-            raise SemanticError(502, "provider_invalid") from None
+        except (ValueError, TypeError, AttributeError, KeyError, UnicodeError) as error:
+            raise SemanticError(
+                502,
+                "provider_invalid",
+                diagnostics={
+                    "validationStage": stage,
+                    "exceptionType": type(error).__name__,
+                },
+            ) from None
 
     async def stream(
         self, text: str, context: JSON, on_analysis: AnalysisCallback
@@ -204,6 +226,7 @@ class Provider:
         decoder = AnalysisDecoder()
         usage: JSON = {}
         finished = False
+        stage = "sse"
         try:
             async with asyncio.timeout(self.deadline):
                 async with self.client.stream(
@@ -216,22 +239,35 @@ class Provider:
                     if not response.is_success:
                         raise await self.http_error(response)
                     async for payload in iter_sse_data(response.aiter_bytes()):
+                        stage = "response"
                         data = load_provider_json(payload)
+                        stage = "candidate"
                         candidate = self.candidate(data)
                         if "usageMetadata" in data:
                             usage = data["usageMetadata"] or {}
                         if candidate is None:
+                            stage = "sse"
                             continue
                         if finished:
                             raise ValueError("Candidate after completion")
-                        delta = decoder.feed(self.text(candidate))
+                        stage = "content"
+                        output = self.text(candidate)
+                        stage = "analysis"
+                        delta = decoder.feed(output)
                         if delta:
                             await on_analysis(delta)
                         finished = candidate.get("finishReason") == "STOP"
+                        stage = "sse"
+                stage = "completion"
                 if not finished:
                     raise ValueError("Missing completion")
-                envelope = parse_provider_envelope(load_provider_json(decoder.buffer))
+                stage = "json"
+                raw = load_provider_json(decoder.buffer)
+                stage = "envelope"
+                envelope = parse_provider_envelope(raw)
+                stage = "analysis"
                 decoder.finish(envelope["analysis"])
+                stage = "usage"
                 return self.result(envelope, usage)
         except (TimeoutError, httpx.TimeoutException):
             raise SemanticError(504, "provider_timeout") from None
@@ -239,5 +275,12 @@ class Provider:
             raise SemanticError(
                 502, "provider_error", diagnostics={"exceptionType": type(e).__name__}
             ) from None
-        except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
-            raise SemanticError(502, "provider_invalid") from None
+        except (ValueError, TypeError, AttributeError, KeyError, UnicodeError) as error:
+            raise SemanticError(
+                502,
+                "provider_invalid",
+                diagnostics={
+                    "validationStage": stage,
+                    "exceptionType": type(error).__name__,
+                },
+            ) from None
