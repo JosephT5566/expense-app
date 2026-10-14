@@ -1,6 +1,6 @@
 # Gemini 串流分析與規則式記帳設計
 
-日期：2026-10-14。狀態：依使用者最新要求，改為 Gemini 抽取與分析、程式決策；等待修訂文件審閱，尚未實作。
+日期：2026-10-14。狀態：修訂設計與實作計畫已核准，repository implementation／local verification 完成；hosted acceptance 尚未驗證。結果見 [驗證紀錄](../../evidence/semantic-entry/2026-10-14-streaming-analysis.md)。
 
 ## 目標與使用者體驗
 
@@ -63,7 +63,7 @@ Provider 的非串流呼叫介面仍可用於合成評估；streaming 方法接�
 
 非串流 POST 與 SSE POST 使用同一套 graph 和驗證規則。Graph 的結果形成唯一的 terminal result。不得把完整 graph state、context、token 或 raw provider payload 直接轉送至瀏覽器。
 
-Handler 保留對操作 task 的強參考及既有寫入不確定性處理。事件 Queue 上限 64；使用 await 產生背壓，不丟棄 persisting／result／error。整體仍受 30 秒服務時限約束。
+Handler 保留對操作 task 的強參考及既有寫入不確定性處理。事件 Queue 上限 64；使用 await 產生背壓，不丟棄 persisting／result／error。出錯且 Queue 滿時可以丟棄待送 analysis，以非阻塞方式保留 persisting／terminal error；斷線 cleanup 釋放待送事件，避免保留未開始 RPC 的 task。整體仍受 30 秒服務時限約束。
 
 在 persist 前連線中斷時取消模型／graph 工作並關閉上游 HTTP stream。一旦進入持久化，回應中斷不主動取消已接受的寫入；任務仍受原時限與容器生命週期限制，不能宣稱持久背景執行。恢復方式仍為同 requestId 查詢／重試。
 
@@ -126,7 +126,7 @@ LangGraph 使用本機 library，不新增 LangSmith hosted service、checkpoint
 
 ## 證據與後續關卡
 
-Repository-verified：現有非串流 provider、graph／handler、固定追問、前端 SSE validator 與三輪限制已對照原始碼。本文件是待實作設計，不代表功能已完成。此版本取代先前 Gemini 決定 ready／needs_input／rejected 與產生問題的提案；不保留兩套決策架構。
+Repository-verified：現有非串流 provider、graph／handler、固定追問、前端 SSE validator 與三輪限制已對照原始碼。本文件記錄核准設計；實作與驗證範圍以本次驗證紀錄為準。此版本取代先前 Gemini 決定 ready／needs_input／rejected 與產生問題的提案；不保留兩套決策架構。
 
 Google 文件說明 structured output 可串流。LangGraph 本次保留既有執行方式，分析透過明確 callback 接力；不依賴 LangGraph 自動擷取 HTTPX 模型片段。模型 key／schema 在選定模型上的接受度、成本、首段延遲、Cloud Run 緩衝及中斷行為尚未由 live call 驗證。
 
@@ -134,4 +134,4 @@ Google 文件說明 structured output 可串流。LangGraph 本次保留既有�
 - [Gemini streaming REST API](https://ai.google.dev/api/generate-content#method:-models.streamgeneratecontent)
 - [LangGraph streaming](https://docs.langchain.com/oss/python/langgraph/streaming)
 
-本文件審閱通過後才撰寫實作計畫，再由使用者審閱計畫及選擇執行方式。Paid live call、push、merge 與 deploy 需要各自已授權的範圍。
+使用者已審閱本修訂設計與實作計畫，選擇本對話逐項執行並完成整體審查。Paid live call、push、merge 與 deploy 仍需要各自已授權的範圍。

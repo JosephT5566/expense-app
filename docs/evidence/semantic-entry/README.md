@@ -4,6 +4,10 @@ Evidence is scoped to its environment. Local implementation and fixtures do not 
 
 以下各階段資料保留當時的驗證範圍；目前契約以 [service contracts](../../database.md#semantic-entry-service) 為準。
 
+## Streaming analysis — 2026-10-14
+
+[Streaming analysis verification](2026-10-14-streaming-analysis.md) records the rule-preserving Gemini streaming implementation, 187 backend tests, root/subpath 38 browser tests each, reviewed lifecycle fixes, the existing full-repository lint failure, and remaining hosted/model gaps.
+
 ## Database baseline and adoption — 2026-10-13
 
 The [中文 database adoption record](2026-10-13-database-baseline.md) records the captured public schema, verified existing semantic objects, adopted migration history, applied trigger fix, new full-chain test/workflow, and remaining JSONB/amount/fallback-category gaps. Historical sections below retain their original scope; they are not current claims that no production SQL action has occurred.
