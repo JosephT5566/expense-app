@@ -38,19 +38,21 @@ def environment_dependencies(client: httpx.AsyncClient) -> Dependencies:
     def log(event: JSON) -> None:
         print(json.dumps(event), flush=True)
 
+    provider = Provider(
+        client,
+        os.environ.get("GEMINI_API_KEY", ""),
+        os.environ.get("SEMANTIC_MODEL", DEFAULT_MODEL),
+    )
     return Dependencies(
         adapter,
-        Provider(
-            client,
-            os.environ.get("GEMINI_API_KEY", ""),
-            os.environ.get("SEMANTIC_MODEL", DEFAULT_MODEL),
-        ),
+        provider,
         log,
         tuple(
             o.strip()
             for o in os.environ.get("SEMANTIC_ALLOWED_ORIGINS", "").split(",")
             if o.strip()
         ),
+        stream_entry=provider.stream,
     )
 
 

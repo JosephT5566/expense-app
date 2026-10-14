@@ -290,11 +290,29 @@ export function parseStatusResponse(raw: unknown): StatusResponse {
 }
 
 export type SemanticStreamEvent =
+	| { type: 'analysis_delta'; requestId: string; seq: number; text: string }
 	| { type: 'persisting'; requestId: string }
 	| { type: 'result'; result: SemanticResponse }
 	| { type: 'error'; code: string; uncertain: boolean };
 export function parseStreamEvent(event: string, raw: unknown): SemanticStreamEvent {
 	const r = object(raw);
+	if (event === 'analysis_delta') {
+		exactKeys(r, ['requestId', 'seq', 'text']);
+		if (
+			typeof r.text !== 'string' ||
+			!r.text.length ||
+			[...r.text].length > 200 ||
+			/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u.test(r.text)
+		) {
+			throw new Error('Invalid analysis');
+		}
+		return {
+			type: 'analysis_delta',
+			requestId: requestId(r.requestId),
+			seq: integer(r.seq),
+			text: r.text
+		};
+	}
 	if (event === 'result') {
 		return { type: 'result', result: parseResponse(raw) };
 	}

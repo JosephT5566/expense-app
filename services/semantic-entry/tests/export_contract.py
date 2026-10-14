@@ -72,7 +72,13 @@ async def main():
     async def extract(text, context):
         return extraction
 
-    deps = Dependencies(Mock(return_value=adapter), extract)
+    async def stream_extract(text, context, callback):
+        await callback("辨識午餐🍜")
+        return extraction
+
+    deps = Dependencies(
+        Mock(return_value=adapter), extract, stream_entry=stream_extract
+    )
     responses = []
     streams = []
     async with httpx.AsyncClient(
@@ -119,6 +125,20 @@ async def main():
                         "body": json.loads(lines[1].removeprefix("data: ")),
                     }
                 )
+        extraction["raw"] = deepcopy(RAW)
+        stream = await client.post(
+            "/semantic-entry",
+            headers={**headers, "Accept": "text/event-stream; semantic-version=2"},
+            json=REQUEST,
+        )
+        for frame in stream.text.strip().split("\n\n"):
+            lines = frame.splitlines()
+            streams.append(
+                {
+                    "event": lines[0].removeprefix("event: "),
+                    "body": json.loads(lines[1].removeprefix("data: ")),
+                }
+            )
         adapter.saved = {"expense": ROW, "replayed": True}
         responses.append(
             {

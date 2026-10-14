@@ -36,7 +36,9 @@ for (const item of cases.streams) {
 		parseStreamEvent(item.event, item.body),
 		item.event === 'result'
 			? { type: 'result', result: item.body }
-			: { type: 'persisting', requestId: item.body.requestId }
+			: item.event === 'analysis_delta'
+				? { type: 'analysis_delta', ...item.body }
+				: { type: 'persisting', requestId: item.body.requestId }
 	);
 }
 console.log(
@@ -69,3 +71,14 @@ assert.throws(() =>
 		issues: [{ field: 'amount', code: 'missing' }]
 	})
 );
+
+for (const body of [
+	{ requestId: 'bad', seq: 0, text: '午餐' },
+	{ requestId: id, seq: -1, text: '午餐' },
+	{ requestId: id, seq: 0.5, text: '午餐' },
+	{ requestId: id, seq: 0, text: '' },
+	{ requestId: id, seq: 0, text: '🍜'.repeat(201) },
+	{ requestId: id, seq: 0, text: '\uD800' },
+	{ requestId: id, seq: 0, text: '午餐', extra: true }
+])
+	assert.throws(() => parseStreamEvent('analysis_delta', body));

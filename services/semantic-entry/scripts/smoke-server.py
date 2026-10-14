@@ -65,8 +65,15 @@ async def extract(text, context):
     }
 
 
+async def stream_extract(text, context, callback):
+    await callback("辨識合成支出")
+    return await extract(text, context)
+
+
 uvicorn.run(
-    create_app(Dependencies(lambda token: Adapter(), extract)),
+    create_app(
+        Dependencies(lambda token: Adapter(), extract, stream_entry=stream_extract)
+    ),
     host="0.0.0.0",
     port=8080,
     access_log=False,

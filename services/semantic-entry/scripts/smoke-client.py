@@ -60,3 +60,23 @@ with urlopen(
 print(
     "Container smoke: health200, missing-token401, extra-field400, mock-created200, GET not_found200, history/SSE persisting→created200"
 )
+
+with urlopen(
+    Request(
+        BASE + "/semantic-entry",
+        data=json.dumps(body).encode(),
+        headers={
+            "Authorization": "Bearer synthetic",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream; semantic-version=2",
+        },
+    ),
+    timeout=3,
+) as response:
+    stream = response.read().decode()
+    assert (
+        stream.index("event: analysis_delta")
+        < stream.index("event: persisting")
+        < stream.index("event: result")
+    )
+print("Container smoke: v2 analysis precedes writing/result")
