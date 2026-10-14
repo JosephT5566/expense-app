@@ -2,7 +2,9 @@
 	import type { ExpenseRow } from '$lib/types/expense';
 	import * as Dialog from '$lib/components/shadcn/dialog';
 	import { Button } from '$lib/components/shadcn/button';
-	import { X } from 'lucide-svelte';
+	import Image from 'lucide-svelte/icons/image';
+	import Text from 'lucide-svelte/icons/text';
+	import X from 'lucide-svelte/icons/x';
 	import SemanticEntryContent from './semantic-entry/SemanticEntryContent.svelte';
 	import ReceiptImportContent from './ai-receipt/ReceiptImportContent.svelte';
 
@@ -73,21 +75,33 @@
 			<Dialog.Title>{mode === 'semantic' ? '文字記帳' : '圖片分析'}</Dialog.Title>
 			<Dialog.Description>選擇文字記帳或圖片分析新增支出。</Dialog.Description>
 		</Dialog.Header>
-		<div class="flex gap-1 rounded-lg bg-muted p-1 mr-8" role="group" aria-label="AI 記帳模式">
+		<div
+			class="flex w-fit gap-1 rounded-lg bg-muted p-1 mr-8"
+			role="group"
+			aria-label="AI 記帳模式"
+		>
 			<Button
 				variant={mode === 'semantic' ? 'default' : 'ghost'}
-				class="flex-1"
+				size="icon"
+				aria-label="文字記帳"
+				title="文字記帳"
 				aria-pressed={mode === 'semantic'}
 				disabled={busy}
-				onclick={() => (mode = 'semantic')}>文字記帳</Button
+				onclick={() => (mode = 'semantic')}
 			>
+				<Text class="h-4 w-4" aria-hidden="true" />
+			</Button>
 			<Button
 				variant={mode === 'image' ? 'default' : 'ghost'}
-				class="flex-1"
+				size="icon"
+				aria-label="圖片分析"
+				title="圖片分析"
 				aria-pressed={mode === 'image'}
 				disabled={busy}
-				onclick={() => (mode = 'image')}>圖片分析</Button
+				onclick={() => (mode = 'image')}
 			>
+				<Image class="h-4 w-4" aria-hidden="true" />
+			</Button>
 		</div>
 		<div class="flex-1 overflow-y-auto px-1" hidden={mode !== 'semantic'}>
 			<SemanticEntryContent

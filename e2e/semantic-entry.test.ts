@@ -951,6 +951,41 @@ for (const suffix of ['analysis', 'second-result']) {
 	});
 }
 
+test('chat composer stays visible and shows a hint for the current phase', async ({ page }) => {
+	let release!: () => void;
+	const wait = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await setup(page, async (route, body) => {
+		await wait;
+		await route.fulfill({
+			json: {
+				status: 'needs_input',
+				requestId: body!.requestId,
+				question: '這筆支出的台幣總金額是多少？',
+				issues: [{ field: 'amount', code: 'missing' }]
+			}
+		});
+	});
+	try {
+		const composer = page.getByRole('dialog').locator('textarea');
+		await expect(composer).toHaveCount(1);
+		await expect(page.getByText('資訊完整後會直接記帳。', { exact: true })).toBeVisible();
+		await submit(page);
+		await expect(composer).toBeVisible();
+		await expect(composer).toBeDisabled();
+		await expect(page.getByText('正在解析，請等待助手回覆。', { exact: true })).toBeVisible();
+		release();
+		await expect(page.getByLabel('補充資訊')).toBeEditable();
+		await expect(composer).toHaveCount(1);
+		await expect(
+			page.getByText('補充這筆支出的資訊，接續剛才的對話。', { exact: true })
+		).toBeVisible();
+	} finally {
+		release();
+	}
+});
+
 test('AI dialog defaults to semantic entry and preserves input across mode switches', async ({
 	page
 }) => {
