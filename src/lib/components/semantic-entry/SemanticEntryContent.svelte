@@ -2,6 +2,7 @@
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Button } from '$lib/components/shadcn/button';
+	import Send from 'lucide-svelte/icons/send';
 	import { user } from '$lib/stores/session.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
 	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
@@ -92,6 +93,23 @@
 	}
 	const count = $derived([...text.trim()].length);
 	const replyCount = $derived([...reply.trim()].length);
+	const composingReply = $derived(phase === 'needs_input');
+	const canCompose = $derived(phase === 'input' || composingReply);
+	const composerCount = $derived(composingReply ? replyCount : count);
+	const composerHint = $derived(
+		composerCount > 500 && canCompose
+			? '訊息最多 500 字，請縮短後再送出。'
+			: {
+					input: '資訊完整後會直接記帳。',
+					needs_input: '補充這筆支出的資訊，接續剛才的對話。',
+					processing: '正在解析，請等待助手回覆。',
+					persisting: '正在儲存這筆支出，請稍候。',
+					created: '已完成記帳，點選「新增另一筆」開始新對話。',
+					rejected: '請修改內容後重新送出。',
+					error: '請查看助手訊息，再修改內容或稍後重試。',
+					uncertain: '請先查詢結果或重試同一請求，避免重複記帳。'
+				}[phase]
+	);
 	const fields: Record<string, string> = {
 		amount: '金額',
 		note: '描述',
@@ -366,20 +384,14 @@
 
 <svelte:window onpagehide={leavePage} />
 
-<div class="flex flex-col gap-4">
-	<div class="space-y-2">
-		<h2 class="text-base font-medium">文字記帳</h2>
-		<p class="text-muted-foreground text-sm">
-			描述一筆支出；資訊不足時會追問，完整後直接記帳。
-		</p>
-	</div>
+<div class="flex h-[60vh] min-h-0 flex-col gap-3">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable conversation needs keyboard access.) -->
 	<div
 		bind:this={conversationElement}
 		role="region"
 		aria-label="本次對話"
 		tabindex="0"
-		class="max-h-[40vh] min-h-24 space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-muted/15 p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+		class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-muted/15 p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
 		onscroll={() => {
 			if (conversationElement) {
 				followLatest =
@@ -458,53 +470,62 @@
 					{/if}
 					{#if message}<p class="text-sm">{message}</p>{/if}
 				</div>
+				<div class="flex flex-wrap gap-2">
+					{#if phase === 'uncertain'}
+						<Button size="sm" onclick={() => execute(true)}>查詢結果</Button>
+						{#if attempt}
+							<Button size="sm" variant="outline" onclick={() => execute()}
+								>重試同一請求</Button
+							>
+						{/if}
+					{:else if phase === 'created'}
+						<Button size="sm" onclick={() => newOperation()}>新增另一筆</Button>
+					{:else if phase === 'rejected' || phase === 'error'}
+						<Button size="sm" onclick={() => newOperation(false)}>修改後重新送出</Button
+						>
+					{/if}
+				</div>
 			</div>
 		</div>
 	</div>
 
-	<div class="space-y-2 border-t pt-3">
-		<div hidden={phase !== 'input'} class="space-y-2">
-			<label for="semantic-entry-text" class="text-sm font-medium">記帳內容</label>
+	<div class="shrink-0 space-y-2">
+		<div class="text-muted-foreground flex items-start justify-between gap-3 px-1 text-xs">
+			<p id="semantic-entry-hint">{composerHint}</p>
+			{#if canCompose}<span class="shrink-0 tabular-nums">{composerCount}/500</span>{/if}
+		</div>
+		<div
+			class="bg-background flex items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
+		>
 			<textarea
 				id="semantic-entry-text"
-				bind:value={text}
-				disabled={attempt !== null || phase === 'uncertain'}
+				aria-label={composingReply ? '補充資訊' : '記帳內容'}
+				aria-describedby="semantic-entry-hint"
+				bind:value={
+					() => (composingReply ? reply : text),
+					(value) => {
+						if (composingReply) {
+							reply = value;
+						} else {
+							text = value;
+						}
+					}
+				}
+				disabled={!canCompose || (phase === 'input' && attempt !== null)}
 				rows="2"
-				class="bg-background w-full resize-none rounded-xl border p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
-				placeholder="例如：今天午餐100元"
+				class="min-w-0 flex-1 resize-none bg-transparent px-2 py-1 text-sm focus-visible:outline-none"
+				placeholder={composingReply ? '輸入你的回答…' : '例如：今天午餐100元'}
 			></textarea>
-			<p class="text-muted-foreground text-xs">{count}/500 字 · 單筆台幣支出</p>
-		</div>
-		{#if phase === 'needs_input'}
-			<label for="semantic-entry-reply" class="text-sm font-medium">補充資訊</label>
-			<textarea
-				id="semantic-entry-reply"
-				bind:value={reply}
-				rows="2"
-				class="bg-background w-full resize-none rounded-xl border p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
-				placeholder="輸入你的回答…"
-			></textarea>
-			<p class="text-muted-foreground text-xs">{replyCount}/500 字</p>
-		{/if}
-		<div class="flex flex-wrap gap-2">
-			{#if phase === 'input'}<Button
-					disabled={!$user || count === 0 || count > 500}
-					onclick={() => execute()}>送出記帳</Button
-				>
-			{:else if phase === 'needs_input'}<Button
-					disabled={replyCount === 0 || replyCount > 500}
-					onclick={() => execute()}>送出補充</Button
-				>
-			{:else if phase === 'uncertain'}<Button onclick={() => execute(true)}>查詢結果</Button>
-				{#if attempt}<Button variant="outline" onclick={() => execute()}
-						>重試同一請求</Button
-					>{/if}
-			{:else if phase === 'created'}<Button onclick={() => newOperation()}>新增另一筆</Button>
-			{:else if phase === 'rejected' || phase === 'error'}<Button
-					onclick={() => newOperation(false)}>修改後重新送出</Button
-				>{/if}
+			<Button
+				size="icon"
+				class="shrink-0 rounded-xl"
+				aria-label={composingReply ? '送出補充' : '送出記帳'}
+				title={composingReply ? '送出補充' : '送出記帳'}
+				disabled={!$user || !canCompose || composerCount === 0 || composerCount > 500}
+				onclick={() => execute()}
+			>
+				<Send class="h-4 w-4" aria-hidden="true" />
+			</Button>
 		</div>
 	</div>
-	<p class="text-muted-foreground text-xs">關閉視窗不會取消已接受的記帳。</p>
-	<p class="text-muted-foreground text-xs">對話關閉後捨棄；結果不明時僅保留請求編號供查詢。</p>
 </div>
