@@ -40,6 +40,7 @@
 	const busy = $derived(phase === 'processing' || phase === 'persisting');
 	let issues = $state<Issue[]>([]);
 	let message = $state('');
+	let analysis = $state('');
 	let revision = 0;
 	let controller: AbortController | undefined;
 	let accountId: string | undefined;
@@ -108,6 +109,7 @@
 				phase = 'input';
 				issues = [];
 				message = '';
+				analysis = '';
 				if (next) {
 					restorePending(next);
 				}
@@ -115,6 +117,7 @@
 		});
 	});
 	onDestroy(() => {
+		analysis = '';
 		destroyed = true;
 		revision++;
 		controller?.abort();
@@ -134,6 +137,7 @@
 		onOpenChange(next);
 	}
 	function newOperation(clear = true) {
+		analysis = '';
 		revision++;
 		controller?.abort();
 		attempt = null;
@@ -150,6 +154,15 @@
 	}
 	function stillCurrent(version: number, owner: string) {
 		return !destroyed && version === revision && get(user)?.id === owner;
+	}
+	function leavePage() {
+		analysis = '';
+		revision++;
+		controller?.abort();
+		if (busy) {
+			phase = 'uncertain';
+			message = '結果待確認，請查詢結果。';
+		}
 	}
 	async function accept(result: CompletedResult, version: number, owner: string) {
 		if (!stillCurrent(version, owner)) {
@@ -224,6 +237,7 @@
 		const version = ++revision;
 		controller = new AbortController();
 		phase = 'processing';
+		analysis = '';
 		message = '';
 		issues = [];
 		try {
@@ -244,11 +258,20 @@
 					text: operation.text,
 					...(operation.history ? { history: operation.history } : {})
 				});
-				const result = await submitSemanticEntry(request, controller.signal, () => {
-					if (stillCurrent(version, owner)) {
-						phase = 'persisting';
+				const result = await submitSemanticEntry(
+					request,
+					controller.signal,
+					() => {
+						if (stillCurrent(version, owner)) {
+							phase = 'persisting';
+						}
+					},
+					(delta) => {
+						if (stillCurrent(version, owner)) {
+							analysis += delta.text;
+						}
 					}
-				});
+				);
 				if (!stillCurrent(version, owner)) {
 					return;
 				}
@@ -296,6 +319,8 @@
 		}
 	}
 </script>
+
+<svelte:window onpagehide={leavePage} />
 
 <Dialog.Root {open} onOpenChange={changeOpen}>
 	<Dialog.Content
@@ -345,8 +370,18 @@
 			></textarea>
 			<p class="text-muted-foreground text-xs">{replyCount}/500 字</p>
 		{/if}
+		{#if analysis}
+			<div class="space-y-1 rounded-md border p-3 text-sm">
+				<p class="text-muted-foreground text-xs">Gemini 分析</p>
+				<p aria-label="Gemini 分析摘要" class="whitespace-pre-wrap break-words">
+					{analysis}
+				</p>
+			</div>
+		{/if}
 		<div aria-live="polite" class="space-y-2">
-			{#if phase === 'processing'}<p role="status">處理中…</p>
+			{#if phase === 'processing'}<p role="status">
+					{analysis ? 'Gemini 分析中…' : '處理中…'}
+				</p>
 			{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
 			{:else if phase === 'created'}<p class="font-semibold">已新增</p>
 			{:else if phase === 'rejected' || phase === 'error'}<p class="font-semibold">未新增</p>
