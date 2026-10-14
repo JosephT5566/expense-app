@@ -103,6 +103,7 @@
 			<Button
 				class="text-primary hover:bg-primary/5 border-primary/20"
 				variant="outline"
+				aria-label="AI 記帳"
 				onclick={onOpenReceiptImport}
 			>
 				<Sparkles class="w-5 h-5" />

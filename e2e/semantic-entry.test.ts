@@ -110,7 +110,10 @@ async function setup(
 	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0, {
 		timeout: 30000
 	});
-	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await page
+		.locator('[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
 	await page.getByLabel('記帳內容').fill('午餐100');
 	return {
 		posts,
@@ -302,6 +305,7 @@ test('processing locks close, Escape and outside interaction until completion', 
 	});
 	await submit(page);
 	await expect.poll(() => s.posts.length).toBe(1);
+	await expect(page.getByRole('button', { name: '圖片分析', exact: true })).toBeDisabled();
 	await expect(
 		page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
 	).toHaveCount(0);
@@ -500,7 +504,10 @@ for (const lifecycle of ['reload', 'navigate']) {
 			await page.goto(`http://localhost:4173${basePath}/summary`);
 			await page.goto(`http://localhost:4173${basePath}/`);
 		}
-		await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+		await page
+			.locator('[data-date="2026-10-01"]')
+			.getByRole('button', { name: 'AI 記帳', exact: true })
+			.click();
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 		await expect(page.getByLabel('記帳內容')).toHaveValue('');
 		await expect(page.getByLabel('記帳內容')).toBeDisabled();
@@ -610,7 +617,10 @@ test('closing a clarification discards conversation and uses a new request ID', 
 	await expect(page.getByLabel('補充資訊')).toBeVisible();
 	await page.getByLabel('補充資訊').fill('未送出回答');
 	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await page
+		.locator('[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	await expect(page.getByLabel('補充資訊')).toHaveCount(0);
 	await page.getByLabel('記帳內容').fill('新的午餐');
@@ -926,3 +936,39 @@ for (const suffix of ['analysis', 'second-result']) {
 		await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
 	});
 }
+
+test('AI dialog defaults to semantic entry and preserves input across mode switches', async ({
+	page
+}) => {
+	await setup(page, async (route, body) => {
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('文字記帳');
+	await expect(page.getByLabel('記帳內容')).toBeVisible();
+	await page.getByRole('button', { name: '圖片分析', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('圖片分析');
+	await expect(page.getByLabel('記帳內容')).toBeHidden();
+	await expect(page.getByText('上傳收據', { exact: true })).toBeVisible();
+	await page.locator('input[type=file][multiple]').setInputFiles({
+		name: 'synthetic-receipt.png',
+		mimeType: 'image/png',
+		buffer: Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9l8AAAAASUVORK5CYII=',
+			'base64'
+		)
+	});
+	await expect(page.getByRole('img', { name: 'Preview', exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '圖片分析', exact: true }).click();
+	await expect(page.getByText('synthetic-receipt.png', { exact: true })).toBeVisible();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page
+		.locator('[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
+	await expect(page.getByLabel('記帳內容')).toBeVisible();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+});

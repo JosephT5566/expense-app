@@ -16,14 +16,12 @@
 
 	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
-	import AIReceiptImportDialog from '$lib/components/AIReceiptImportDialog.svelte';
-	import SemanticEntryDialog from '$lib/components/semantic-entry/SemanticEntryDialog.svelte';
+	import AIEntryDialog from '$lib/components/AIEntryDialog.svelte';
 	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
 
 	import Logger from '$lib/utils/logger';
 	import { user as currentUser } from '$lib/stores/session.store';
 
-	let semanticEntryOpen = $state(false);
 	let drawerOpen = $state(false);
 	let editMode = $state(false);
 
@@ -312,9 +310,6 @@
 		</div>
 
 		<div class="flex items-center gap-2">
-			<Button size="sm" disabled={!$currentUser} onclick={() => (semanticEntryOpen = true)}
-				>文字記帳</Button
-			>
 			{#if !isToday(selectedDate)}
 				<Button
 					variant="secondary"
@@ -384,6 +379,4 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<AIReceiptImportDialog bind:open={aiDialogOpen} onImport={handleImport} />
-
-<SemanticEntryDialog open={semanticEntryOpen} onOpenChange={(open) => (semanticEntryOpen = open)} />
+<AIEntryDialog bind:open={aiDialogOpen} onImport={handleImport} />

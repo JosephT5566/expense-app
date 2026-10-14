@@ -16,14 +16,15 @@
 	let {
 		previewExpenses = $bindable([]),
 		previewGroupExpenses = $bindable({}),
+		isSubmitting = $bindable(false),
 		onConfirm = undefined as ((expenses: ExpenseRow[]) => void) | undefined
 	}: {
 		previewExpenses: PreviewExpense[];
 		previewGroupExpenses: PreviewGroupExpense;
 		onConfirm?: (expenses: ExpenseRow[]) => void;
+		isSubmitting?: boolean;
 	} = $props();
 
-	let isSubmitting = $state(false);
 	let submitError = $state<string | null>(null);
 	let isSelectionMode = $state(false);
 	let selectedIds = new SvelteSet<string>();

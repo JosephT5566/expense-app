@@ -6,32 +6,38 @@
 		PreviewGroupExpense,
 		ReceiptAnalysisResult
 	} from '$lib/types/expense';
-	import * as Dialog from '$lib/components/shadcn/dialog';
 	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
-	import { Button } from '$lib/components/shadcn/button';
 	import type { AIReceiptErrorInfo } from '$lib/data/ai-receipt.fetcher';
 	import { user } from '$lib/stores/session.store';
-	import { Sparkles, Upload, CircleCheckBig, X } from 'lucide-svelte';
+	import { Sparkles, Upload, CircleCheckBig } from 'lucide-svelte';
 
 	// Child components
-	import StepHeader from './ai-receipt/StepHeader.svelte';
-	import UploadStep from './ai-receipt/UploadStep.svelte';
-	import AnalysisStep from './ai-receipt/AnalysisStep.svelte';
-	import ConfirmStep from './ai-receipt/ConfirmStep.svelte';
-	// import { mockReceiptResult } from './ai-receipt/mock';
+	import StepHeader from './StepHeader.svelte';
+	import UploadStep from './UploadStep.svelte';
+	import AnalysisStep from './AnalysisStep.svelte';
+	import ConfirmStep from './ConfirmStep.svelte';
 
 	let {
-		open = $bindable(false),
-		onImport = undefined as ((expenses: ExpenseRow[]) => void) | undefined
+		open,
+		busy = $bindable(false),
+		onImport,
+		onClose
 	}: {
 		open: boolean;
+		busy?: boolean;
 		onImport?: (expenses: ExpenseRow[]) => void;
+		onClose: () => void;
 	} = $props();
 
+	let aiSubmitting = $state(false);
 	let aiStep = $state(1);
 	let aiUploading = $state(false);
 	let aiAnalyzing = $state(false);
 	let aiConverting = $state(false);
+	const processing = $derived(aiUploading || aiAnalyzing || aiConverting || aiSubmitting);
+	$effect(() => {
+		busy = processing;
+	});
 	let selectedFiles = $state<File[]>([]);
 	let previewUrls = $state<string[]>([]);
 	let lastUploadedFilePaths = $state<string[]>([]);
@@ -102,7 +108,10 @@
 		});
 	});
 
-	function resetAIDialog() {
+	function resetReceiptImport() {
+		aiSubmitting = false;
+		showConfirmClose = false;
+		previewGroupExpenses = {};
 		aiStep = 1;
 		selectedFiles = [];
 		analysisResult = null;
@@ -115,7 +124,7 @@
 
 	$effect(() => {
 		if (open === false) {
-			resetAIDialog();
+			resetReceiptImport();
 		}
 	});
 
@@ -129,91 +138,66 @@
 		}
 	});
 
+	export function requestClose() {
+		if (processing) {
+			return;
+		}
+		if (aiStep > 1) {
+			showConfirmClose = true;
+		} else {
+			onClose();
+		}
+	}
+
 	function handleConfirm(expenses: ExpenseRow[]) {
 		onImport?.(expenses);
-		open = false;
+		onClose();
 	}
 </script>
 
-<Dialog.Root bind:open>
-	<Dialog.Content
-		class="sm:max-w-[425px] max-h-[90vh] overflow-hidden flex flex-col"
-		onInteractOutside={(e) => {
-			if (aiStep > 1) {
-				e.preventDefault();
-				showConfirmClose = true;
-			}
-		}}
-		onEscapeKeydown={(e) => {
-			if (aiStep > 1) {
-				e.preventDefault();
-				showConfirmClose = true;
-			}
-		}}
-		showCloseButton={aiStep === 1}
-	>
-		{#if aiStep > 1}
-			<Button
-				variant="ghost"
-				class="absolute right-2 top-2 h-8 w-8 p-0"
-				onclick={() => (showConfirmClose = true)}
-			>
-				<X class="h-4 w-4" />
-				<span class="sr-only">Close</span>
-			</Button>
+<div class="space-y-4">
+	<StepHeader
+		{aiStep}
+		{wizardSteps}
+		{aiUploading}
+		aiAnalyzing={aiAnalyzing || aiSubmitting}
+		onBack={() => (aiStep -= 1)}
+	/>
+
+	<div class="mt-4">
+		{#if aiStep === 1}
+			<UploadStep
+				bind:aiStep
+				bind:aiUploading
+				bind:aiConverting
+				bind:aiAnalyzing
+				bind:selectedFiles
+				{previewUrls}
+				bind:lastUploadedFilePaths
+				bind:analysisResult
+				bind:analysisError
+			/>
+		{:else if aiStep === 2}
+			<AnalysisStep
+				bind:aiStep
+				{aiUploading}
+				bind:aiAnalyzing
+				bind:analysisResult
+				bind:analysisError
+				{previewUrls}
+				{lastUploadedFilePaths}
+				onReset={() => (aiStep = 1)}
+			/>
+		{:else if aiStep === 3}
+			<ConfirmStep
+				bind:isSubmitting={aiSubmitting}
+				bind:previewExpenses
+				bind:previewGroupExpenses
+				onConfirm={handleConfirm}
+			/>
 		{/if}
-
-		<StepHeader
-			{aiStep}
-			{wizardSteps}
-			{aiUploading}
-			{aiAnalyzing}
-			onBack={() => (aiStep -= 1)}
-		/>
-		<!-- <Button
-			variant="outline"
-			onclick={() => {
-				analysisResult = mockReceiptResult;
-				aiStep = 3;
-			}}
-		>
-			Load mock data
-		</Button> -->
-
-		<div class="flex-1 overflow-y-auto px-1">
-			{#if aiStep === 1}
-				<UploadStep
-					bind:aiStep
-					bind:aiUploading
-					bind:aiConverting
-					bind:aiAnalyzing
-					bind:selectedFiles
-					{previewUrls}
-					bind:lastUploadedFilePaths
-					bind:analysisResult
-					bind:analysisError
-				/>
-			{:else if aiStep === 2}
-				<AnalysisStep
-					bind:aiStep
-					{aiUploading}
-					bind:aiAnalyzing
-					bind:analysisResult
-					bind:analysisError
-					{previewUrls}
-					{lastUploadedFilePaths}
-					onReset={() => (aiStep = 1)}
-				/>
-			{:else if aiStep === 3}
-				<ConfirmStep
-					bind:previewExpenses
-					bind:previewGroupExpenses
-					onConfirm={handleConfirm}
-				/>
-			{/if}
-		</div>
-	</Dialog.Content>
-</Dialog.Root>
+	</div>
+</div>
 
 <AlertDialog.Root bind:open={showConfirmClose}>
 	<AlertDialog.Content>
@@ -227,7 +211,7 @@
 			<AlertDialog.Cancel>繼續匯入</AlertDialog.Cancel>
 			<AlertDialog.Action
 				onclick={() => {
-					open = false;
+					onClose();
 					showConfirmClose = false;
 				}}
 			>

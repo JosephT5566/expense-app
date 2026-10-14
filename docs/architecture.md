@@ -7,7 +7,7 @@ JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. 
 | Location                            | Responsibility                                                                                        |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `src/routes/`                       | File-based pages and shared layout                                                                    |
-| `src/lib/components/`               | Expense list, editor, scheduled cards, and receipt dialog                                             |
+| `src/lib/components/`               | Expense list, editor, scheduled cards, and shared AI entry dialog                                     |
 | `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                                         |
 | `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                                            |
 | `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                                                    |
@@ -59,7 +59,7 @@ The summary groups loaded rows by category: personal rows contribute their full 
 
 ## Semantic entry
 
-`SemanticEntryDialog.svelte` submits through `semantic-entry.fetcher.ts` with the current session JWT and one UUID for the logical expense. The optional bounded question/answer history lives only in modal memory. Missing or repairable fields produce a focused question; answers supplement the same expense, which the service writes automatically once valid. The UI locks closing, Escape, and outside interaction throughout submission, and shows the SSE `persisting` event before the RPC. No draft confirmation is involved. Closing a clarification discards the conversation and starts the next operation with a new UUID; account/revision guards discard stale results.
+`AIEntryDialog.svelte` owns the shared modal and its text/image mode switch. It opens in text mode, keeps both panels mounted to preserve progress across switches, and disables mode switching and closing during active requests. `semantic-entry/SemanticEntryContent.svelte` submits through `semantic-entry.fetcher.ts` with the current session JWT and one UUID for the logical expense. The optional bounded question/answer history lives only in modal memory. Missing or repairable fields produce a focused question; answers supplement the same expense, which the service writes automatically once valid. The UI locks closing, Escape, and outside interaction throughout submission, and shows the SSE `persisting` event before the RPC. No draft confirmation is involved. Closing a clarification discards the conversation and starts the next operation with a new UUID; account/revision guards discard stale results.
 
 Before each submission, account-scoped localStorage retains only `{requestId}`, without text, history, or JWT. Definitive results clear it. An uncertain retry freezes the exact in-memory text/history/UUID; later errors or questions cannot erase earlier uncertainty. Closing, account changes, navigation, or reload discard that payload and leave only status lookup available for the owning account. Legacy pending records are reduced to UUID-only storage. New submissions require working recovery storage.
 
@@ -75,7 +75,7 @@ Mutations use `scheduled-expenses.fetcher.ts`. Approval creates a regular expens
 
 ## Receipt import
 
-`AIReceiptImportDialog.svelte` coordinates upload, analysis, and confirmation. `UploadStep.svelte` validates images, converts HEIC/HEIF when needed, obtains signed upload URLs from the external service, uploads images, and requests analysis by file path.
+`AIEntryDialog.svelte` hosts the two feature components: `semantic-entry/SemanticEntryContent.svelte` for text entry and `ai-receipt/ReceiptImportContent.svelte` for receipt import. The receipt component owns upload, analysis, preview state, confirmation, and cancellation; it exposes its busy state and close request to the shared dialog. Receipt progress is preserved when switching modes; closing discards progress, with cancellation confirmation after the upload step. `UploadStep.svelte` validates images, converts HEIC/HEIF when needed, obtains signed upload URLs from the external service, uploads images, and requests analysis by file path.
 
 `ai-receipt.fetcher.ts` attaches the Supabase session access token and adapts normalized responses into the extraction shape used by the review UI. Preview components support correction, grouping, and exclusion. `ConfirmStep.svelte` validates visible entries and bulk-upserts final expenses. See [service details](database.md#receipt-analysis-service).
 
