@@ -5,10 +5,15 @@ import re
 
 import httpx
 
-from .contracts import JSON, load_json, safe_integer
+from .contracts import (
+    JSON,
+    load_json,
+    load_provider_json,
+    parse_provider_envelope,
+    safe_integer,
+)
 from .errors import SemanticError
-from .normalize import parse_extraction
-from .prompt import EXTRACTION_SCHEMA, system_prompt
+from .prompt import PROVIDER_SCHEMA, system_prompt
 
 DEFAULT_MODEL = "gemini-3.5-flash-lite"
 MODEL = re.compile(
@@ -66,7 +71,7 @@ class Provider:
                             "responseFormat": {
                                 "text": {
                                     "mimeType": "application/json",
-                                    "schema": EXTRACTION_SCHEMA,
+                                    "schema": PROVIDER_SCHEMA,
                                 }
                             },
                         },
@@ -102,7 +107,9 @@ class Provider:
                         texts.append(part["text"])
                     if not texts:
                         raise ValueError("Missing output text")
-                    raw = parse_extraction(load_json("".join(texts)))
+                    raw = parse_provider_envelope(load_provider_json("".join(texts)))[
+                        "extraction"
+                    ]
                     usage = data.get("usageMetadata") or {}
                     output = usage.get("candidatesTokenCount")
                     thoughts = usage.get("thoughtsTokenCount", 0)
