@@ -113,8 +113,10 @@ def test_request_unicode_contract():
             parse_request(request)
 
 
-def test_nullable_fields_cannot_be_missing():
+def test_non_defaultable_fields_cannot_be_missing():
     for key in RAW:
+        if key in ("payerId", "scope", "splitMemberIds"):
+            continue
         raw = {k: v for k, v in RAW.items() if k != key}
         assert normalize_extraction(raw, CONTEXT)["issues"] == [
             {"field": "extraction", "code": "invalid"}

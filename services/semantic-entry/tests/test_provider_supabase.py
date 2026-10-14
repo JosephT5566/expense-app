@@ -6,6 +6,7 @@ import pytest
 from conftest import CONTEXT, RAW, REQUEST_ID, ROW
 
 from semantic_entry.errors import SemanticError
+from semantic_entry.normalize import normalize_extraction
 from semantic_entry.provider import Provider
 from semantic_entry.supabase import SupabaseAdapter
 
@@ -25,6 +26,52 @@ COMPLETED = {
         }
     ]
 }
+
+
+@pytest.mark.parametrize("text", ["今天午餐500麥當勞", "我今天午餐500麥當勞"])
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_provider_accepts_omitted_personal_fields(text, streaming):
+    raw = {
+        k: v
+        for k, v in {**RAW, "note": "午餐麥當勞", "amount": 500}.items()
+        if k not in ("payerId", "scope", "splitMemberIds")
+    }
+    payload = {
+        "candidates": [
+            {
+                "finishReason": "STOP",
+                "content": {
+                    "parts": [
+                        {
+                            "text": json.dumps(
+                                {"analysis": "個人午餐支出。", "extraction": raw}
+                            )
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+
+    def mock(request):
+        if streaming:
+            return httpx.Response(200, content="data: " + json.dumps(payload) + "\n\n")
+        return httpx.Response(200, json=payload)
+
+    async def analysis(fragment):
+        pass
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(mock)) as client:
+        provider = Provider(client, "synthetic")
+        result = (
+            await provider.stream(text, CONTEXT, analysis)
+            if streaming
+            else await provider(text, CONTEXT)
+        )
+    expense = normalize_extraction(result["raw"], CONTEXT)["expense"]
+    assert expense["shares_json"] == {"a@example.test": 500}
+    assert expense["payer_email"] == "a@example.test"
+    assert expense["scope"] == "personal"
 
 
 async def test_structured_provider():

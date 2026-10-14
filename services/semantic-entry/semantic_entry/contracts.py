@@ -1,7 +1,8 @@
 """Python validators for the portable TypeScript wire contract.
 
-No coercion of booleans, numeric strings or absent nullable fields. The browser
-continues to use packages/semantic-entry-contract; parity is covered by tests.
+Wire validators do not coerce booleans, numeric strings or absent nullable fields.
+Provider extraction separately allows narrowly scoped personal-field defaults.
+The browser uses packages/semantic-entry-contract; parity is covered by tests.
 """
 
 import json

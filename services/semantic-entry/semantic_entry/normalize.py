@@ -8,7 +8,12 @@ MAX_EXPENSE_AMOUNT = 9_999_999_999
 
 
 def parse_extraction(raw: Any) -> JSON:
-    r = object_(raw)
+    r = dict(object_(raw))
+    # Missing personal fields are equivalent to explicit null only when the
+    # provider explicitly rules out sharing. Preserve all supplied values.
+    if r.get("hasSharedIntent") is False and r.get("scope") in (None, "personal"):
+        for key in ("payerId", "scope", "splitMemberIds"):
+            r.setdefault(key, None)
     exact_keys(
         r,
         [
