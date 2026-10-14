@@ -13,6 +13,7 @@ from .contracts import JSON, parse_request
 from .errors import SemanticError
 from .normalize import normalize_extraction
 from .prompt import PROMPT_VERSION
+from .provider_stream import AnalysisCallback
 
 
 class Adapter(Protocol):
@@ -34,6 +35,7 @@ class Dependencies:
     log: Callable[[JSON], None] | None = None
     allowed_origins: tuple[str, ...] = ()
     http_deadline: float = 30
+    stream_entry: Callable[[str, JSON, AnalysisCallback], Awaitable[JSON]] | None = None
 
 
 class State(TypedDict, total=False):
@@ -68,6 +70,7 @@ async def invoke(
     token: str,
     deps: Dependencies,
     on_persisting: Callable[[JSON], Awaitable[None]] | None = None,
+    on_analysis: AnalysisCallback | None = None,
 ) -> JSON:
     request = parse_request(request)
     adapter = deps.create_adapter(token)
@@ -130,11 +133,18 @@ async def invoke(
         return {}
 
     async def extract(state: State) -> JSON:
+        text = (
+            conversation_payload(request) if request.get("history") else request["text"]
+        )
+        if on_analysis is not None and deps.stream_entry is not None:
+            return {
+                "extraction": await deps.stream_entry(
+                    text, state["context"], on_analysis
+                )
+            }
         return {
             "extraction": await deps.extract_entry(
-                conversation_payload(request)
-                if request.get("history")
-                else request["text"],
+                text,
                 state["context"],
             )
         }

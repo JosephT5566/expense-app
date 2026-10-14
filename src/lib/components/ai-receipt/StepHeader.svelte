@@ -1,5 +1,4 @@
 <script lang="ts">
-	import * as Dialog from '$lib/components/shadcn/dialog';
 	import { Button } from '$lib/components/shadcn/button';
 	import { ChevronLeft, Check } from 'lucide-svelte';
 	import type { ComponentType } from 'svelte';
@@ -28,7 +27,7 @@
 	const progressWidth = $derived(`${((aiStep - 1) / (wizardSteps.length - 1)) * 100}%`);
 </script>
 
-<Dialog.Header class="space-y-6">
+<div class="space-y-6">
 	<div class="flex items-center gap-4">
 		{#if aiStep > 1}
 			<Button
@@ -41,7 +40,7 @@
 				<ChevronLeft class="h-5 w-5" />
 			</Button>
 		{/if}
-		<Dialog.Title class="text-xl font-bold">AI 分析</Dialog.Title>
+		<h2 class="text-xl font-bold">AI 分析</h2>
 	</div>
 
 	<div class="relative px-4">
@@ -86,4 +85,4 @@
 			{/each}
 		</div>
 	</div>
-</Dialog.Header>
+</div>

@@ -3,6 +3,7 @@ import json
 import re
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from email.message import Message
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
@@ -20,31 +21,69 @@ def error_payload(error: SemanticError) -> JSON:
 
 
 async def stream_operation(
-    parsed: JSON, token: str, deps: Dependencies, deadline: float
+    parsed: JSON,
+    token: str,
+    deps: Dependencies,
+    deadline: float,
+    include_analysis: bool = False,
 ) -> AsyncIterator[bytes]:
-    events: asyncio.Queue[tuple[str, JSON]] = asyncio.Queue()
+    events: asyncio.Queue[tuple[str, JSON]] = asyncio.Queue(maxsize=64)
     writing = False
+    connected = True
+    seq = 0
+    analysis_size = 0
+
+    async def analysis(text: str) -> None:
+        nonlocal seq, analysis_size
+        analysis_size += len(text)
+        if not text or analysis_size > 200 or writing:
+            raise SemanticError(502, "provider_invalid")
+        await events.put(
+            (
+                "analysis_delta",
+                {"requestId": parsed["requestId"], "seq": seq, "text": text},
+            )
+        )
+        seq += 1
 
     async def persisting(payload: JSON) -> None:
         nonlocal writing
+        await events.put(("persisting", payload))
+        # No await between this transition and returning to the RPC caller.
         writing = True
-        events.put_nowait(("persisting", payload))
+
+    def failure(error: SemanticError) -> None:
+        if not connected:
+            return
+        if events.full():
+            # A deadline must still terminate a slow stream. Drop only queued
+            # analysis; preserve the writing signal and the terminal error.
+            retained = []
+            while not events.empty():
+                event = events.get_nowait()
+                if event[0] != "analysis_delta":
+                    retained.append(event)
+            for event in retained:
+                events.put_nowait(event)
+        events.put_nowait(("error", error_payload(error)))
 
     async def operation() -> None:
         try:
             async with asyncio.timeout(deadline):
-                result = await invoke(parsed, token, deps, on_persisting=persisting)
-                events.put_nowait(("result", result))
+                result = await invoke(
+                    parsed,
+                    token,
+                    deps,
+                    on_persisting=persisting,
+                    on_analysis=analysis if include_analysis else None,
+                )
+                await events.put(("result", result))
         except TimeoutError:
-            events.put_nowait(
-                ("error", error_payload(SemanticError(504, "persist_uncertain", True)))
-            )
+            failure(SemanticError(504, "persist_uncertain", True))
         except SemanticError as e:
-            events.put_nowait(("error", error_payload(e)))
+            failure(e)
         except Exception:
-            events.put_nowait(
-                ("error", error_payload(SemanticError(502, "service_error", writing)))
-            )
+            failure(SemanticError(502, "service_error", writing))
 
     task = asyncio.create_task(operation())
     _operations.add(task)
@@ -56,12 +95,29 @@ async def stream_operation(
             if name in ("result", "error"):
                 break
     finally:
+        connected = False
+        # Release a result enqueue that raced with disconnection after RPC.
+        while not events.empty():
+            events.get_nowait()
         if not task.done() and not writing:
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
         # After RPC begins, response disconnection does not cancel the accepted write.
         # The task retains its own deadline and sanitized exception handling.
+
+
+def accepts_analysis(value: str) -> bool:
+    for item in value.split(","):
+        message = Message()
+        message["content-type"] = item.strip()
+        if (
+            message.get_content_type() == "text/event-stream"
+            and message.get_param("semantic-version") == "2"
+            and message.get_param("q", "1") != "0"
+        ):
+            return True
+    return False
 
 
 async def handle(request: Request, deps: Dependencies) -> Response:
@@ -138,7 +194,15 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                     deps.http_deadline - (asyncio.get_running_loop().time() - started),
                 )
                 return StreamingResponse(
-                    stream_operation(parsed, bearer[1], deps, remaining),
+                    stream_operation(
+                        parsed,
+                        bearer[1],
+                        deps,
+                        remaining,
+                        include_analysis=accepts_analysis(
+                            request.headers.get("accept", "")
+                        ),
+                    ),
                     media_type="text/event-stream",
                     headers={**cors, "X-Accel-Buffering": "no"},
                 )

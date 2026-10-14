@@ -110,7 +110,10 @@ async function setup(
 	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0, {
 		timeout: 30000
 	});
-	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await page
+		.locator('[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
 	await page.getByLabel('記帳內容').fill('午餐100');
 	return {
 		posts,
@@ -302,6 +305,7 @@ test('processing locks close, Escape and outside interaction until completion', 
 	});
 	await submit(page);
 	await expect.poll(() => s.posts.length).toBe(1);
+	await expect(page.getByRole('button', { name: '圖片分析', exact: true })).toBeDisabled();
 	await expect(
 		page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
 	).toHaveCount(0);
@@ -500,7 +504,10 @@ for (const lifecycle of ['reload', 'navigate']) {
 			await page.goto(`http://localhost:4173${basePath}/summary`);
 			await page.goto(`http://localhost:4173${basePath}/`);
 		}
-		await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+		await page
+			.locator('[data-date="2026-10-01"]')
+			.getByRole('button', { name: 'AI 記帳', exact: true })
+			.click();
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 		await expect(page.getByLabel('記帳內容')).toHaveValue('');
 		await expect(page.getByLabel('記帳內容')).toBeDisabled();
@@ -569,7 +576,7 @@ test('clarification supplements the same request and automatically writes withou
 }) => {
 	const question = '這筆支出的金額是多少？';
 	const s = await setup(page, async (route, body) => {
-		expect(route.request().headers().accept).toBe('text/event-stream');
+		expect(route.request().headers().accept).toBe('text/event-stream; semantic-version=2');
 		const result = body!.history
 			? created(body!.requestId)
 			: {
@@ -610,7 +617,10 @@ test('closing a clarification discards conversation and uses a new request ID', 
 	await expect(page.getByLabel('補充資訊')).toBeVisible();
 	await page.getByLabel('補充資訊').fill('未送出回答');
 	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await page
+		.locator('[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	await expect(page.getByLabel('補充資訊')).toHaveCount(0);
 	await page.getByLabel('記帳內容').fill('新的午餐');
@@ -657,10 +667,14 @@ test('interrupted stream retains only UUID and retry freezes the full answered p
 	expect(s.posts[2]).toEqual(s.posts[1]);
 });
 
-test('live chunked SSE announces writing and locks the modal before returning the saved row', async ({
+test('live chunked SSE shows analysis then announces writing and locks the modal before returning the saved row', async ({
 	page
 }) => {
 	const { createServer } = await import('node:http');
+	let releaseAnalysis!: () => void;
+	const analysisWait = new Promise<void>((resolve) => {
+		releaseAnalysis = resolve;
+	});
 	let release!: () => void;
 	const wait = new Promise<void>((resolve) => {
 		release = resolve;
@@ -682,6 +696,17 @@ test('live chunked SSE announces writing and locks the modal before returning th
 			'Content-Type': 'text/event-stream',
 			'Cache-Control': 'no-store'
 		});
+		const analysis = Buffer.from(
+			`event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 0, text: '辨識午餐🍜' })}\n\n`
+		);
+		const split = analysis.indexOf(Buffer.from('🍜')) + 1;
+		response.write(analysis.subarray(0, split));
+		await new Promise<void>((resolve) => setImmediate(resolve));
+		response.write(analysis.subarray(split));
+		await analysisWait;
+		response.write(
+			`event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 1, text: '，準備驗證資料。' })}\n\n`
+		);
 		const frame = Buffer.from(
 			`event: persisting\r\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\r\n\r\n`
 		);
@@ -717,6 +742,9 @@ test('live chunked SSE announces writing and locks the modal before returning th
 			{ endpoint, port: address.port }
 		);
 		await submit(page);
+		await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('辨識午餐🍜');
+		releaseAnalysis();
+		await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('辨識午餐🍜，準備驗證資料。');
 		await expect(page.getByText('正在記帳，請稍候…', { exact: true })).toBeVisible();
 		await expect(
 			page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
@@ -729,6 +757,7 @@ test('live chunked SSE announces writing and locks the modal before returning th
 			page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
 		).toBeVisible();
 	} finally {
+		releaseAnalysis();
 		release();
 		server.closeAllConnections();
 		await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -758,3 +787,188 @@ for (const fault of ['wrong-id', 'unknown-event', 'question-after-writing', 'exp
 		expect(s.writes()).toBe(0);
 	});
 }
+
+for (const fault of ['gap', 'duplicate', 'wrong-id', 'oversize', 'after-writing']) {
+	test(`analysis ${fault} keeps uncertain recovery`, async ({ page }) => {
+		await setup(page, async (route) => {
+			const body = route.request().postDataJSON() as SemanticRequest;
+			const id = body.requestId;
+			const delta = (seq: number, text: string, requestId = id) =>
+				`event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq, text })}\n\n`;
+			const first = delta(0, '辨識中');
+			const bad =
+				fault === 'gap'
+					? delta(2, '午餐')
+					: fault === 'duplicate'
+						? delta(0, '午餐')
+						: fault === 'wrong-id'
+							? delta(1, '午餐', row.id)
+							: fault === 'oversize'
+								? delta(1, '字'.repeat(201))
+								: `event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId: id })}\n\n` +
+									delta(1, '午餐');
+			await route.fulfill({
+				contentType: 'text/event-stream',
+				body: first + bad + `event: result\ndata: ${JSON.stringify(created(id))}\n\n`
+			});
+		});
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
+		const stored = await page.evaluate(() => JSON.stringify(localStorage));
+		expect(stored).not.toContain('辨識中');
+	});
+}
+
+test('analysis is plain text and is cleared for the next operation', async ({ page }) => {
+	await setup(page, async (route) => {
+		const { requestId } = route.request().postDataJSON() as SemanticRequest;
+		await route.fulfill({
+			contentType: 'text/event-stream',
+			body: `event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 0, text: '<b>午餐</b>' })}\n\nevent: result\ndata: ${JSON.stringify(created(requestId))}\n\n`
+		});
+	});
+	await submit(page);
+	await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('<b>午餐</b>');
+	await expect(page.getByLabel('Gemini 分析摘要').locator('b')).toHaveCount(0);
+	await page.getByRole('button', { name: '新增另一筆', exact: true }).click();
+	await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
+});
+
+test('analysis clears on clarification and does not enter question history', async ({ page }) => {
+	let release!: () => void;
+	const wait = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let round = 0;
+	const s = await setup(page, async (route, body) => {
+		if (++round === 1) {
+			await route.fulfill({
+				contentType: 'text/event-stream',
+				body: `event: analysis_delta\ndata: ${JSON.stringify({ requestId: body!.requestId, seq: 0, text: '第一輪摘要' })}\n\nevent: result\ndata: ${JSON.stringify({ status: 'needs_input', requestId: body!.requestId, question: '這筆支出的台幣總金額是多少？', issues: [{ field: 'amount', code: 'missing' }] })}\n\n`
+			});
+		} else {
+			await wait;
+			await route.fulfill({
+				contentType: 'text/event-stream',
+				body: `event: result\ndata: ${JSON.stringify(created(body!.requestId))}\n\n`
+			});
+		}
+	});
+	try {
+		await submit(page);
+		await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('第一輪摘要');
+		await expect(page.getByText('這筆支出的台幣總金額是多少？', { exact: true })).toBeVisible();
+		await page.getByLabel('補充資訊').fill('100');
+		await page.getByRole('button', { name: '送出補充', exact: true }).click();
+		await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
+		await expect.poll(() => s.posts.length).toBe(2);
+		expect(s.posts[1].history).toEqual([
+			{ question: '這筆支出的台幣總金額是多少？', answer: '100' }
+		]);
+		release();
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	} finally {
+		release();
+	}
+});
+
+for (const action of ['account-switch', 'pagehide', 'status-query']) {
+	test(`analysis clears on ${action}`, async ({ page }) => {
+		const s = await setup(page, async (route, body) => {
+			if (!body) {
+				await route.fulfill({
+					json: {
+						status: 'not_found',
+						requestId: route.request().url().split('/').at(-1)
+					}
+				});
+				return;
+			}
+			await route.fulfill({
+				contentType: 'text/event-stream',
+				body: `event: analysis_delta\ndata: ${JSON.stringify({ requestId: body.requestId, seq: 0, text: '本帳號的暫時摘要' })}\n\n`
+			});
+		});
+		await submit(page);
+		await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('本帳號的暫時摘要');
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		if (action === 'account-switch') {
+			await page.evaluate(
+				({ storageKey, session }) => {
+					const next = {
+						...session,
+						user: {
+							...session.user,
+							id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+							email: 'b@example.test'
+						}
+					};
+					localStorage.setItem(storageKey, JSON.stringify(next));
+					const channel = new BroadcastChannel(storageKey);
+					channel.postMessage({ event: 'SIGNED_IN', session: next });
+					channel.close();
+				},
+				{ storageKey: s.storageKey, session: s.session }
+			);
+		} else if (action === 'pagehide') {
+			await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+		} else {
+			await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+		}
+		await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
+	});
+}
+
+for (const suffix of ['analysis', 'second-result']) {
+	test(`terminal result rejects trailing ${suffix}`, async ({ page }) => {
+		await setup(page, async (route, body) => {
+			const requestId = body!.requestId;
+			const result = `event: result\ndata: ${JSON.stringify(created(requestId))}\n\n`;
+			const trailing =
+				suffix === 'analysis'
+					? `event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 0, text: '遲到的摘要' })}\n\n`
+					: result;
+			await route.fulfill({ contentType: 'text/event-stream', body: result + trailing });
+		});
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
+	});
+}
+
+test('AI dialog defaults to semantic entry and preserves input across mode switches', async ({
+	page
+}) => {
+	await setup(page, async (route, body) => {
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('文字記帳');
+	await expect(page.getByLabel('記帳內容')).toBeVisible();
+	await page.getByRole('button', { name: '圖片分析', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('圖片分析');
+	await expect(page.getByLabel('記帳內容')).toBeHidden();
+	await expect(page.getByText('上傳收據', { exact: true })).toBeVisible();
+	await page.locator('input[type=file][multiple]').setInputFiles({
+		name: 'synthetic-receipt.png',
+		mimeType: 'image/png',
+		buffer: Buffer.from(
+			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9l8AAAAASUVORK5CYII=',
+			'base64'
+		)
+	});
+	await expect(page.getByRole('img', { name: 'Preview', exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '圖片分析', exact: true }).click();
+	await expect(page.getByText('synthetic-receipt.png', { exact: true })).toBeVisible();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page
+		.locator('[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
+	await expect(page.getByLabel('記帳內容')).toBeVisible();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+});

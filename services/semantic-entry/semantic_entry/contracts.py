@@ -26,6 +26,33 @@ def load_json(value: str | bytes) -> Any:
     return json.loads(value, parse_constant=invalid_constant)
 
 
+def load_provider_json(text: str) -> JSON:
+    def pairs(items: list[tuple[str, Any]]) -> JSON:
+        result: JSON = {}
+        for key, value in items:
+            if key in result:
+                raise ValueError("Duplicate JSON key")
+            result[key] = value
+        return result
+
+    def invalid(value: str) -> Any:
+        raise ValueError("Invalid JSON number")
+
+    return object_(json.loads(text, object_pairs_hook=pairs, parse_constant=invalid))
+
+
+def parse_provider_envelope(raw: object) -> JSON:
+    # normalize imports the portable validators above; defer this import.
+    from .normalize import parse_extraction
+
+    value = object_(raw)
+    exact_keys(value, ["analysis", "extraction"])
+    analysis = string(value["analysis"])
+    if len(analysis) > 200 or any(0xD800 <= ord(c) <= 0xDFFF for c in analysis):
+        raise ValueError("Invalid analysis")
+    return {"analysis": analysis, "extraction": parse_extraction(value["extraction"])}
+
+
 def trim(value: str) -> str:
     return value.strip(JS_SPACE)
 

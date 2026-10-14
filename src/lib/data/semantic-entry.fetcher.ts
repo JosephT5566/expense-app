@@ -9,6 +9,7 @@ import {
 	type SemanticRequest,
 	type SemanticResponse
 } from '@jopie/semantic-entry-contract';
+export type SemanticAnalysisDelta = { requestId: string; seq: number; text: string };
 export class SemanticEntryError extends Error {
 	constructor(
 		public code: string,
@@ -22,7 +23,8 @@ async function call(
 	method: 'GET' | 'POST',
 	body?: SemanticRequest,
 	signal?: AbortSignal,
-	onPersisting?: () => void
+	onPersisting?: () => void,
+	onAnalysis?: (delta: SemanticAnalysisDelta) => void
 ): Promise<unknown> {
 	const base = env.PUBLIC_SEMANTIC_ENTRY_URL;
 	if (!base) {
@@ -52,7 +54,12 @@ async function call(
 			method,
 			headers: {
 				Authorization: `Bearer ${data.session.access_token}`,
-				...(body ? { 'Content-Type': 'application/json', Accept: 'text/event-stream' } : {})
+				...(body
+					? {
+							'Content-Type': 'application/json',
+							Accept: 'text/event-stream; semantic-version=2'
+						}
+					: {})
 			},
 			...(payload ? { body: payload } : {}),
 			signal: AbortSignal.any([
@@ -72,10 +79,17 @@ async function call(
 			const decoder = new TextDecoder('utf-8', { fatal: true });
 			let buffer = '';
 			let size = 0;
+			let nextSeq = 0;
+			let analysisCodePoints = 0;
+			let terminalResult: SemanticResponse | undefined;
 			try {
 				for (;;) {
 					const { value, done } = await reader.read();
 					if (done) {
+						buffer += decoder.decode();
+						if (terminalResult && !buffer.trim()) {
+							return terminalResult;
+						}
 						throw new SemanticEntryError('invalid_response', true);
 					}
 					size += value.length;
@@ -100,6 +114,9 @@ async function call(
 						if (!data.length) {
 							continue;
 						}
+						if (terminalResult) {
+							throw new SemanticEntryError('invalid_response', true);
+						}
 						let event;
 						try {
 							event = parseStreamEvent(name, JSON.parse(data.join('\n')));
@@ -114,6 +131,15 @@ async function call(
 						if (id !== body.requestId) {
 							throw new SemanticEntryError('invalid_response', true);
 						}
+						if (event.type === 'analysis_delta') {
+							analysisCodePoints += [...event.text].length;
+							if (writing || event.seq !== nextSeq || analysisCodePoints > 200) {
+								throw new SemanticEntryError('invalid_response', true);
+							}
+							nextSeq++;
+							onAnalysis?.(event);
+							continue;
+						}
 						if (event.type === 'persisting') {
 							if (writing) {
 								throw new SemanticEntryError('invalid_response', true);
@@ -124,7 +150,7 @@ async function call(
 							if (writing && event.result.status !== 'created') {
 								throw new SemanticEntryError('invalid_response', true);
 							}
-							return event.result;
+							terminalResult = event.result;
 						}
 					}
 				}
@@ -153,7 +179,8 @@ async function call(
 export async function submitSemanticEntry(
 	request: SemanticRequest,
 	signal?: AbortSignal,
-	onPersisting?: () => void
+	onPersisting?: () => void,
+	onAnalysis?: (delta: SemanticAnalysisDelta) => void
 ): Promise<SemanticResponse> {
 	let parsed: SemanticRequest;
 	try {
@@ -161,7 +188,7 @@ export async function submitSemanticEntry(
 	} catch {
 		throw new SemanticEntryError('invalid_request', false);
 	}
-	const result = await call('', 'POST', parsed, signal, onPersisting);
+	const result = await call('', 'POST', parsed, signal, onPersisting, onAnalysis);
 	try {
 		const response = parseResponse(result);
 		if (response.requestId !== parsed.requestId) {

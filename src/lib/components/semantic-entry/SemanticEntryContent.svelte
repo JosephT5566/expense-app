@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
 	import { get } from 'svelte/store';
-	import * as Dialog from '$lib/components/shadcn/dialog';
 	import { Button } from '$lib/components/shadcn/button';
 	import { user } from '$lib/stores/session.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
@@ -19,7 +18,7 @@
 		type SemanticRequest,
 		type ClarificationTurn
 	} from '@jopie/semantic-entry-contract';
-	let { open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void } = $props();
+	let { busy = $bindable(false), onClose }: { busy?: boolean; onClose: () => void } = $props();
 	let text = $state('');
 	let phase = $state<
 		| 'input'
@@ -37,9 +36,13 @@
 	let reply = $state('');
 	let pendingId = $state<string | null>(null);
 	let savedExpense = $state<CompletedResult['expense'] | null>(null);
-	const busy = $derived(phase === 'processing' || phase === 'persisting');
+	const processing = $derived(phase === 'processing' || phase === 'persisting');
+	$effect(() => {
+		busy = processing;
+	});
 	let issues = $state<Issue[]>([]);
 	let message = $state('');
+	let analysis = $state('');
 	let revision = 0;
 	let controller: AbortController | undefined;
 	let accountId: string | undefined;
@@ -108,6 +111,7 @@
 				phase = 'input';
 				issues = [];
 				message = '';
+				analysis = '';
 				if (next) {
 					restorePending(next);
 				}
@@ -115,12 +119,16 @@
 		});
 	});
 	onDestroy(() => {
+		analysis = '';
 		destroyed = true;
 		revision++;
 		controller?.abort();
 	});
+	export function requestClose() {
+		changeOpen(false);
+	}
 	function changeOpen(next: boolean) {
-		if (!next && busy) {
+		if (!next && processing) {
 			message = '正在處理這筆記帳，請等待結果。';
 			return;
 		}
@@ -131,9 +139,10 @@
 				phase = 'uncertain';
 			}
 		}
-		onOpenChange(next);
+		onClose();
 	}
 	function newOperation(clear = true) {
+		analysis = '';
 		revision++;
 		controller?.abort();
 		attempt = null;
@@ -150,6 +159,15 @@
 	}
 	function stillCurrent(version: number, owner: string) {
 		return !destroyed && version === revision && get(user)?.id === owner;
+	}
+	function leavePage() {
+		analysis = '';
+		revision++;
+		controller?.abort();
+		if (processing) {
+			phase = 'uncertain';
+			message = '結果待確認，請查詢結果。';
+		}
 	}
 	async function accept(result: CompletedResult, version: number, owner: string) {
 		if (!stillCurrent(version, owner)) {
@@ -189,7 +207,7 @@
 		}
 	}
 	async function execute(query = false) {
-		if (busy || !$user || (phase === 'uncertain' && !query && !attempt)) {
+		if (processing || !$user || (phase === 'uncertain' && !query && !attempt)) {
 			return;
 		}
 		const hadUncertainty = phase === 'uncertain';
@@ -224,6 +242,7 @@
 		const version = ++revision;
 		controller = new AbortController();
 		phase = 'processing';
+		analysis = '';
 		message = '';
 		issues = [];
 		try {
@@ -244,11 +263,20 @@
 					text: operation.text,
 					...(operation.history ? { history: operation.history } : {})
 				});
-				const result = await submitSemanticEntry(request, controller.signal, () => {
-					if (stillCurrent(version, owner)) {
-						phase = 'persisting';
+				const result = await submitSemanticEntry(
+					request,
+					controller.signal,
+					() => {
+						if (stillCurrent(version, owner)) {
+							phase = 'persisting';
+						}
+					},
+					(delta) => {
+						if (stillCurrent(version, owner)) {
+							analysis += delta.text;
+						}
 					}
-				});
+				);
 				if (!stillCurrent(version, owner)) {
 					return;
 				}
@@ -297,97 +325,93 @@
 	}
 </script>
 
-<Dialog.Root {open} onOpenChange={changeOpen}>
-	<Dialog.Content
-		showCloseButton={!busy}
-		onEscapeKeydown={(event) => {
-			if (busy) {
-				event.preventDefault();
-			}
-		}}
-		onInteractOutside={(event) => {
-			if (busy) {
-				event.preventDefault();
-			}
-		}}
-	>
-		<Dialog.Header
-			><Dialog.Title>文字記帳</Dialog.Title><Dialog.Description
-				>描述一筆支出；資訊不足時會追問，完整後直接記帳。</Dialog.Description
-			></Dialog.Header
-		>
-		<label for="semantic-entry-text" class="text-sm font-medium">記帳內容</label>
-		<textarea
-			id="semantic-entry-text"
-			bind:value={text}
-			disabled={attempt !== null || phase === 'uncertain'}
-			rows="3"
-			class="w-full rounded-md border p-3 text-sm"
-			placeholder="例如：今天午餐100元"
-		></textarea>
-		<p class="text-muted-foreground text-xs">{count}/500 字 · 單筆台幣支出</p>
-		{#if history.length}
-			<div class="max-h-40 space-y-2 overflow-y-auto text-sm" aria-label="本次對話">
-				{#each history as turn, index (index)}
-					<p class="text-muted-foreground">{turn.question}</p>
-					<p>你：{turn.answer}</p>
-				{/each}
-			</div>
-		{/if}
-		{#if phase === 'needs_input'}
-			<p role="status" class="font-medium">{question}</p>
-			<label for="semantic-entry-reply" class="text-sm font-medium">補充資訊</label>
-			<textarea
-				id="semantic-entry-reply"
-				bind:value={reply}
-				rows="2"
-				class="w-full rounded-md border p-3 text-sm"
-			></textarea>
-			<p class="text-muted-foreground text-xs">{replyCount}/500 字</p>
-		{/if}
-		<div aria-live="polite" class="space-y-2">
-			{#if phase === 'processing'}<p role="status">處理中…</p>
-			{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
-			{:else if phase === 'created'}<p class="font-semibold">已新增</p>
-			{:else if phase === 'rejected' || phase === 'error'}<p class="font-semibold">未新增</p>
-			{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
-			{#each issues as issue, index (index)}<p>
-					{fields[issue.field] ?? '內容'}：{codes[issue.code] ?? '資訊無效'}
-				</p>{/each}
-			{#if savedExpense && phase === 'created'}
-				<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
-				<p class="text-sm">
-					{new Date(savedExpense.ts).toLocaleDateString('zh-TW', {
-						timeZone: 'Asia/Taipei'
-					})}
-				</p>
-				{#each Object.entries(savedExpense.shares_json) as [email, amount] (email)}
-					<p class="text-sm">{email}：NT$ {amount}</p>
-				{/each}
-			{/if}
-			{#if message}<p class="text-sm">{message}</p>{/if}
-		</div>
-		<div class="flex flex-wrap gap-2">
-			{#if phase === 'input'}<Button
-					disabled={!$user || count === 0 || count > 500}
-					onclick={() => execute()}>送出記帳</Button
-				>
-			{:else if phase === 'needs_input'}<Button
-					disabled={replyCount === 0 || replyCount > 500}
-					onclick={() => execute()}>送出補充</Button
-				>
-			{:else if phase === 'uncertain'}<Button onclick={() => execute(true)}>查詢結果</Button>
-				{#if attempt}<Button variant="outline" onclick={() => execute()}
-						>重試同一請求</Button
-					>{/if}
-			{:else if phase === 'created'}<Button onclick={() => newOperation()}>新增另一筆</Button>
-			{:else if phase === 'rejected' || phase === 'error'}<Button
-					onclick={() => newOperation(false)}>修改後重新送出</Button
-				>{/if}
-		</div>
-		<p class="text-muted-foreground text-xs">關閉視窗不會取消已接受的記帳。</p>
-		<p class="text-muted-foreground text-xs">
-			對話關閉後捨棄；結果不明時僅保留請求編號供查詢。
+<svelte:window onpagehide={leavePage} />
+
+<div class="flex flex-col gap-4">
+	<div class="space-y-2">
+		<h2 class="text-base font-medium">文字記帳</h2>
+		<p class="text-muted-foreground text-sm">
+			描述一筆支出；資訊不足時會追問，完整後直接記帳。
 		</p>
-	</Dialog.Content>
-</Dialog.Root>
+	</div>
+	<label for="semantic-entry-text" class="text-sm font-medium">記帳內容</label>
+	<textarea
+		id="semantic-entry-text"
+		bind:value={text}
+		disabled={attempt !== null || phase === 'uncertain'}
+		rows="3"
+		class="w-full rounded-md border p-3 text-sm"
+		placeholder="例如：今天午餐100元"
+	></textarea>
+	<p class="text-muted-foreground text-xs">{count}/500 字 · 單筆台幣支出</p>
+	{#if history.length}
+		<div class="max-h-40 space-y-2 overflow-y-auto text-sm" aria-label="本次對話">
+			{#each history as turn, index (index)}
+				<p class="text-muted-foreground">{turn.question}</p>
+				<p>你：{turn.answer}</p>
+			{/each}
+		</div>
+	{/if}
+	{#if phase === 'needs_input'}
+		<p role="status" class="font-medium">{question}</p>
+		<label for="semantic-entry-reply" class="text-sm font-medium">補充資訊</label>
+		<textarea
+			id="semantic-entry-reply"
+			bind:value={reply}
+			rows="2"
+			class="w-full rounded-md border p-3 text-sm"
+		></textarea>
+		<p class="text-muted-foreground text-xs">{replyCount}/500 字</p>
+	{/if}
+	{#if analysis}
+		<div class="space-y-1 rounded-md border p-3 text-sm">
+			<p class="text-muted-foreground text-xs">Gemini 分析</p>
+			<p aria-label="Gemini 分析摘要" class="whitespace-pre-wrap break-words">
+				{analysis}
+			</p>
+		</div>
+	{/if}
+	<div aria-live="polite" class="space-y-2">
+		{#if phase === 'processing'}<p role="status">
+				{analysis ? 'Gemini 分析中…' : '處理中…'}
+			</p>
+		{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
+		{:else if phase === 'created'}<p class="font-semibold">已新增</p>
+		{:else if phase === 'rejected' || phase === 'error'}<p class="font-semibold">未新增</p>
+		{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
+		{#each issues as issue, index (index)}<p>
+				{fields[issue.field] ?? '內容'}：{codes[issue.code] ?? '資訊無效'}
+			</p>{/each}
+		{#if savedExpense && phase === 'created'}
+			<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
+			<p class="text-sm">
+				{new Date(savedExpense.ts).toLocaleDateString('zh-TW', {
+					timeZone: 'Asia/Taipei'
+				})}
+			</p>
+			{#each Object.entries(savedExpense.shares_json) as [email, amount] (email)}
+				<p class="text-sm">{email}：NT$ {amount}</p>
+			{/each}
+		{/if}
+		{#if message}<p class="text-sm">{message}</p>{/if}
+	</div>
+	<div class="flex flex-wrap gap-2">
+		{#if phase === 'input'}<Button
+				disabled={!$user || count === 0 || count > 500}
+				onclick={() => execute()}>送出記帳</Button
+			>
+		{:else if phase === 'needs_input'}<Button
+				disabled={replyCount === 0 || replyCount > 500}
+				onclick={() => execute()}>送出補充</Button
+			>
+		{:else if phase === 'uncertain'}<Button onclick={() => execute(true)}>查詢結果</Button>
+			{#if attempt}<Button variant="outline" onclick={() => execute()}>重試同一請求</Button
+				>{/if}
+		{:else if phase === 'created'}<Button onclick={() => newOperation()}>新增另一筆</Button>
+		{:else if phase === 'rejected' || phase === 'error'}<Button
+				onclick={() => newOperation(false)}>修改後重新送出</Button
+			>{/if}
+	</div>
+	<p class="text-muted-foreground text-xs">關閉視窗不會取消已接受的記帳。</p>
+	<p class="text-muted-foreground text-xs">對話關閉後捨棄；結果不明時僅保留請求編號供查詢。</p>
+</div>

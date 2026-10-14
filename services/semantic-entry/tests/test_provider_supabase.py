@@ -11,7 +11,18 @@ from semantic_entry.supabase import SupabaseAdapter
 
 COMPLETED = {
     "candidates": [
-        {"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(RAW)}]}}
+        {
+            "finishReason": "STOP",
+            "content": {
+                "parts": [
+                    {
+                        "text": json.dumps(
+                            {"analysis": "已辨識午餐支出。", "extraction": RAW}
+                        )
+                    }
+                ]
+            },
+        }
     ]
 }
 
@@ -245,7 +256,9 @@ async def test_adapter_forbidden_member():
 
 @pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
 async def test_non_json_numeric_constants_are_provider_errors(constant):
-    extraction = json.dumps(RAW).replace('"amount": 851', '"amount": ' + constant)
+    extraction = json.dumps(
+        {"analysis": "已辨識午餐支出。", "extraction": RAW}
+    ).replace('"amount": 851', '"amount": ' + constant)
     data = {
         "candidates": [
             {"finishReason": "STOP", "content": {"parts": [{"text": extraction}]}}
@@ -293,7 +306,7 @@ async def test_database_jsonb_metadata_on_create_and_recovery(meta):
 
 
 async def test_gemini_split_text_ignores_thoughts_and_counts_usage():
-    text = json.dumps(RAW)
+    text = json.dumps({"analysis": "已辨識午餐支出。", "extraction": RAW})
     data = {
         "candidates": [
             {
