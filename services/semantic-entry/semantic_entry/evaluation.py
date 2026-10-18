@@ -14,7 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .contracts import JSON
+from .contracts import JSON, parse_request
+from .graph import conversation_payload
 from .normalize import normalize_extraction
 from .prompt import PROMPT_VERSION
 from .provider import DEFAULT_MODEL
@@ -23,7 +24,9 @@ COMMON = ("note", "amount", "currency", "scope", "category_id")
 DERIVED = ("ts", "payer_email", "shares_json", "is_settled")
 
 
-def score_case(expected: JSON, raw: Any, result: JSON) -> JSON:
+def score_case(
+    expected: JSON, raw: Any, result: JSON, *, semantic_rejection: bool = False
+) -> JSON:
     r = raw if isinstance(raw, dict) else {}
     amount = r.get("amount")
     baseline = (
@@ -37,26 +40,35 @@ def score_case(expected: JSON, raw: Any, result: JSON) -> JSON:
     proposal = {**r, "category_id": r.get("categoryId")}
     actual = result["expense"] if result["status"] == "valid" else {}
     fields = expected["fields"] if expected["status"] == "valid" else {}
-    common = [k for k in COMMON if k in fields]
+    note_keywords = expected.get("noteContains", [])
+    common = [k for k in COMMON if k in fields or (k == "note" and note_keywords)]
     derived = [k for k in DERIVED if k in fields]
 
     def issues(items: list[JSON]) -> list[str]:
         return sorted(f"{i['field']}:{i['code']}" for i in items)
 
+    def matches(values: JSON, key: str) -> bool:
+        if key == "note" and note_keywords:
+            note = values.get("note")
+            return isinstance(note, str) and all(word in note for word in note_keywords)
+        return key in values and values[key] == fields[key]
+
     return {
         "expectedEligible": expected["status"] == "valid",
         "baselineEligible": baseline,
         "harnessEligible": result["status"] == "valid",
-        "baselineFields": sum(
-            k in proposal and proposal[k] == fields[k] for k in common
-        ),
-        "harnessFields": sum(k in actual and actual[k] == fields[k] for k in common),
+        "baselineFields": sum(matches(proposal, k) for k in common),
+        "harnessFields": sum(matches(actual, k) for k in common),
         "commonFields": len(common),
         "derivedFields": sum(k in actual and actual[k] == fields[k] for k in derived),
         "derivedTotal": len(derived),
         "rejectionCorrect": expected["status"] == "rejected"
         and result["status"] == "rejected"
-        and issues(expected["issues"]) == issues(result["issues"]),
+        and (
+            set(issues(expected["issues"])) <= set(issues(result["issues"]))
+            if semantic_rejection
+            else issues(expected["issues"]) == issues(result["issues"])
+        ),
         "inputTokens": None,
         "outputTokens": None,
         "elapsedMs": None,
@@ -164,6 +176,14 @@ def validate_options(mode: str, runs: int, max_calls: int, count: int) -> None:
         )
 
 
+def load_cases(mode: str) -> tuple[Path, list[JSON]]:
+    if mode not in ("fixture", "live"):
+        raise ValueError("Unknown evaluation mode")
+    filename = "model-cases.json" if mode == "live" else "cases.json"
+    path = Path(__file__).resolve().parent.parent / "evals" / filename
+    return path, json.loads(path.read_text())
+
+
 async def run_evaluation(
     mode: str, runs: int, max_calls: int, cases: list[JSON], provider: Any = None
 ) -> JSON:
@@ -178,18 +198,34 @@ async def run_evaluation(
         raise ValueError("Invalid evaluation cases")
     if mode == "live" and provider is None:
         raise ValueError("Live provider required")
+    if mode == "live" and any(c.get("suite") != "model" for c in cases):
+        raise ValueError("Live evaluation requires the model suite")
+    if mode == "fixture" and any("raw" not in c for c in cases):
+        raise ValueError("Fixture evaluation requires synthetic raw extractions")
+    payloads = []
+    for case in cases:
+        request = parse_request(
+            {
+                "requestId": "00000000-0000-4000-8000-000000000000",
+                "text": case["text"],
+                "history": case.get("history", []),
+            }
+        )
+        payloads.append(
+            conversation_payload(request) if request.get("history") else request["text"]
+        )
     observations = []
     paid_calls = 0
-    for case in cases:
+    for case, payload in zip(cases, payloads, strict=True):
         for run in range(1, runs + 1):
             start = time.monotonic()
-            raw = case["raw"]
+            raw = case.get("raw")
             extracted: JSON = {}
             error = None
             try:
                 if mode == "live":
                     paid_calls += 1
-                    extracted = await provider(case["text"], case["context"])
+                    extracted = await provider(payload, case["context"])
                     raw = extracted["raw"]
                 result = normalize_extraction(raw, case["context"])
             except Exception:
@@ -197,7 +233,9 @@ async def run_evaluation(
                 raw = None
                 result = {"status": "rejected", "issues": []}
             score = {
-                **score_case(case["expected"], raw, result),
+                **score_case(
+                    case["expected"], raw, result, semantic_rejection=mode == "live"
+                ),
                 "inputTokens": extracted.get("inputTokens"),
                 "outputTokens": extracted.get("outputTokens"),
                 "elapsedMs": (time.monotonic() - start) * 1000,
@@ -229,8 +267,8 @@ async def main() -> None:
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     root = (await asyncio.to_thread(Path(__file__).resolve)).parent.parent
-    case_text = (root / "evals/cases.json").read_text()
-    cases = json.loads(case_text)
+    case_path, cases = load_cases(args.mode)
+    case_text = case_path.read_text()
     validate_options(args.mode, args.runs, args.max_calls, len(cases))
 
     def price(name: str) -> float | None:
@@ -281,6 +319,12 @@ async def main() -> None:
                 text=True,
             )
         ).strip(),
+        "caseSuite": "model" if args.mode == "live" else "normalizer",
+        "caseFile": case_path.name,
+        "caseHashMethod": "SHA-256 of the selected UTF-8 JSON file bytes",
+        "rejectionScoring": "required issue subset"
+        if args.mode == "live"
+        else "exact issues",
         "caseHash": hashlib.sha256(case_text.encode()).hexdigest(),
         "date": now,
         "python": platform.python_version(),
@@ -296,7 +340,7 @@ async def main() -> None:
         "pricing": pricing,
         "estimatedCostUsd": estimate_cost(result["summary"]["usage"], pricing),
         "costNote": "Recorded pricing assumptions only; unknown usage or price stays null. Estimates are not bills.",
-        "methodology": "Both projections share the same raw output and five common fields. Baseline requires nonempty note and positive finite amount. Derived fields are harness-only. Provider failures excluded from quality denominators. Fixture runs do not measure model quality.",
+        "methodology": "Both projections share the same raw output and five common fields. Baseline requires nonempty note and positive finite amount. Derived fields are harness-only. Provider failures excluded from quality denominators. Fixture runs only test synthetic normalizer outputs and do not measure model quality. Live runs use separate natural-language model cases, runtime-bounded conversation payloads, and required semantic issue subsets for rejected cases; additional missing fields are allowed. Valid cases require the listed exact normalized fields, except notes use all listed noteContains substrings to allow harmless wording differences; note substring checks do not establish semantic note quality.",
     }
     out = args.out or root / "evals/runs" / now.replace(":", "-")
     out.mkdir(parents=True, exist_ok=True)

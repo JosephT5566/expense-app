@@ -110,8 +110,9 @@ async function setup(
 	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0, {
 		timeout: 30000
 	});
+	const selectedDay = await page.getByRole('textbox', { name: 'Expense date' }).inputValue();
 	await page
-		.locator('[data-date="2026-10-01"]')
+		.locator(`[data-date="${selectedDay}"]`)
 		.getByRole('button', { name: 'AI 記帳', exact: true })
 		.click();
 	await page.getByLabel('記帳內容').fill('午餐100');
@@ -978,9 +979,7 @@ test('chat composer stays visible and shows a hint for the current phase', async
 		release();
 		await expect(page.getByLabel('補充資訊')).toBeEditable();
 		await expect(composer).toHaveCount(1);
-		await expect(
-			page.getByText('補充這筆支出的資訊，接續剛才的對話。', { exact: true })
-		).toBeVisible();
+		await expect(page.locator('#semantic-entry-hint')).toContainText('2026-10-01');
 	} finally {
 		release();
 	}
@@ -1020,4 +1019,60 @@ test('AI dialog defaults to semantic entry and preserves input across mode switc
 		.click();
 	await expect(page.getByLabel('記帳內容')).toBeVisible();
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+});
+
+test.describe('Taiwan conversation date baseline', () => {
+	test.use({ timezoneId: 'America/Los_Angeles' });
+	test('initial uncertain retry retains baseline across midnight and new operation gets new day', async ({
+		page
+	}) => {
+		let count = 0;
+		const s = await setup(page, async (route, body) => {
+			if (++count === 1) {
+				await route.abort();
+			} else {
+				await route.fulfill({ json: created(body!.requestId) });
+			}
+		});
+		await page.clock.setFixedTime(new Date('2026-10-01T23:59:00+08:00'));
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await page.clock.setFixedTime(new Date('2026-10-02T00:01:00+08:00'));
+		await page.getByRole('button', { name: '重試同一請求' }).click();
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		expect(s.posts[0].referenceDate).toBe('2026-10-01');
+		expect(s.posts[1]).toEqual(s.posts[0]);
+		await page.getByRole('button', { name: '新增另一筆' }).click();
+		await page.getByLabel('記帳內容').fill('午餐100');
+		await submit(page);
+		await expect.poll(() => s.posts.length).toBe(3);
+		expect(s.posts[2].referenceDate).toBe('2026-10-02');
+		expect(s.posts[2].requestId).not.toBe(s.posts[0].requestId);
+	});
+	test('clarification retains Taiwan baseline across midnight', async ({ page }) => {
+		const question = '這筆支出的金額是多少？';
+		const s = await setup(page, async (route, body) => {
+			await route.fulfill({
+				json: body!.history
+					? created(body!.requestId)
+					: {
+							status: 'needs_input',
+							requestId: body!.requestId,
+							question,
+							issues: [{ field: 'amount', code: 'missing' }]
+						}
+			});
+		});
+		await page.clock.setFixedTime(new Date('2026-10-01T23:59:00+08:00'));
+		await page.getByLabel('記帳內容').fill('今天午餐');
+		await submit(page);
+		await expect(page.getByText(question, { exact: true })).toBeVisible();
+		await page.clock.setFixedTime(new Date('2026-10-02T00:01:00+08:00'));
+		await expect(page.locator('#semantic-entry-hint')).toContainText('2026-10-01');
+		await page.getByLabel('補充資訊').fill('100元');
+		await page.getByRole('button', { name: '送出補充', exact: true }).click();
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		expect(s.posts[0].referenceDate).toBe('2026-10-01');
+		expect(s.posts[1]).toEqual({ ...s.posts[0], history: [{ question, answer: '100元' }] });
+	});
 });

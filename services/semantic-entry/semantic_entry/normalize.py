@@ -148,12 +148,12 @@ def normalize_extraction(raw: Any, ctx: JSON) -> JSON:
         issue("categoryId", "missing")
     elif not any(c["id"] == category for c in ctx["categories"]):
         issue("categoryId", "invalid")
-    day = ctx["today"]
-    if not valid_date(day):
+    day = ctx["referenceDate"] if "referenceDate" in ctx else ctx["today"]
+    if not valid_date(day) or not valid_date(ctx["today"]) or day > ctx["today"]:
         issue("date", "configuration")
     elif r["date"]["kind"] == "absolute":
         absolute = r["date"]["value"]
-        if not absolute or not valid_date(absolute) or absolute > day:
+        if not absolute or not valid_date(absolute) or absolute > ctx["today"]:
             issue("date", "invalid")
         else:
             day = absolute

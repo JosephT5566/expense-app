@@ -6,7 +6,7 @@
 	import { user } from '$lib/stores/session.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
 	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
-	import { getTaiwanMonthKey } from '$lib/utils/dates';
+	import { getTaiwanMonthKey, toISODateOnly } from '$lib/utils/dates';
 	import {
 		submitSemanticEntry,
 		getSemanticEntryStatus,
@@ -101,7 +101,9 @@
 			? '訊息最多 500 字，請縮短後再送出。'
 			: {
 					input: '資訊完整後會直接記帳。',
-					needs_input: '補充這筆支出的資訊，接續剛才的對話。',
+					needs_input: attempt?.referenceDate
+						? `本次「今天」固定為 ${attempt.referenceDate}（台灣日期）。日期更正請填完整年月日。`
+						: '補充這筆支出的資訊，接續剛才的對話。',
 					processing: '正在解析，請等待助手回覆。',
 					persisting: '正在儲存這筆支出，請稍候。',
 					created: '已完成記帳，點選「新增另一筆」開始新對話。',
@@ -266,6 +268,9 @@
 					phase === 'needs_input' ? [...history, { question, answer: reply }] : history;
 				const request = parseRequest({
 					requestId: attempt?.requestId ?? crypto.randomUUID(),
+					referenceDate:
+						attempt?.referenceDate ??
+						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)),
 					text,
 					...(nextHistory.length ? { history: nextHistory } : {})
 				});
@@ -318,6 +323,7 @@
 				const request = parseRequest({
 					requestId: operation.requestId,
 					text: operation.text,
+					...(operation.referenceDate ? { referenceDate: operation.referenceDate } : {}),
 					...(operation.history ? { history: operation.history } : {})
 				});
 				const result = await submitSemanticEntry(

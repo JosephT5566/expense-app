@@ -14,14 +14,48 @@ QUESTIONS = {
 }
 
 
-def clarification_result(validation: JSON, request: JSON) -> JSON:
+def contextual_question(field: str, context: JSON) -> str:
+    question = QUESTIONS[field]
+    if field == "date":
+        baseline = context.get("referenceDate", context.get("today"))
+        return (
+            f"這筆支出實際發生在哪一天？本次「今天」固定為 {baseline}（台灣日期）；也可提供完整年月日。"
+            if baseline
+            else question
+        )
+    key = (
+        "categories"
+        if field == "categoryId"
+        else "members"
+        if field in ("payerId", "members", "splitMemberIds")
+        else None
+    )
+    if key:
+        names = []
+        for item in context.get(key, []):
+            name = " ".join(item["name"].split())
+            if name and name not in names:
+                names.append(name)
+        if names:
+            label = "可選分類" if key == "categories" else "可選成員"
+            suffix = f" {label}（名稱）：" + "、".join(names)
+            available = 300 - len(question)
+            question += (
+                suffix if len(suffix) <= available else suffix[: available - 1] + "…"
+            )
+    return question
+
+
+def clarification_result(
+    validation: JSON, request: JSON, context: JSON | None = None
+) -> JSON:
     issues = validation["issues"]
     repairable = bool(issues) and all(
         i["field"] in QUESTIONS and i["code"] != "configuration" for i in issues
     )
     if repairable and len(request.get("history", [])) < 3:
         # Ask one focused question at a time; all issues still accompany the response.
-        question = QUESTIONS[issues[0]["field"]]
+        question = contextual_question(issues[0]["field"], context or {})
         return {
             "status": "needs_input",
             "requestId": request["requestId"],
