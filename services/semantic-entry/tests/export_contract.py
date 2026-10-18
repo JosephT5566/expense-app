@@ -35,6 +35,27 @@ class Adapter:
 async def main():
     inputs = [
         REQUEST,
+        *[
+            {**REQUEST, "referenceDate": value}
+            for value in [
+                "2026-02-28",
+                "0100-01-01",
+                "2000-02-29",
+                "2026-02-29",
+                "1900-02-29",
+                "2026-13-01",
+                "2026-1-01",
+                "0099-12-31",
+                "20260301",
+                None,
+                20260301,
+            ]
+        ],
+        {
+            **REQUEST,
+            "referenceDate": "2026-02-28",
+            "history": [{"question": "金額？", "answer": "100"}],
+        },
         {**REQUEST, "history": []},
         {**REQUEST, "history": [{"question": " 金額？ ", "answer": " e\u0301 "}]},
         {**REQUEST, "history": [{"question": "金額？", "answer": "100"}]},

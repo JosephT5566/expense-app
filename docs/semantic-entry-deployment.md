@@ -150,6 +150,8 @@ The workflow validates `SEMANTIC_MEMBER_NAMES` as a JSON object with string valu
 
 Add the environment secret `PUBLIC_SUPABASE_PUBLISHABLE_KEY` (publishable key only). The workflow writes a temporary runtime environment file, binds secret references, pushes an image tagged with the source SHA, and deploys the resolved immutable digest. The environment file and secret bindings are authoritative for this dedicated service. It uses request-based CPU allocation, zero minimum/two maximum instances, one vCPU, 512 MiB, and a 30-second request timeout. It does not set up IAM, create secret versions, or run paid evaluation. The workflow definition has been inspected locally; Google authentication, permissions, Artifact Registry push, and hosted behavior require the first authorized execution.
 
+For the conversation date-baseline update, release the backend before rebuilding the frontend. The new backend accepts legacy requests without `referenceDate`, but the previous strict backend rejects the new frontend field. This change needs no SQL migration.
+
 After deployment, set repository variable `PUBLIC_SEMANTIC_ENTRY_URL` to the emitted service origin for both Pages/build workflows. Release/rebuild Pages separately. Cloud Run deployment does not rebuild the frontend. `/health` checks process reachability only; complete the hosted acceptance items above before claiming the expense flow works in production. Use Cloud Run revision traffic controls for an operator-directed rollback.
 
 ## Gemini model configuration

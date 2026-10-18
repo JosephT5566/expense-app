@@ -20,9 +20,11 @@ for (const item of cases.requests) {
 	} else {
 		const parsed = parseRequest(item.raw);
 		assert.deepEqual(parsed, item.parsed);
-		const payload = parsed.history
-			? `v2\n${JSON.stringify({ text: parsed.text, history: parsed.history })}`
-			: `v1\n${parsed.text}`;
+		const payload = parsed.referenceDate
+			? `v3\n${JSON.stringify({ text: parsed.text, history: parsed.history ?? [], referenceDate: parsed.referenceDate })}`
+			: parsed.history
+				? `v2\n${JSON.stringify({ text: parsed.text, history: parsed.history })}`
+				: `v1\n${parsed.text}`;
 		assert.equal(createHash('sha256').update(payload).digest('hex'), item.hash);
 	}
 }
@@ -80,5 +82,6 @@ for (const body of [
 	{ requestId: id, seq: 0, text: '🍜'.repeat(201) },
 	{ requestId: id, seq: 0, text: '\uD800' },
 	{ requestId: id, seq: 0, text: '午餐', extra: true }
-])
+]) {
 	assert.throws(() => parseStreamEvent('analysis_delta', body));
+}

@@ -9,7 +9,7 @@ import json
 import math
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 JSON = dict[str, Any]
@@ -99,13 +99,23 @@ def bounded_text(raw: Any, maximum: int) -> str:
     return unicodedata.normalize("NFC", value)
 
 
+def date_only(value: Any) -> str:
+    s = string(value)
+    parsed = date.fromisoformat(s)
+    if parsed.isoformat() != s or parsed.year < 100:
+        raise ValueError("Invalid date")
+    return s
+
+
 def parse_request(raw: Any) -> JSON:
     r = object_(raw)
-    exact_keys(r, ["requestId", "text"], ["history"])
+    exact_keys(r, ["requestId", "text"], ["history", "referenceDate"])
     parsed: JSON = {
         "requestId": request_id(r["requestId"]),
         "text": bounded_text(r["text"], 500),
     }
+    if "referenceDate" in r:
+        parsed["referenceDate"] = date_only(r["referenceDate"])
     if "history" in r:
         if not isinstance(r["history"], list) or len(r["history"]) > 3:
             raise ValueError("Invalid history")

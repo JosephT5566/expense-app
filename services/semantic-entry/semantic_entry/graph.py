@@ -58,6 +58,15 @@ def input_hash(request: JSON | str) -> str:
     # Preserve legacy completed requests and snapshots; history hashes cover every correction.
     if isinstance(request, str):
         content = f"v1\n{request}"
+    elif "referenceDate" in request:
+        payload = {
+            "text": request["text"],
+            "history": request.get("history", []),
+            "referenceDate": request["referenceDate"],
+        }
+        content = "v3\n" + json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":")
+        )
     elif not request.get("history"):
         content = f"v1\n{request['text']}"
     else:
@@ -126,7 +135,13 @@ async def invoke(
     async def load_context(state: State) -> JSON:
         nonlocal active_node
         active_node = "load_context"
-        return {"context": await adapter.load_context(state["user"])}
+        context = await adapter.load_context(state["user"])
+        return {
+            "context": {
+                **context,
+                "referenceDate": request.get("referenceDate", context["today"]),
+            }
+        }
 
     async def lookup(state: State) -> JSON:
         nonlocal active_node
@@ -148,6 +163,8 @@ async def invoke(
     async def quota(state: State) -> JSON:
         nonlocal active_node
         active_node = "quota"
+        if state["context"]["referenceDate"] > state["context"]["today"]:
+            raise SemanticError(400, "invalid_request")
         if not await adapter.consume_quota():
             raise SemanticError(429, "quota_exceeded")
         return {}
@@ -177,7 +194,9 @@ async def invoke(
         validation = normalize_extraction(state["extraction"]["raw"], state["context"])
         result = {"validation": validation}
         if validation["status"] == "rejected":
-            result["result"] = clarification_result(validation, request)
+            result["result"] = clarification_result(
+                validation, request, state["context"]
+            )
         return result
 
     async def persist(state: State) -> JSON:
