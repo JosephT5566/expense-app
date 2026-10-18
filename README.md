@@ -104,3 +104,5 @@ See the [evidence index](docs/evidence/semantic-entry/README.md), [design](docs/
 # Disposable localhost full schema-chain assertions, no production access.
 services/semantic-entry/scripts/baseline-db-test.sh
 ```
+
+The baseline script waits for the container's TCP listener, avoiding the temporary socket-only server used during PostgreSQL initialization. If readiness fails after 30 attempts, it prints the container logs and stops before creating the test database or applying SQL. It removes only the disposable container it successfully created.
