@@ -63,13 +63,14 @@ Documentation ownership stays with the existing files: setup, commands, and CI h
 
 Report findings as `repository-verified`, `operator-reported`, or `unverified` according to the evidence available. Client types, comments, and mocked responses do not prove deployed Supabase policies or receipt-service behavior. Keep historical check outputs in task artifacts and distinguish them from checks run for the current change.
 
-This is a local coding-agent workflow. No issue-to-PR agent automation is configured. The synthetic semantic-entry harness below evaluates local rules separately from live model quality.
+Issue-first development (raw issue, enhancement, `ai-ready` approval, implementation PR, independent review) is described in [Agent workflow](docs/agent-workflow.md). This is a local coding-agent workflow. No issue-to-PR agent automation is configured. The synthetic semantic-entry harness below evaluates local rules separately from live model quality.
 
 ## Project documentation
 
 - [Architecture](docs/architecture.md): routes, module responsibilities, and data flow.
 - [Database and service contracts](docs/database.md): frontend contracts and inherited Supabase notes.
 - [Agent instructions](AGENTS.md): repository guidance and documentation maintenance rule.
+- [Agent workflow](docs/agent-workflow.md): issue-first stages and the prompt for each stage.
 - [Expense app guide skill](.agents/skills/expense-app-guide/SKILL.md): explain the app and update affected documentation.
 
 ## Semantic expense entry

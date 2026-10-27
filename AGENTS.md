@@ -36,6 +36,17 @@ Implementation and fresh check results take precedence over stale documentation.
 - Keep shared constraints here, reusable task methods in skills, and setup/commands in the README or scripts. Use local `AGENTS.md` only for subtree-specific rules.
 - This guidance does not authorize pushing, merging, deploying, paid receipt-service calls, or live database changes. Follow the user's authorized scope for those actions.
 
+## Issue-first workflow
+
+- Implement only from a GitHub Issue labeled `ai-ready` whose approval checklist is complete. A raw `[idea]` issue is not an implementation order. If the issue is incomplete or changed after approval, stop and return it to clarification with [issue-enhance](.agents/skills/issue-enhance/SKILL.md).
+- Any change to UI layout, visual design, copy hierarchy, or interaction needs a design selected by the owner first. Use [ui-design-gate](.agents/skills/ui-design-gate/SKILL.md). Do not pick a design on the owner's behalf.
+- Work on one branch per issue (`issue-<number>-<slug>`), preferably in a separate git worktree. Run at most two issues in parallel, and not when they touch the same files.
+- Open a PR that references the issue. Follow [implement-from-issue](.agents/skills/implement-from-issue/SKILL.md) for the PR content, and run [review-pr](.agents/skills/review-pr/SKILL.md) in a session that did not write the code.
+- Owner approval is required before merging changes to: Supabase migrations, RLS or auth, `PUBLIC_*` environment handling, `.github/workflows/`, the GitHub Pages base path or OAuth redirects, settlement or share calculation, scheduled-expense lifecycle, and the semantic-entry service contract.
+- Agents never merge. The owner merges after required checks pass.
+- Decisions live in the issue or PR, not in chat. A failed session leaves its branch and a short status comment so another session can resume.
+- Stage prompts and status conventions are in [docs/agent-workflow.md](docs/agent-workflow.md).
+
 ## Browser automation
 
 - For browser automation, use the Chrome plugin through its `browser-client` runtime by default.
