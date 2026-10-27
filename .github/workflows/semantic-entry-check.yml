@@ -49,7 +49,8 @@ jobs:
               run: supabase stop --no-backup
 
     frontend:
-        runs-on: ubuntu-latest
+        # Playwright 1.59.1 supports Ubuntu 24.04; avoid ubuntu-latest OS upgrades.
+        runs-on: ubuntu-24.04
         timeout-minutes: 15
         env:
             PUBLIC_SUPABASE_URL: https://synthetic.supabase.co
