@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from starlette.responses import Response
 
 from .contracts import JSON
+from .draft_provider import DraftProvider
 from .graph import Dependencies
 from .handler import handle
 from .images import GcsImageStore
@@ -54,6 +55,10 @@ def environment_dependencies(client: httpx.AsyncClient) -> Dependencies:
             if o.strip()
         ),
         stream_entry=provider.stream,
+        extract_drafts=DraftProvider(
+            api_key=os.environ.get("GEMINI_API_KEY", ""),
+            model=os.environ.get("SEMANTIC_MODEL", DEFAULT_MODEL),
+        ),
         image_store=(
             GcsImageStore(bucket)
             if (bucket := os.environ.get("SEMANTIC_UPLOAD_BUCKET"))

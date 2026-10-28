@@ -19,8 +19,7 @@ from .contracts import (
 )
 from .errors import SemanticError
 from .normalize import MAX_EXPENSE_AMOUNT, equal_shares, valid_date
-
-RECEIPT_PROMPT_VERSION = "semantic-receipt-v1"
+from .prompt import RECEIPT_PROMPT_VERSION as RECEIPT_PROMPT_VERSION
 
 
 def parse_raw_extraction(raw: object, image_count: int) -> JSON:
