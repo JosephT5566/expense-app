@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 from .contracts import JSON, load_json, parse_request, request_id
 from .errors import SemanticError, log_failure
 from .graph import Dependencies, invoke
+from .images import issue_upload_urls, parse_upload_request
 
 # Strong references only for bounded in-flight requests; no conversation storage.
 _operations: set[asyncio.Task[None]] = set()
@@ -169,6 +170,44 @@ async def handle(request: Request, deps: Dependencies) -> Response:
     # Cloud Run reserves some paths ending in "z", including /healthz.
     if path == "/health" and request.method == "GET":
         return JSONResponse({"status": "ok"}, headers=cors)
+    if path == "/semantic-entry/uploads":
+        if request.method != "POST":
+            return error(SemanticError(405, "method_not_allowed"))
+        bearer_upload = re.fullmatch(
+            r"Bearer (\S+)", request.headers.get("authorization", ""), re.I
+        )
+        if not bearer_upload:
+            return error(SemanticError(401, "unauthorized"))
+        try:
+            async with asyncio.timeout(deps.http_deadline):
+                adapter = deps.create_adapter(bearer_upload[1])
+                active_node = "authenticate"
+                user = await adapter.authenticate()
+                active_node = "load_context"
+                await adapter.load_context(user)
+                active_node = "uploads"
+                if deps.image_store is None:
+                    raise SemanticError(502, "image_configuration")
+                upload_body = bytearray()
+                async for chunk in request.stream():
+                    upload_body.extend(chunk)
+                    if len(upload_body) > 4096:
+                        raise SemanticError(400, "body_too_large")
+                try:
+                    files = parse_upload_request(load_json(upload_body.decode("utf-8")))
+                except (ValueError, TypeError, UnicodeError):
+                    raise SemanticError(400, "invalid_request") from None
+                return JSONResponse(
+                    await issue_upload_urls(deps.image_store, user["id"], files),
+                    headers=cors,
+                )
+        except TimeoutError:
+            active_node = "deadline"
+            return error(SemanticError(504, "image_error"))
+        except SemanticError as e:
+            return error(e)
+        except Exception:
+            return error(SemanticError(502, "image_error"))
     match = re.fullmatch(r"/semantic-entry/([^/]+)", path)
     status_id = match[1] if match else None
     if path != "/semantic-entry" and not status_id:

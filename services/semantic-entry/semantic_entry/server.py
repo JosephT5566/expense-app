@@ -11,6 +11,7 @@ from starlette.responses import Response
 from .contracts import JSON
 from .graph import Dependencies
 from .handler import handle
+from .images import GcsImageStore
 from .provider import DEFAULT_MODEL, Provider
 from .supabase import SupabaseAdapter
 
@@ -53,6 +54,11 @@ def environment_dependencies(client: httpx.AsyncClient) -> Dependencies:
             if o.strip()
         ),
         stream_entry=provider.stream,
+        image_store=(
+            GcsImageStore(bucket)
+            if (bucket := os.environ.get("SEMANTIC_UPLOAD_BUCKET"))
+            else None
+        ),
     )
 
 
@@ -80,6 +86,9 @@ def create_app(deps: Dependencies | None = None) -> FastAPI:
     app.add_api_route("/health", endpoint, methods=["GET"], name="health")
     app.add_api_route(
         "/semantic-entry", endpoint, methods=["POST"], name="create_entry"
+    )
+    app.add_api_route(
+        "/semantic-entry/uploads", endpoint, methods=["POST"], name="upload_images"
     )
     app.add_api_route(
         "/semantic-entry/{requestId}",

@@ -40,3 +40,7 @@ files = ["semantic_entry"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["semantic_entry"]
+
+[[tool.mypy.overrides]]
+module = ["google.cloud", "google.cloud.*"]
+ignore_missing_imports = true
