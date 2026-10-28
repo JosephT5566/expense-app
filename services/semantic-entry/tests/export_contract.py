@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import httpx
 from conftest import CONTEXT, RAW, REQUEST, REQUEST_ID, ROW
+from test_contract_v3 import JSON_INVALID, export_v3
 
 from semantic_entry.contracts import parse_request
 from semantic_entry.graph import Dependencies, input_hash
@@ -179,8 +180,14 @@ async def main():
         )
     print(
         json.dumps(
-            {"requests": requests, "responses": responses, "streams": streams},
-            ensure_ascii=False,
+            {
+                "requests": requests,
+                "responses": responses,
+                "streams": streams,
+                "v3": export_v3(),
+                "jsonInvalidV3": JSON_INVALID,
+            },
+            ensure_ascii=True,
         )
     )
 

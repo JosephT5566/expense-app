@@ -74,6 +74,85 @@ def input_hash(request: JSON | str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def input_hash_v4_json(value: object) -> str:
+    """Compact JSON with ECMAScript number spelling (notably 1.0 and exponents)."""
+    if isinstance(value, dict):
+        return (
+            "{"
+            + ",".join(
+                json.dumps(k, ensure_ascii=False) + ":" + input_hash_v4_json(v)
+                for k, v in value.items()
+            )
+            + "}"
+        )
+    if isinstance(value, list):
+        return "[" + ",".join(input_hash_v4_json(v) for v in value) + "]"
+    if isinstance(value, float):
+        if not (-float("inf") < value < float("inf")):
+            raise ValueError("Invalid hash number")
+        if value == 0:
+            return "0"
+        if value.is_integer() and abs(value) < 1e21:
+            return str(int(value))
+        text = repr(value)
+        if "e" in text:
+            coefficient, exponent = text.split("e")
+            power = int(exponent)
+            if -6 <= power < 21:
+                from decimal import Decimal
+
+                return format(Decimal(text), "f")
+            return (
+                coefficient.removesuffix(".0")
+                + "e"
+                + ("+" if power >= 0 else "-")
+                + str(abs(power))
+            )
+        return text
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+
+
+def input_hash_v4(request: JSON, images: list[JSON] | None = None) -> str:
+    """V3 parsed input plus service-read generations; never wire-supplied generations.
+
+    No graph routing changes: callers must explicitly opt in after reading metadata.
+    Draft identity/merge provenance and all editable field metadata participate.
+    Service-derived status/issues/updated do not participate.
+    """
+    from .contracts import exact_keys, parse_request_v3, string
+
+    parsed = parse_request_v3(request)
+    if "images" not in parsed and "drafts" not in parsed:
+        if images:
+            raise ValueError("Unexpected image metadata")
+        return input_hash(parsed)
+    resolved = []
+    if "images" in parsed:
+        if images is None or len(images) != len(parsed["images"]):
+            raise ValueError("Missing image metadata")
+        for path, image in zip(parsed["images"], images, strict=True):
+            exact_keys(image, ["path", "generation"])
+            if image["path"] != path:
+                raise ValueError("Image path mismatch")
+            resolved.append({"path": path, "generation": string(image["generation"])})
+    elif images:
+        raise ValueError("Unexpected image metadata")
+    drafts = [
+        {k: v for k, v in draft.items() if k not in ("status", "issues", "updated")}
+        for draft in parsed.get("drafts", [])
+    ]
+    payload = {
+        "action": parsed["action"],
+        "text": parsed.get("text", ""),
+        "history": parsed.get("history", []),
+        "referenceDate": parsed.get("referenceDate"),
+        "images": resolved,
+        "drafts": drafts,
+    }
+    content = "v4\n" + input_hash_v4_json(payload)
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
 async def invoke(
     request: JSON,
     token: str,
