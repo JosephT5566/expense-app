@@ -455,23 +455,34 @@ async def test_revise_explicit_date_correction_or_confirmation_clears_marker(sam
 @pytest.mark.parametrize(
     "source,confidence", [("image", None), ("image", 0.9), ("default", None)]
 )
-async def test_revise_note_keeps_service_defaults(source, confidence):
-    deps, _, _ = make_setup()
+async def test_revise_note_drops_service_default_labels(source, confidence):
+    deps, adapter, _ = make_setup()
     raw = raw_draft()
-    raw["currency"]["value"] = None
-    raw["date"].update(source="default", confidence=None)
+    raw["currency"].update(value=None, state="missing")
     original = normalize_draft(raw, deepcopy(CONTEXT))
+    assert original["currency"]["value"] == "TWD"
+    assert original["currency"]["source"] == "default"
+    assert original["status"] == "complete"
     revised = raw_from_original(original)
     revised["note"].update(value="晚餐", source="text")
-    fields = ("currency", "scope", "payerEmail", "splitMemberEmails", "date")
-    for field in fields:
-        revised[field].update(source=source, confidence=confidence)
+    revised["currency"] = {
+        "value": "TWD",
+        "state": "recognized",
+        "source": source,
+        "confidence": confidence,
+    }
     d = await revise_result(original, revised, deps)
-    for field in fields:
-        assert d[field] == original[field]
-        assert d[field]["source"] == "default"
+    assert d["currency"]["source"] == source
+    assert d["currency"]["confidence"] == confidence
     assert d["note"]["value"] == "晚餐"
-    assert d["status"] == "complete" and d["updated"]
+    if source == "image" and confidence is None:
+        assert d["status"] == "incomplete"
+        assert {"field": "currency", "code": "missing_confidence"} in d["issues"]
+    else:
+        assert d["status"] == "complete"
+    assert d["updated"]
+    adapter.persist_expense.assert_not_called()
+    adapter.persist_expenses.assert_not_called()
 
 
 async def test_revise_text_currency_change_is_not_preserved_as_default():

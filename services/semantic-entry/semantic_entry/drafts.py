@@ -154,26 +154,18 @@ def normalize_draft(
 
     preserved_date = None
     if previous is not None:
-        for key in ("currency", "scope", "payerEmail", "splitMemberEmails", "date"):
-            original = previous[key]
-            field = d[key]
-            if field["value"] != original["value"]:
-                continue
-            preserve_default = original["source"] == "default" and field[
-                "source"
-            ] not in ("user", "text")
-            preserve_date = (
-                key == "date"
-                and original["defaulted"] is not None
-                and not (
-                    field["source"] in ("user", "text")
-                    and field["source"] != original["source"]
-                )
+        original = previous["date"]
+        field = d["date"]
+        if (
+            field["value"] == original["value"]
+            and original["defaulted"] is not None
+            and not (
+                field["source"] in ("user", "text")
+                and field["source"] != original["source"]
             )
-            if preserve_default or preserve_date:
-                d[key] = deepcopy(original)
-                if key == "date":
-                    preserved_date = deepcopy(original)
+        ):
+            d["date"] = deepcopy(original)
+            preserved_date = deepcopy(original)
 
     def invalid(key: str) -> None:
         d[key].update(value=None, state="unrecognized")
