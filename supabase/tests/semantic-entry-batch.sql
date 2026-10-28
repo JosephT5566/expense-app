@@ -120,6 +120,33 @@ BEGIN
    RAISE EXCEPTION '%: trigger share count or total incorrect',c.name;
   END IF;
  END LOOP;
+ -- Batch-only cast-boundary group：單筆 RPC create_semantic_expense 對這些輸入會拋出 PostgreSQL 原生錯誤（已知限制，依 #49 計畫不修改單筆 RPC），所以不放進共用 parity 清單。
+ FOR c IN SELECT name, v || patch AS expense, message FROM (VALUES
+  ('malformed date','{"ts":"not-a-date"}'::jsonb,'Invalid expense date'),
+  ('month overflow','{"ts":"2026-13-01T00:00:00+08:00"}','Invalid expense date'),
+  ('timestamp overflow','{"ts":"300000-01-01T00:00:00+08:00"}','Invalid expense date'),
+  ('timezone overflow','{"ts":"2026-01-01T00:00:00+99:00"}','Invalid expense date'),
+  ('malformed category','{"category_id":"not-a-uuid"}','Invalid category'),
+  ('personal amount overflow','{"amount":10000000000,"shares_json":{"a@example.test":10000000000}}','Invalid amount'),
+  ('household amount overflow','{"scope":"household","is_settled":false,"amount":10000000000,"shares_json":{"a@example.test":5000000000,"b@example.test":5000000000}}','Invalid amount')
+ ) AS boundaries(name,patch,message) LOOP
+  PERFORM pg_temp.expect_failure(c.name || ' batch index 0',jsonb_build_array(c.expense),true,'PT422',c.message,'{"index":0}');
+  PERFORM pg_temp.expect_failure(c.name || ' batch index 1',jsonb_build_array(v,c.expense),true,'PT422',c.message,'{"index":1}');
+ END LOOP;
+ -- Exercise numeric(12,2) inserts and the real baseline share trigger at the limit.
+ FOR c IN SELECT name, v || patch AS expense FROM (VALUES
+  ('personal amount limit','{"amount":9999999999,"shares_json":{"a@example.test":9999999999}}'::jsonb),
+  ('household amount limit','{"scope":"household","is_settled":false,"amount":9999999999,"shares_json":{"a@example.test":5000000000,"b@example.test":4999999999}}')
+ ) AS boundaries(name,patch) LOOP
+  rpc_result:=public.create_semantic_expenses(gen_random_uuid(),repeat('a',64),jsonb_build_array(c.expense));
+  v_expense_id:=(rpc_result->'expenses'->0->>'id')::uuid;
+  IF rpc_result->>'replayed' IS DISTINCT FROM 'false' OR jsonb_array_length(rpc_result->'expenses')<>1 OR
+     NOT EXISTS(SELECT 1 FROM public.expenses WHERE id=v_expense_id AND amount=9999999999) OR
+     (SELECT sum(share_amount) FROM public.expense_shares WHERE expense_id=v_expense_id) IS DISTINCT FROM 9999999999::numeric OR
+     (SELECT jsonb_object_agg(user_email::text,share_amount) FROM public.expense_shares WHERE expense_id=v_expense_id) IS DISTINCT FROM c.expense->'shares_json' THEN
+   RAISE EXCEPTION '%: amount limit insert or trigger shares incorrect',c.name;
+  END IF;
+ END LOOP;
  SELECT jsonb_agg(v) INTO twenty FROM generate_series(1,20);
  rpc_result:=public.create_semantic_expenses(gen_random_uuid(),repeat('a',64),twenty);
  IF jsonb_array_length(rpc_result->'expenses')<>20 OR rpc_result->>'replayed' IS DISTINCT FROM 'false' THEN RAISE EXCEPTION 'Length twenty batch failed'; END IF;
@@ -168,4 +195,4 @@ BEGIN
  IF NOT EXISTS(SELECT 1 FROM pg_proc WHERE oid='public.create_semantic_expenses(uuid,text,jsonb)'::regprocedure AND prosecdef AND 'search_path=""'=ANY(proconfig)) THEN RAISE EXCEPTION 'Batch definer/search_path incorrect'; END IF;
 END $$;
 ROLLBACK;
-SELECT 'Batch RPC validation parity, trigger shares, atomicity, replay, authorization and ledger isolation: passed' AS result;
+SELECT 'Batch RPC validation parity, cast-boundary, trigger shares, atomicity, replay, authorization and ledger isolation: passed' AS result;

@@ -345,6 +345,47 @@ async def test_batch_failed_write_rolls_back(db, patch):
     assert await batch_expense_ids(db) == before
 
 
+@pytest.mark.parametrize(
+    ("patch", "message"),
+    [
+        ({"ts": "not-a-date"}, "Invalid expense date"),
+        ({"category_id": "not-a-uuid"}, "Invalid category"),
+        (
+            {
+                "scope": "household",
+                "is_settled": False,
+                "amount": 10000000000,
+                "shares_json": {
+                    "a@example.test": 5000000000,
+                    "b@example.test": 5000000000,
+                },
+            },
+            "Invalid amount",
+        ),
+    ],
+)
+async def test_batch_cast_boundary_errors_keep_index(db, patch, message):
+    # The integration fixture uses unrestricted numeric; the RPC enforces the limit.
+    before = await batch_expense_ids(db)
+    identifier = str(uuid4())
+    failed = await create_batch(
+        db, "a", identifier, [payload(), {**payload(), **patch}]
+    )
+    body = failed.json()
+    print("Batch cast-boundary PT422 response:", json.dumps(body, sort_keys=True))
+    assert failed.status_code == 422 and body["code"] == "PT422"
+    assert body["message"] == message
+    assert json.loads(body["details"]) == {"index": 1}
+    ledger = await db(
+        "admin",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    assert ledger.is_success and ledger.json() == []
+    assert await batch_expense_ids(db) == before
+
+
 @pytest.mark.parametrize("size", [0, 21])
 async def test_batch_invalid_length(db, size):
     identifier = str(uuid4())

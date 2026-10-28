@@ -6,7 +6,7 @@ language plpgsql security definer set search_path='' as $$
 declare
  caller uuid := auth.uid(); caller_email text := auth.jwt()->>'email'; allowed text[];
  saved public.semantic_entry_requests%rowtype; created public.expenses%rowtype;
- amount_value numeric; timestamp_value timestamptz; share_total numeric; share_count integer;
+ amount_value numeric; timestamp_value timestamptz; local_value timestamp; category_value uuid; share_total numeric; share_count integer;
  share record; expected_share numeric; first_email text; snapshot jsonb := '[]'::jsonb; p_expense jsonb; i integer;
 begin
  if caller is null then raise sqlstate 'PT401' using message='Authentication required'; end if;
@@ -44,11 +44,21 @@ begin
  jsonb_typeof(p_expense->'category_id') is distinct from 'string' or
  jsonb_typeof(p_expense->'shares_json') is distinct from 'object' then raise sqlstate 'PT422' using message='Invalid expense values', detail=jsonb_build_object('index',i)::text; end if;
  amount_value := (p_expense->>'amount')::numeric;
- if amount_value<=0 or amount_value>9007199254740991 or trunc(amount_value)<>amount_value then raise sqlstate 'PT422' using message='Invalid amount', detail=jsonb_build_object('index',i)::text; end if;
- timestamp_value := (p_expense->>'ts')::timestamptz;
- if not isfinite(timestamp_value) or (timestamp_value at time zone 'Asia/Taipei')::time<>'00:00:00'::time or
- (timestamp_value at time zone 'Asia/Taipei')::date>(now() at time zone 'Asia/Taipei')::date then raise sqlstate 'PT422' using message='Invalid expense date', detail=jsonb_build_object('index',i)::text; end if;
- if not exists(select 1 from public.categories where id=(p_expense->>'category_id')::uuid and kind='expense') then raise sqlstate 'PT422' using message='Invalid category', detail=jsonb_build_object('index',i)::text; end if;
+ if amount_value<=0 or amount_value>9999999999 or trunc(amount_value)<>amount_value then raise sqlstate 'PT422' using message='Invalid amount', detail=jsonb_build_object('index',i)::text; end if;
+ begin
+  timestamp_value := (p_expense->>'ts')::timestamptz;
+  local_value := timestamp_value at time zone 'Asia/Taipei';
+ exception when invalid_datetime_format or datetime_field_overflow or invalid_time_zone_displacement_value then
+  raise sqlstate 'PT422' using message='Invalid expense date', detail=jsonb_build_object('index',i)::text;
+ end;
+ if not isfinite(local_value) or local_value::time<>'00:00:00'::time or
+ local_value::date>(now() at time zone 'Asia/Taipei')::date then raise sqlstate 'PT422' using message='Invalid expense date', detail=jsonb_build_object('index',i)::text; end if;
+ begin
+  category_value := (p_expense->>'category_id')::uuid;
+ exception when invalid_text_representation then
+  raise sqlstate 'PT422' using message='Invalid category', detail=jsonb_build_object('index',i)::text;
+ end;
+ if not exists(select 1 from public.categories where id=category_value and kind='expense') then raise sqlstate 'PT422' using message='Invalid category', detail=jsonb_build_object('index',i)::text; end if;
  share_total:=0; share_count:=0;
  for share in select key,value from jsonb_each(p_expense->'shares_json') loop
   if not(share.key=any(allowed)) or jsonb_typeof(share.value)<>'number' then raise sqlstate 'PT422' using message='Invalid share member', detail=jsonb_build_object('index',i)::text; end if;
@@ -68,7 +78,7 @@ begin
   end loop;
  end if;
  insert into public.expenses(note,amount,currency,ts,payer_email,scope,shares_json,category_id,is_settled)
- values(btrim(p_expense->>'note'),amount_value,'TWD',timestamp_value,p_expense->>'payer_email',p_expense->>'scope',p_expense->'shares_json',(p_expense->>'category_id')::uuid,(p_expense->>'is_settled')::boolean)
+ values(btrim(p_expense->>'note'),amount_value,'TWD',timestamp_value,p_expense->>'payer_email',p_expense->>'scope',p_expense->'shares_json',category_value,(p_expense->>'is_settled')::boolean)
  returning * into created;
  snapshot:=snapshot || jsonb_build_array(jsonb_strip_nulls(to_jsonb(created)));
  end loop;
