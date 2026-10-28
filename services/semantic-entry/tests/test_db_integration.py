@@ -251,3 +251,117 @@ async def test_101_quota_attempts(db):
     assert all(r.is_success for r in responses)
     assert sum(r.json() is True for r in responses) == 100
     assert sum(r.json() is False for r in responses) == 1
+
+
+async def create_batch(db, role, identifier, expenses, digest="a" * 64):
+    return await db(
+        role,
+        "POST",
+        "/rpc/create_semantic_expenses",
+        {
+            "p_request_id": identifier,
+            "p_input_hash": digest,
+            "p_expenses": expenses,
+        },
+    )
+
+
+async def batch_expense_ids(db):
+    response = await db("admin", "GET", "/expenses", params={"select": "id"})
+    response.raise_for_status()
+    return {row["id"] for row in response.json()}
+
+
+async def test_batch_length_one_and_replay(db):
+    before = await batch_expense_ids(db)
+    identifier = str(uuid4())
+    first = await create_batch(db, "a", identifier, [payload()])
+    assert first.is_success, first.text
+    result = first.json()
+    assert result["replayed"] is False and len(result["expenses"]) == 1
+    replay = await create_batch(db, "a", identifier, [payload()])
+    assert replay.is_success
+    assert replay.json() == {**result, "replayed": True}
+    assert await batch_expense_ids(db) == before | {result["expenses"][0]["id"]}
+
+
+async def test_batch_concurrent_matching_requests(db):
+    before = await batch_expense_ids(db)
+    identifier = str(uuid4())
+    responses = await asyncio.gather(
+        *(create_batch(db, "a", identifier, [payload(), payload()]) for _ in range(20))
+    )
+    assert all(response.is_success for response in responses)
+    results = [response.json() for response in responses]
+    assert sum(result["replayed"] is False for result in results) == 1
+    ids = {expense["id"] for expense in results[0]["expenses"]}
+    assert len(ids) == 2
+    assert all(result["expenses"] == results[0]["expenses"] for result in results)
+    assert await batch_expense_ids(db) == before | ids
+
+
+async def test_batch_hash_conflict_and_user_isolation(db):
+    identifier = str(uuid4())
+    first = await create_batch(db, "a", identifier, [payload()])
+    assert first.is_success
+    conflict = await create_batch(db, "a", identifier, [payload()], digest="b" * 64)
+    assert conflict.status_code == 409 and conflict.json()["code"] == "PT409"
+    second = await create_batch(db, "b", identifier, [payload("b@example.test")])
+    assert second.is_success and second.json()["replayed"] is False
+    assert first.json()["expenses"][0]["id"] != second.json()["expenses"][0]["id"]
+    ledger = await db(
+        "b",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    assert ledger.is_success and len(ledger.json()) == 1
+    assert ledger.json()[0]["result"]["expenses"] == second.json()["expenses"]
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [{"amount": 1.5}, {"currency": "USD"}, {"note": "fixture_insert_failure"}],
+)
+async def test_batch_failed_write_rolls_back(db, patch):
+    before = await batch_expense_ids(db)
+    identifier = str(uuid4())
+    failed = await create_batch(
+        db, "a", identifier, [payload(), {**payload(), **patch}]
+    )
+    assert not failed.is_success
+    if patch.get("note") != "fixture_insert_failure":
+        body = failed.json()
+        assert failed.status_code == 422 and body["code"] == "PT422"
+        assert json.loads(body["details"]) == {"index": 1}
+        print("Batch PT422 response:", json.dumps(body, sort_keys=True))
+    ledger = await db(
+        "admin",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    assert ledger.is_success and ledger.json() == []
+    assert await batch_expense_ids(db) == before
+
+
+@pytest.mark.parametrize("size", [0, 21])
+async def test_batch_invalid_length(db, size):
+    identifier = str(uuid4())
+    before = await batch_expense_ids(db)
+    response = await create_batch(db, "a", identifier, [payload()] * size)
+    assert response.status_code == 422 and response.json()["code"] == "PT422"
+    assert response.json()["message"] == "Invalid expense batch"
+    ledger = await db(
+        "admin",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    assert ledger.is_success and ledger.json() == []
+    assert await batch_expense_ids(db) == before
+
+
+async def test_batch_anonymous_rpc_denied(db):
+    response = await create_batch(db, "anon", str(uuid4()), [payload()])
+    assert not response.is_success
