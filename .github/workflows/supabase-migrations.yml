@@ -62,16 +62,17 @@ jobs:
                   mkdir -p "$CLI_WORKDIR/supabase/migrations"
                   cp supabase/migrations/*.sql "$CLI_WORKDIR/supabase/migrations/"
                   supabase --workdir "$CLI_WORKDIR" link --project-ref "$SUPABASE_PROJECT_REF"
+                  [[ -s "$CLI_WORKDIR/supabase/.temp/pooler-url" ]] || { echo 'Missing IPv4 pooler configuration. Grant the Supabase token Connection Pooling Read permission for the target project and rerun.'; exit 1; }
             - name: Require the reviewed baseline to be already adopted
               shell: bash
               run: |
                   set -euo pipefail
-                  supabase --workdir "$CLI_WORKDIR" db query --linked "select count(*) = 2 as baseline_ready from supabase_migrations.schema_migrations where version in ('20261011000000','202610120001');" > "$HISTORY_FILE"
+                  supabase --workdir "$CLI_WORKDIR" db query --linked --agent no --output json "select count(*) = 2 as baseline_ready from supabase_migrations.schema_migrations where version in ('20261011000000','202610120001');" > "$HISTORY_FILE"
                   python3 - <<'PY'
                   import json, os
                   from pathlib import Path
                   data = json.loads(Path(os.environ['HISTORY_FILE']).read_text())
-                  if data.get('rows', [{}])[0].get('baseline_ready') is not True:
+                  if data != [{'baseline_ready': True}]:
                       raise SystemExit('Baseline adoption required; do not recreate existing tables automatically')
                   PY
             - name: Preview pending migrations

@@ -74,6 +74,8 @@ The repository's `supabase/config.toml` remains the disposable test configuratio
 | Secret `SUPABASE_ACCESS_TOKEN`         | CLI platform authentication; never put this in public frontend config |
 | Optional secret `SUPABASE_DB_PASSWORD` | Database connection password if CLI temporary login is unavailable    |
 
+Scope the token to the designated project. Grant Read access to Project Settings, API Keys, API Key Secrets, and Connection Pooling, plus Read-write access to Database for temporary CLI login roles. CLI 2.120.0 can finish `link` even when fetching pooler configuration fails; the workflow requires a cached pooler URL before continuing so IPv4-only runners fail with an actionable message. The baseline query explicitly requests non-agent JSON, and only a result of `baseline_ready: true` permits migration preview or apply.
+
 Configure environment reviewers as appropriate. First run with the default `dry_run=true`, review pending changes, then explicitly use `dry_run=false` for an authorized apply. The workflow does not bootstrap migration history, seed app settings, or modify Cloud Run. Hosted workflow execution remains unverified.
 
 For a fresh local chain test without production access:
