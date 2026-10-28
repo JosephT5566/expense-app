@@ -1,5 +1,12 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import type { SemanticRequestV3 } from '../packages/semantic-entry-contract/src/index';
+import {
+	draftIssues,
+	effectiveDrafts,
+	fromServerDrafts,
+	isComplete,
+	toClientDraft
+} from '../src/lib/components/semantic-entry/drafts';
+import type { Draft, SemanticRequestV3 } from '../packages/semantic-entry-contract/src/index';
 const env = {
 	PUBLIC_SUPABASE_URL: process.env.PUBLIC_SUPABASE_URL ?? 'https://synthetic.supabase.co'
 };
@@ -40,6 +47,13 @@ const created = (requestId: string, replayed = false) => ({
 		elapsedMs: 1
 	}
 });
+let expenseWrites = 0;
+test.beforeEach(() => {
+	expenseWrites = 0;
+});
+test.afterEach(() => {
+	expect(expenseWrites, 'semantic entry must never write expenses through REST').toBe(0);
+});
 test.use({ viewport: { width: 430, height: 900 }, timezoneId: 'Asia/Taipei' });
 async function setup(
 	page: Page,
@@ -76,10 +90,25 @@ async function setup(
 		if (path.endsWith('/auth/v1/user')) {
 			await route.fulfill({ json: user });
 		} else if (path.endsWith('/rest/v1/app_settings')) {
-			await route.fulfill({ json: [{ id: true, allowed_emails: [user.email] }] });
+			await route.fulfill({
+				json: [{ id: true, allowed_emails: [user.email, 'b@example.test'] }]
+			});
+		} else if (path.endsWith('/rest/v1/categories')) {
+			await route.fulfill({
+				json: [
+					{ id: categoryId, name: '合成餐飲', kind: 'expense', sort_order: 1 },
+					{
+						id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+						name: '合成交通',
+						kind: 'expense',
+						sort_order: 2
+					}
+				]
+			});
 		} else if (path.endsWith('/rest/v1/expenses')) {
 			if (route.request().method() !== 'GET') {
 				writes++;
+				expenseWrites++;
 			}
 			const url = new URL(route.request().url());
 			const offset = Number(url.searchParams.get('offset') ?? 0);
@@ -108,7 +137,7 @@ async function setup(
 		expect(route.request().headers().authorization).toBe('Bearer synthetic-jwt');
 		const body = route.request().method() === 'POST' ? route.request().postDataJSON() : null;
 		if (body) {
-			expect(body.action).toBe('analyze');
+			expect(['analyze', 'revise', 'commit']).toContain(body.action);
 			expect(route.request().headers().accept).toBe('text/event-stream; semantic-version=3');
 			posts.push(body);
 		}
@@ -1272,4 +1301,422 @@ test('removing the last thumbnail disables an empty composer', async ({ page }) 
 	await page.getByRole('button', { name: '移除第 1 張圖片' }).click();
 	await expect(page.getByRole('img', { name: '第 1 張附圖' })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: '送出記帳', exact: true })).toBeDisabled();
+});
+
+const categoryId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+function makeDraft(index: number): Draft {
+	const field = <T>(value: T) => ({
+		value,
+		state: 'recognized' as const,
+		confidence: 0.95,
+		source: 'image' as const
+	});
+	return {
+		draftId: `dddddddd-dddd-4ddd-8ddd-${String(index).padStart(12, '0')}`,
+		note: field(`合成帳目${index}`),
+		amount: field(index * 100),
+		currency: field('TWD'),
+		date: { ...field('2026-10-01'), defaulted: null },
+		categoryId: field(categoryId),
+		scope: field('personal'),
+		payerEmail: field(user.email),
+		splitMemberEmails: field([user.email]),
+		status: 'complete',
+		issues: []
+	};
+}
+const draftResponse = (requestId: string, drafts: Draft[], reason = 'multiple') => ({
+	status: 'drafts',
+	requestId,
+	drafts,
+	reason,
+	metadata: created(requestId).metadata
+});
+const draftBlock = (page: Page) => page.getByRole('group', { name: '草稿', exact: true });
+const commitDrafts = (page: Page, count = 3) =>
+	page.getByRole('button', { name: `全部記帳（${count} 筆）`, exact: true });
+async function startDrafts(page: Page) {
+	await mockUploads(page);
+	await attach(page);
+	await submit(page);
+	await expect(draftBlock(page)).toBeVisible();
+	expect(await pending(page)).toBeNull();
+}
+
+test('image drafts show incomplete issues, foreign currency and disabled commit', async ({
+	page
+}, testInfo) => {
+	const drafts = [1, 2, 3, 4].map(makeDraft);
+	drafts[2].amount = { value: null, state: 'unrecognized', confidence: null, source: 'image' };
+	drafts[2].categoryId = { value: null, state: 'missing', confidence: null, source: 'image' };
+	drafts[2].issues = [
+		{ field: 'amount', code: 'unrecognized' },
+		{ field: 'categoryId', code: 'missing' }
+	];
+	drafts[2].status = 'incomplete';
+	drafts[3].currency.value = 'JPY';
+	drafts[3].originalAmount = { text: 'JPY 400', currency: 'JPY' };
+	drafts[3].issues = [{ field: 'currency', code: 'non_twd' }];
+	drafts[3].status = 'incomplete';
+	const s = await setup(page, async (route, body) =>
+		route.fulfill({ json: draftResponse(body!.requestId, drafts) })
+	);
+	await startDrafts(page);
+	await expect(draftBlock(page)).toContainText('草稿 4 筆（尚未記帳）');
+	await expect(draftBlock(page)).toContainText('完整 2／4');
+	await expect(draftBlock(page)).toContainText('金額無法辨識、分類未選');
+	await expect(draftBlock(page)).toContainText('需換算成 TWD');
+	await expect(draftBlock(page)).toContainText('第 3、4 筆需要補齊。');
+	await expect(commitDrafts(page, 4)).toBeDisabled();
+	await expect(page.getByLabel('補充草稿')).toBeEditable();
+	await expect(page.getByRole('button', { name: '附加圖片', exact: true })).toBeDisabled();
+	await expect(page.locator('#semantic-entry-hint')).toHaveText(
+		'可以直接打字補充，例如「第三筆是午餐」。'
+	);
+	await page.getByLabel('補充草稿').fill('第三筆是午餐');
+	await expect(page.locator('#semantic-entry-hint')).toHaveText(
+		'補充只更新草稿，不會重新讀取圖片。'
+	);
+	await testInfo.attach('drafts-aria', {
+		body: await page.getByRole('dialog').ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	await page.screenshot({ path: testInfo.outputPath('drafts.png') });
+	expect(s.writes()).toBe(0);
+});
+
+test('automatic grouping renders the merged amount in one row', async ({ page }) => {
+	const drafts = [makeDraft(1), makeDraft(2)];
+	drafts[1].note.value = drafts[0].note.value;
+	const s = await setup(page, async (route, body) =>
+		route.fulfill({ json: draftResponse(body!.requestId, drafts) })
+	);
+	await startDrafts(page);
+	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(1);
+	await expect(draftBlock(page)).toContainText('合成帳目1 等 2 項');
+	await expect(draftBlock(page)).toContainText('NT$ 300');
+	await expect(draftBlock(page)).toContainText('已合併');
+	await expect(commitDrafts(page, 1)).toBeEnabled();
+	expect(s.writes()).toBe(0);
+});
+
+test('revise updates the same block and appends the conversation without images or history', async ({
+	page
+}) => {
+	const drafts = [1, 2, 3].map(makeDraft);
+	const s = await setup(page, async (route, body) => {
+		if (body!.action === 'revise') {
+			drafts[2] = { ...drafts[2], note: { ...drafts[2].note, value: '午餐' }, updated: true };
+		}
+		await route.fulfill({ json: draftResponse(body!.requestId, drafts) });
+	});
+	await startDrafts(page);
+	const block = draftBlock(page);
+	await block.evaluate((element) => element.setAttribute('data-original-block', 'yes'));
+	await page.getByLabel('補充草稿').fill('第三筆是午餐');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(block).toContainText('剛更新');
+	await expect(block).toContainText('午餐');
+	await expect(block).toHaveCount(1);
+	await expect(block).toHaveAttribute('data-original-block', 'yes');
+	await expect(page.getByLabel('你的訊息').last()).toHaveText('第三筆是午餐');
+	await expect(page.getByText('已更新草稿。', { exact: true })).toBeVisible();
+	const revision = s.posts[1];
+	expect(revision).toMatchObject({
+		action: 'revise',
+		text: '第三筆是午餐',
+		referenceDate: '2026-10-01'
+	});
+	expect(revision.drafts).toHaveLength(3);
+	expect(revision.requestId).not.toBe(s.posts[0].requestId);
+	expect(revision.images).toBeUndefined();
+	expect(revision.history).toBeUndefined();
+	expect(await pending(page)).toBeNull();
+	expect(s.writes()).toBe(0);
+});
+
+async function shortenTimeout(page: Page) {
+	await page.evaluate(() => {
+		const original = AbortSignal.timeout;
+		AbortSignal.timeout = (ms) => original(ms === 32000 ? 50 : ms);
+	});
+}
+
+test('revise timeout preserves drafts and clears pending without uncertainty', async ({ page }) => {
+	const s = await setup(page, async (route, body) => {
+		if (body!.action === 'revise') {
+			return;
+		}
+		await route.fulfill({ json: draftResponse(body!.requestId, [1, 2, 3].map(makeDraft)) });
+	});
+	await startDrafts(page);
+	await shortenTimeout(page);
+	await page.getByLabel('補充草稿').fill('第三筆是午餐');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText(/沒有更新草稿：/)).toBeVisible();
+	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(3);
+	await expect(page.getByLabel('補充草稿')).toBeEditable();
+	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+	expect(await pending(page)).toBeNull();
+	expect(s.writes()).toBe(0);
+});
+
+const batchRows = [1, 2, 3].map((index) => ({
+	...row,
+	id: `eeeeeeee-eeee-4eee-8eee-${String(index).padStart(12, '0')}`,
+	note: `合成帳目${index}`,
+	amount: index * 100,
+	shares_json: { [user.email]: index * 100 }
+}));
+
+test('commit creates all rows with ClientDraft payload and removes draft controls', async ({
+	page
+}, testInfo) => {
+	const s = await setup(page, async (route, body) => {
+		if (body!.action === 'analyze') {
+			return void (await route.fulfill({
+				json: draftResponse(body!.requestId, [1, 2, 3].map(makeDraft))
+			}));
+		}
+		await route.fulfill({
+			contentType: 'text/event-stream',
+			body: `event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId: body!.requestId })}\n\nevent: result\ndata: ${JSON.stringify({ ...created(body!.requestId), expenses: batchRows })}\n\n`
+		});
+	});
+	await startDrafts(page);
+	await expect(page.locator('#semantic-entry-hint')).toHaveText(
+		'可以繼續補充，或按「全部記帳」。'
+	);
+	await commitDrafts(page).click();
+	const summary = page.getByRole('group', { name: '已記帳摘要' });
+	await expect(summary).toContainText('已記帳 3 筆，合計 NT$ 600');
+	await expect(summary.getByRole('button')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /全部記帳|進入編輯|新增另一筆/ })).toHaveCount(0);
+	await expect(draftBlock(page)).toHaveCount(0);
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
+	const body = s.posts[1];
+	expect(body.action).toBe('commit');
+	expect(body.requestId).not.toBe(s.posts[0].requestId);
+	expect(Object.keys(body).sort()).toEqual(['action', 'drafts', 'referenceDate', 'requestId']);
+	for (const draft of body.drafts!) {
+		expect(draft).not.toHaveProperty('status');
+		expect(draft).not.toHaveProperty('issues');
+		expect(draft).not.toHaveProperty('updated');
+	}
+	expect(await pending(page)).toBeNull();
+	await testInfo.attach('commit-aria', {
+		body: await page.getByRole('dialog').ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	await page.screenshot({ path: testInfo.outputPath('commit.png') });
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	for (const row of batchRows) {
+		await expect(
+			page.locator('section[data-date="2026-10-01"]').getByText(row.note, { exact: true })
+		).toBeVisible();
+	}
+	expect(s.writes()).toBe(0);
+});
+
+test('commit rejects the whole batch and marks the matching server draft issue', async ({
+	page
+}) => {
+	const drafts = [1, 2, 3].map(makeDraft);
+	const s = await setup(page, async (route, body) => {
+		await route.fulfill(
+			body!.action === 'analyze'
+				? { json: draftResponse(body!.requestId, drafts) }
+				: {
+						status: 422,
+						json: {
+							status: 'rejected',
+							requestId: body!.requestId,
+							issues: [{ field: 'categoryId', code: 'invalid' }],
+							draftIssues: [
+								{
+									draftId: drafts[1].draftId,
+									issues: [{ field: 'categoryId', code: 'invalid' }]
+								}
+							]
+						}
+					}
+		);
+	});
+	await startDrafts(page);
+	await commitDrafts(page).click();
+	await expect(page.getByText('未記帳：3 筆都沒有寫入', { exact: true })).toBeVisible();
+	await expect(
+		page.getByText('伺服器檢查時發現 1 筆有問題，草稿都還在。', { exact: true })
+	).toBeVisible();
+	await expect(draftBlock(page).getByRole('listitem').nth(1)).toContainText(
+		'分類已不存在，請重新選擇'
+	);
+	await expect(commitDrafts(page)).toBeDisabled();
+	await expect(draftBlock(page)).toContainText('完整 2／3');
+	expect(await pending(page)).toBeNull();
+	expect(s.writes()).toBe(0);
+});
+
+for (const action of ['retry', 'close'] as const) {
+	test(`commit timeout ${action} preserves recovery and never writes expenses directly`, async ({
+		page
+	}) => {
+		let commits = 0;
+		let expenseReads = 0;
+		page.on('request', (request) => {
+			if (
+				request.method() === 'GET' &&
+				new URL(request.url()).pathname.endsWith('/rest/v1/expenses')
+			) {
+				expenseReads++;
+			}
+		});
+		const s = await setup(page, async (route, body) => {
+			if (!body) {
+				await route.fulfill({
+					json: {
+						status: 'completed',
+						requestId: route.request().url().split('/').at(-1),
+						expenses: batchRows,
+						replayed: true
+					}
+				});
+			} else if (body.action === 'analyze') {
+				await route.fulfill({
+					json: draftResponse(body.requestId, [1, 2, 3].map(makeDraft))
+				});
+			} else if (++commits > 1) {
+				await route.fulfill({
+					json: { ...created(body.requestId, true), expenses: batchRows }
+				});
+			}
+		});
+		await startDrafts(page);
+		await shortenTimeout(page);
+		await commitDrafts(page).click();
+		await expect(page.getByText('無法確認是否已記帳', { exact: true })).toBeVisible();
+		await expect(page.getByRole('dialog').locator('textarea')).toBeDisabled();
+		await expect(commitDrafts(page)).toBeDisabled();
+		await expect(page.getByRole('button', { name: '進入編輯', exact: true })).toBeDisabled();
+		expect(JSON.parse((await pending(page))!).requestId).toBe(s.posts[1].requestId);
+		s.setRows(batchRows);
+		const before = expenseReads;
+		if (action === 'retry') {
+			await page.getByRole('button', { name: '重新確認', exact: true }).click();
+			await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText(
+				'已記帳 3 筆'
+			);
+			expect(s.posts[2]).toEqual(s.posts[1]);
+			expect(expenseReads).toBeGreaterThan(before);
+			expect(await pending(page)).toBeNull();
+		} else {
+			await page.getByRole('button', { name: '稍後再看', exact: true }).click();
+			await expect(page.getByRole('dialog')).toHaveCount(0);
+			expect(JSON.parse((await pending(page))!).requestId).toBe(s.posts[1].requestId);
+			await page
+				.locator('section[data-date="2026-10-01"]')
+				.getByRole('button', { name: 'AI 記帳', exact: true })
+				.click();
+			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+			await expect(draftBlock(page)).toHaveCount(0);
+			await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+			await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText(
+				'已記帳 3 筆'
+			);
+			expect(expenseReads).toBeGreaterThan(before);
+			expect(await pending(page)).toBeNull();
+		}
+		expect(s.writes()).toBe(0);
+	});
+}
+
+test('draft model preserves server issues and merges visible members in their original order', () => {
+	const first = makeDraft(1);
+	const second = makeDraft(2);
+	second.note.value = first.note.value;
+	const middle = makeDraft(3);
+	const session = fromServerDrafts([first, middle, second]);
+	expect(session.items.map((item) => [item.hidden, item.edited])).toEqual([
+		[false, false],
+		[false, false],
+		[false, false]
+	]);
+	const merged = effectiveDrafts(session);
+	expect(merged.map((draft) => draft.draftId)).toEqual([first.draftId, middle.draftId]);
+	expect(merged[0].mergedFrom).toEqual([first.draftId, second.draftId]);
+	expect(merged[0].amount).toEqual({
+		value: 300,
+		state: 'recognized',
+		confidence: null,
+		source: 'user'
+	});
+	expect(first.amount.value).toBe(100);
+	session.items[0].hidden = true;
+	expect(effectiveDrafts(session)).toEqual([middle, second]);
+	session.items[0].hidden = false;
+	session.groupSummaries[session.items[0].groupId!] = {
+		...merged[0],
+		note: { ...first.note, value: '使用者摘要' }
+	};
+	expect(effectiveDrafts(session)[0].note.value).toBe('使用者摘要');
+	const incomplete = makeDraft(4);
+	incomplete.note.value = null;
+	incomplete.issues = [{ field: 'note', code: 'unrecognized' }];
+	const ungrouped = fromServerDrafts([incomplete, { ...incomplete, draftId: second.draftId }]);
+	expect(ungrouped.items.every((item) => item.groupId === undefined)).toBe(true);
+	expect(isComplete(effectiveDrafts(ungrouped)[0])).toBe(false);
+	expect(toClientDraft(incomplete)).not.toHaveProperty('issues');
+});
+
+test('draft model recalculates merged and edited issues with one priority per field', () => {
+	const ctx = {
+		today: '2026-10-01',
+		categoryIds: new Set([categoryId]),
+		allowedEmails: [user.email, 'b@example.test'],
+		currentUserEmail: user.email
+	};
+	const first = makeDraft(1);
+	const second = makeDraft(2);
+	second.note.value = first.note.value;
+	second.amount.value = null;
+	const session = fromServerDrafts([first, second]);
+	const merged = effectiveDrafts(session, ctx)[0];
+	expect(merged.amount.value).toBeNull();
+	expect(merged.amount.state).toBe('missing');
+	expect(merged.issues).toEqual([{ field: 'amount', code: 'missing' }]);
+	const invalid = makeDraft(3);
+	invalid.amount = { value: null, state: 'unrecognized', confidence: null, source: 'image' };
+	invalid.currency.value = 'JPY';
+	invalid.currency.confidence = 0.2;
+	invalid.categoryId.value = 'deleted';
+	invalid.categoryId.confidence = 0.2;
+	invalid.date.value = '2026-10-02';
+	invalid.date.defaulted = 'unreadable';
+	invalid.date.confidence = 0.2;
+	invalid.scope.value = 'household';
+	invalid.splitMemberEmails.value = ['b@example.test', 'b@example.test'];
+	invalid.payerEmail.value = 'unknown@example.test';
+	expect(draftIssues(invalid, ctx)).toEqual(
+		expect.arrayContaining([
+			{ field: 'amount', code: 'unrecognized' },
+			{ field: 'currency', code: 'non_twd' },
+			{ field: 'categoryId', code: 'invalid' },
+			{ field: 'date', code: 'future_date' },
+			{ field: 'splitMemberEmails', code: 'unknown_member' },
+			{ field: 'payerEmail', code: 'unknown_member' }
+		])
+	);
+	const issues = draftIssues(invalid, ctx);
+	expect(new Set(issues.map((issue) => issue.field)).size).toBe(issues.length);
+	invalid.date.value = '2026-10-01';
+	invalid.date.source = 'user';
+	invalid.date.confidence = null;
+	expect(draftIssues(invalid, ctx).some((issue) => issue.field === 'date')).toBe(false);
+	const edited = fromServerDrafts([makeDraft(4)]);
+	edited.items[0].edited = true;
+	edited.items[0].draft.categoryId.value = 'deleted';
+	expect(effectiveDrafts(edited, ctx)[0].issues).toContainEqual({
+		field: 'categoryId',
+		code: 'invalid'
+	});
 });

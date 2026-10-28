@@ -6,6 +6,18 @@
 	import Camera from 'lucide-svelte/icons/camera';
 	import X from 'lucide-svelte/icons/x';
 	import CreatedSummary from './CreatedSummary.svelte';
+	import DraftBlock from './DraftBlock.svelte';
+	import {
+		fromServerDrafts,
+		effectiveDrafts,
+		isComplete,
+		toClientDraft,
+		issueText,
+		type DraftSession
+	} from './drafts';
+	import type { DraftIssue, SemanticResponseV3 } from '@jopie/semantic-entry-contract';
+	import { expenseOptions } from '$lib/stores/categories.store';
+	import { allowedUsers } from '$lib/stores/appSetting.store';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import Send from 'lucide-svelte/icons/send';
 	import { user } from '$lib/stores/session.store';
@@ -31,8 +43,57 @@
 	} from '@jopie/semantic-entry-contract';
 	let { busy = $bindable(false), onClose }: { busy?: boolean; onClose: () => void } = $props();
 	let text = $state('');
+	let session = $state<DraftSession | null>(null);
+	let revised = $state(false);
+	let draftHeading = $state('');
+	let draftAnalysis = $state('');
+	let draftRejected = $state(false);
+	let draftWarning = $state('');
+	let serverDraftIssues = $state<Record<string, DraftIssue[]>>({});
+	const draftContext = $derived({
+		today: toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)),
+		categoryIds: new Set($expenseOptions.map((option) => option.value)),
+		allowedEmails: $allowedUsers,
+		currentUserEmail: $user?.email ?? ''
+	});
+	const drafts = $derived(
+		session
+			? effectiveDrafts(session, draftContext).map((draft) =>
+					serverDraftIssues[draft.draftId] &&
+					!session?.items.find((item) => item.id === draft.draftId)?.edited
+						? {
+								...draft,
+								issues: serverDraftIssues[draft.draftId],
+								status: 'incomplete' as const
+							}
+						: draft
+				)
+			: []
+	);
+	function onEditDrafts() {
+		// TODO T4b-2: open the draft editor here.
+	}
+	function receiveDrafts(result: Extract<SemanticResponseV3, { status: 'drafts' }>) {
+		session = fromServerDrafts(result.drafts);
+		serverDraftIssues = {};
+		if (draftRejected) {
+			draftAnalysis = '';
+		}
+		draftRejected = false;
+		draftWarning = '';
+		draftHeading = `找到 ${drafts.length} 筆，${result.reason === 'multiple' ? '因為有多筆' : '有資料需要補齊'}，還沒記帳。`;
+		if (!conversation.some((entry) => entry.drafts)) {
+			draftAnalysis = analysis;
+			conversation.push({ role: 'assistant', text: '', drafts: true });
+		}
+		analysis = '';
+		text = '';
+		attempt = null;
+		phase = 'drafts';
+	}
 	let phase = $state<
 		| 'input'
+		| 'drafts'
 		| 'needs_input'
 		| 'processing'
 		| 'persisting'
@@ -61,6 +122,7 @@
 			analysis?: string;
 			images?: string[];
 			expenses?: ExpenseRow[];
+			drafts?: boolean;
 		}[]
 	>([]);
 	let conversationElement = $state<HTMLDivElement>();
@@ -95,6 +157,13 @@
 	function clearConversation() {
 		conversation.forEach((entry) => entry.images?.forEach((url) => URL.revokeObjectURL(url)));
 		conversation = [];
+		session = null;
+		revised = false;
+		serverDraftIssues = {};
+		draftHeading = '';
+		draftAnalysis = '';
+		draftWarning = '';
+		draftRejected = false;
 	}
 	function removeImage(index: number) {
 		URL.revokeObjectURL(selectedImages[index].url);
@@ -206,15 +275,22 @@
 	const count = $derived([...text.trim()].length);
 	const replyCount = $derived([...reply.trim()].length);
 	const composingReply = $derived(phase === 'needs_input');
-	const canCompose = $derived(phase === 'input' || composingReply);
+	const canCompose = $derived(phase === 'input' || phase === 'drafts' || composingReply);
 	const attachmentsDisabled = $derived(
-		!canCompose || composingReply || converting || selectedImages.length >= 4
+		!canCompose || !!session || composingReply || converting || selectedImages.length >= 4
 	);
 	const composerCount = $derived(composingReply ? replyCount : count);
 	const composerHint = $derived(
 		composerCount > 500 && canCompose
 			? '訊息最多 500 字，請縮短後再送出。'
 			: {
+					drafts: text.trim()
+						? '補充只更新草稿，不會重新讀取圖片。'
+						: drafts.length > 0 && drafts.every(isComplete)
+							? '可以繼續補充，或按「全部記帳」。'
+							: revised
+								? '可以繼續打字補充，或按「進入編輯」。'
+								: '可以直接打字補充，例如「第三筆是午餐」。',
 					input: '資訊完整後會直接記帳；多筆或不完整時會先列出草稿。',
 					needs_input: attempt?.referenceDate
 						? `本次「今天」固定為 ${attempt.referenceDate}（台灣日期）。日期更正請填完整年月日。`
@@ -252,7 +328,7 @@
 		const next = $user?.id;
 		untrack(() => {
 			if (next !== accountId) {
-				if (uploading && accountId) {
+				if ((uploading || attempt?.action === 'revise') && accountId) {
 					clearPending(accountId);
 				}
 				accountId = next;
@@ -278,7 +354,7 @@
 		});
 	});
 	onDestroy(() => {
-		if (uploading && accountId) {
+		if ((uploading || attempt?.action === 'revise') && accountId) {
 			clearPending(accountId);
 		}
 		analysis = '';
@@ -329,6 +405,7 @@
 	}
 	function leavePage() {
 		const interruptedUpload = uploading;
+		const interruptedRevision = attempt?.action === 'revise';
 		analysis = '';
 		clearConversation();
 		clearImages();
@@ -342,6 +419,13 @@
 			attempt = null;
 			phase = 'error';
 			message = '圖片上傳失敗，請稍後再試。';
+		} else if (interruptedRevision) {
+			if (accountId) {
+				clearPending(accountId);
+			}
+			pendingId = null;
+			attempt = null;
+			phase = 'input';
 		} else if (processing) {
 			phase = 'uncertain';
 			message = '結果待確認，請查詢結果。';
@@ -387,7 +471,12 @@
 			: result.replayed
 				? '這是先前請求的完成結果，清單已重新整理。'
 				: '';
-		if (attempt?.images) {
+		if (attempt?.images || attempt?.action === 'commit' || result.expenses.length > 1) {
+			conversation = conversation.filter((entry) => !entry.drafts);
+			session = null;
+			revised = false;
+			serverDraftIssues = {};
+			draftWarning = '';
 			conversation.push({
 				role: 'assistant',
 				text: message,
@@ -408,7 +497,185 @@
 			phase = 'created';
 		}
 	}
+	const generalIssueText = (issue: IssueV3) =>
+		`${fields[issue.field] ?? '內容'}：${codes[issue.code] ?? '資訊無效'}`;
+	function draftError(error: unknown) {
+		if (error instanceof SemanticEntryError) {
+			if (error.code === 'unauthorized') {
+				return '請重新登入';
+			}
+			if (error.code === 'quota_exceeded') {
+				return '今天的解析次數已用完';
+			}
+			if (error.code === 'connection') {
+				return '連線中斷或逾時';
+			}
+			if (error.code === 'persist_uncertain') {
+				return '伺服器無法確認寫入結果';
+			}
+		}
+		return '解析服務無法完成';
+	}
+	async function executeDraft(action: 'revise' | 'commit', retry = false) {
+		if (!$user || !session || processing || converting || (phase === 'uncertain' && !retry)) {
+			return;
+		}
+		if (!retry && action === 'commit' && (!drafts.length || !drafts.every(isComplete))) {
+			return;
+		}
+		if (action === 'revise' && (!text.trim() || count > 500)) {
+			return;
+		}
+		const owner = $user.id;
+		let request: SemanticRequestV3;
+		try {
+			if (retry) {
+				if (attempt?.action !== 'commit') {
+					return;
+				}
+				request = parseRequestV3({
+					action: 'commit',
+					requestId: attempt.requestId,
+					...(attempt.referenceDate ? { referenceDate: attempt.referenceDate } : {}),
+					drafts: attempt.drafts
+				});
+			} else {
+				request = parseRequestV3({
+					action,
+					requestId: crypto.randomUUID(),
+					referenceDate: draftContext.today,
+					drafts: drafts.map(toClientDraft),
+					...(action === 'revise' ? { text } : {})
+				});
+			}
+			localStorage.setItem(
+				pendingKey(owner),
+				JSON.stringify({ requestId: request.requestId })
+			);
+		} catch {
+			conversation.push({
+				role: 'assistant',
+				text: '目前無法保留請求，請允許此網站儲存資料後再試。'
+			});
+			return;
+		}
+		attempt = { ...request, accountId: owner };
+		pendingId = request.requestId;
+		if (action === 'revise') {
+			conversation.push({ role: 'user', text: text.trim() });
+			text = '';
+			revised = true;
+		}
+		const version = ++revision;
+		controller = new AbortController();
+		phase = 'processing';
+		analysis = '';
+		message = '';
+		draftWarning = '';
+		followLatest = true;
+		try {
+			const result = await submitSemanticEntry(
+				request,
+				controller.signal,
+				() => {
+					if (stillCurrent(version, owner)) {
+						phase = 'persisting';
+					}
+				},
+				(delta) => {
+					if (stillCurrent(version, owner)) {
+						analysis += delta.text;
+					}
+				}
+			);
+			if (!stillCurrent(version, owner)) {
+				return;
+			}
+			if (result.status === 'created') {
+				await accept(result, version, owner);
+				return;
+			}
+			if (result.status === 'drafts') {
+				const responseAnalysis = analysis;
+				receiveDrafts(result);
+				if (action === 'revise') {
+					conversation.push({
+						role: 'assistant',
+						text: responseAnalysis ? '' : '已更新草稿。',
+						analysis: responseAnalysis
+					});
+				}
+			} else if (action === 'commit' && result.status === 'rejected') {
+				draftRejected = true;
+				draftHeading = `未記帳：${drafts.length} 筆都沒有寫入`;
+				const known = new Set(drafts.map((draft) => draft.draftId));
+				const matching = result.draftIssues?.filter(
+					(item) => known.has(item.draftId) && item.issues.length
+				);
+				serverDraftIssues = Object.fromEntries(
+					(matching ?? []).map((item) => [item.draftId, item.issues])
+				);
+				const unmatched =
+					result.draftIssues
+						?.filter((item) => !known.has(item.draftId))
+						.flatMap((item) => item.issues.map(issueText)) ?? [];
+				draftAnalysis = [
+					result.draftIssues
+						? `伺服器檢查時發現 ${new Set(result.draftIssues.map((item) => item.draftId)).size} 筆有問題，草稿都還在。`
+						: result.issues.map(generalIssueText).join('、'),
+					...unmatched
+				].join('、');
+				phase = 'drafts';
+			} else {
+				conversation.push({
+					role: 'assistant',
+					text: [
+						...(result.status === 'needs_input' ? [result.question] : []),
+						...result.issues.map(generalIssueText)
+					].join('、'),
+					analysis
+				});
+				analysis = '';
+				phase = 'drafts';
+			}
+			analysis = '';
+			clearPending(owner);
+			pendingId = null;
+			attempt = null;
+		} catch (error) {
+			if (!stillCurrent(version, owner)) {
+				return;
+			}
+			if (
+				action === 'commit' &&
+				(retry || !(error instanceof SemanticEntryError) || error.uncertain)
+			) {
+				phase = 'uncertain';
+				draftWarning =
+					error instanceof SemanticEntryError && error.code === 'persist_uncertain'
+						? '伺服器無法確認寫入結果。重新確認不會重複記帳。'
+						: '連線逾時。重新確認不會重複記帳。';
+			} else {
+				conversation.push({
+					role: 'assistant',
+					text:
+						action === 'revise'
+							? `沒有更新草稿：${draftError(error)}，請再送出一次。`
+							: `未記帳：${draftError(error)}`
+				});
+				clearPending(owner);
+				pendingId = null;
+				attempt = null;
+				phase = 'drafts';
+				analysis = '';
+			}
+		}
+	}
 	async function execute(query = false) {
+		if (phase === 'drafts' && !query) {
+			await executeDraft('revise');
+			return;
+		}
 		if (processing || converting || !$user || (phase === 'uncertain' && !query && !attempt)) {
 			return;
 		}
@@ -540,6 +807,7 @@
 					requestId: operation.requestId,
 					...(operation.referenceDate ? { referenceDate: operation.referenceDate } : {}),
 					...(operation.images ? { images: operation.images } : {}),
+					...(operation.drafts ? { drafts: operation.drafts } : {}),
 					...(operation.text !== undefined ? { text: operation.text } : {}),
 					...(operation.history ? { history: operation.history } : {})
 				});
@@ -573,11 +841,13 @@
 						phase = 'needs_input';
 					} else {
 						if (result.status === 'drafts') {
-							message = `找到 ${result.drafts.length} 筆草稿，草稿編輯功能尚未完成。`;
+							receiveDrafts(result);
 						} else {
 							issues = result.issues;
 						}
-						phase = 'rejected';
+						if (result.status !== 'drafts') {
+							phase = 'rejected';
+						}
 					}
 				}
 			}
@@ -640,102 +910,150 @@
 		}}
 	>
 		{#each conversation as entry, index (index)}
-			<div class={entry.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-				<div
-					class={entry.role === 'user'
-						? 'max-w-[85%] rounded-2xl rounded-tr-sm bg-primary/15 px-3 py-2'
-						: 'max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2'}
-				>
-					<p class="text-muted-foreground mb-1 text-xs">
-						{entry.role === 'user' ? '你' : '記帳助手'}
-					</p>
-					{#if entry.analysis}
-						<p class="text-muted-foreground text-xs">Gemini 分析</p>
-						<p aria-label="先前的分析摘要" class="whitespace-pre-wrap break-words">
-							{entry.analysis}
+			{#if entry.drafts && session}
+				<div class="space-y-2">
+					<p class="text-xs text-muted-foreground">記帳助手</p>
+					{#if draftAnalysis && !draftRejected}<p class="text-xs text-muted-foreground">
+							Gemini 分析
 						</p>
-					{/if}
-					{#if entry.images}<div class="mb-2 flex gap-2">
-							{#each entry.images as url (url)}<img
-									src={url}
-									alt="附加圖片"
-									class="h-12 w-12 rounded-lg object-cover"
-								/>{/each}
+						<p class="whitespace-pre-wrap break-words">{draftAnalysis}</p>{/if}
+					<p class:text-destructive={draftRejected}>{draftHeading}</p>
+					{#if draftRejected}<p class="text-destructive">{draftAnalysis}</p>{/if}
+					<DraftBlock
+						{drafts}
+						editedIds={session.items
+							.filter((item) => item.edited)
+							.map((item) => item.id)}
+						disabled={processing || phase === 'uncertain'}
+						{onEditDrafts}
+						onCommit={() => executeDraft('commit')}
+					/>
+					{#if draftWarning}<div
+							role="alert"
+							class="space-y-2 rounded-xl border border-amber-500 bg-amber-500/10 p-3"
+						>
+							<p class="font-semibold">無法確認是否已記帳</p>
+							<p>{draftWarning}</p>
+							<div class="flex gap-2">
+								<Button size="sm" onclick={() => executeDraft('commit', true)}
+									>重新確認</Button
+								><Button size="sm" variant="outline" onclick={requestClose}
+									>稍後再看</Button
+								>
+							</div>
 						</div>{/if}
-					{#if entry.expenses}<CreatedSummary expenses={entry.expenses} />{/if}
-					<p
-						aria-label={entry.role === 'user' ? '你的訊息' : '助手訊息'}
-						class="whitespace-pre-wrap break-words"
-					>
-						{entry.text}
-					</p>
 				</div>
-			</div>
-		{/each}
-		<div class="flex justify-start">
-			<div class="max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2">
-				<p class="text-muted-foreground text-xs">記帳助手</p>
-				{#if phase === 'input'}
-					<p>今天記了什麼？告訴我一筆支出，我會幫你記帳。</p>
-				{/if}
-				{#if analysis}
-					<div class="space-y-1">
-						<p class="text-muted-foreground text-xs">Gemini 分析</p>
-						<p aria-label="Gemini 分析摘要" class="whitespace-pre-wrap break-words">
-							{analysis}
+			{:else}
+				<div class={entry.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
+					<div
+						class={entry.role === 'user'
+							? 'max-w-[85%] rounded-2xl rounded-tr-sm bg-primary/15 px-3 py-2'
+							: 'max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2'}
+					>
+						<p class="text-muted-foreground mb-1 text-xs">
+							{entry.role === 'user' ? '你' : '記帳助手'}
+						</p>
+						{#if entry.analysis}
+							<p class="text-muted-foreground text-xs">Gemini 分析</p>
+							<p aria-label="先前的分析摘要" class="whitespace-pre-wrap break-words">
+								{entry.analysis}
+							</p>
+						{/if}
+						{#if entry.images}<div class="mb-2 flex gap-2">
+								{#each entry.images as url (url)}<img
+										src={url}
+										alt="附加圖片"
+										class="h-12 w-12 rounded-lg object-cover"
+									/>{/each}
+							</div>{/if}
+						{#if entry.expenses}<CreatedSummary expenses={entry.expenses} />{/if}
+						<p
+							aria-label={entry.role === 'user' ? '你的訊息' : '助手訊息'}
+							class="whitespace-pre-wrap break-words"
+						>
+							{entry.text}
 						</p>
 					</div>
-				{/if}
-				{#if phase === 'needs_input'}
-					<p role="status" class="font-medium">{question}</p>
-				{/if}
-				<div aria-live="polite" class="space-y-2">
-					{#if phase === 'processing'}<p role="status">
-							{uploading ? '上傳圖片中…' : analysis ? 'Gemini 分析中…' : '處理中…'}
-						</p>
-					{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
-					{:else if phase === 'created'}<p class="font-semibold">已新增</p>
-					{:else if phase === 'rejected' || phase === 'error'}<p class="font-semibold">
-							未新增
-						</p>
-					{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
-					{#each issues as issue, index (index)}<p>
-							{issue.field === 'images' && issue.code === 'not_a_receipt'
-								? '圖片看起來不是收據，請重新選擇圖片。'
-								: issue.code === 'too_many_drafts'
-									? '一次最多 20 筆，請分批送出。'
-									: `${fields[issue.field] ?? '內容'}：${codes[issue.code] ?? '資訊無效'}`}
-						</p>{/each}
-					{#if savedExpense && phase === 'created'}
-						<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
-						<p class="text-sm">
-							{new Date(savedExpense.ts).toLocaleDateString('zh-TW', {
-								timeZone: 'Asia/Taipei'
-							})}
-						</p>
-						{#each Object.entries(savedExpense.shares_json) as [email, amount] (email)}
-							<p class="text-sm">{email}：NT$ {amount}</p>
-						{/each}
-					{/if}
-					{#if message}<p class="text-sm">{message}</p>{/if}
 				</div>
-				<div class="flex flex-wrap gap-2">
-					{#if phase === 'uncertain'}
-						<Button size="sm" onclick={() => execute(true)}>查詢結果</Button>
-						{#if attempt}
-							<Button size="sm" variant="outline" onclick={() => execute()}
-								>重試同一請求</Button
+			{/if}
+		{/each}
+		{#if !session || processing || analysis || message}
+			<div class="flex justify-start">
+				<div
+					class="max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2"
+				>
+					<p class="text-muted-foreground text-xs">記帳助手</p>
+					{#if phase === 'input'}
+						<p>今天記了什麼？告訴我一筆支出，我會幫你記帳。</p>
+					{/if}
+					{#if analysis}
+						<div class="space-y-1">
+							<p class="text-muted-foreground text-xs">Gemini 分析</p>
+							<p aria-label="Gemini 分析摘要" class="whitespace-pre-wrap break-words">
+								{analysis}
+							</p>
+						</div>
+					{/if}
+					{#if phase === 'needs_input'}
+						<p role="status" class="font-medium">{question}</p>
+					{/if}
+					<div aria-live="polite" class="space-y-2">
+						{#if phase === 'processing'}<p role="status">
+								{uploading
+									? '上傳圖片中…'
+									: attempt?.action === 'commit'
+										? '記帳中…'
+										: analysis
+											? 'Gemini 分析中…'
+											: '處理中…'}
+							</p>
+						{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
+						{:else if phase === 'created'}<p class="font-semibold">已新增</p>
+						{:else if phase === 'rejected' || phase === 'error'}<p
+								class="font-semibold"
+							>
+								未新增
+							</p>
+						{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
+						{#each issues as issue, index (index)}<p>
+								{issue.field === 'images' && issue.code === 'not_a_receipt'
+									? '圖片看起來不是收據，請重新選擇圖片。'
+									: issue.code === 'too_many_drafts'
+										? '一次最多 20 筆，請分批送出。'
+										: `${fields[issue.field] ?? '內容'}：${codes[issue.code] ?? '資訊無效'}`}
+							</p>{/each}
+						{#if savedExpense && phase === 'created'}
+							<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
+							<p class="text-sm">
+								{new Date(savedExpense.ts).toLocaleDateString('zh-TW', {
+									timeZone: 'Asia/Taipei'
+								})}
+							</p>
+							{#each Object.entries(savedExpense.shares_json) as [email, amount] (email)}
+								<p class="text-sm">{email}：NT$ {amount}</p>
+							{/each}
+						{/if}
+						{#if message}<p class="text-sm">{message}</p>{/if}
+					</div>
+					<div class="flex flex-wrap gap-2">
+						{#if phase === 'uncertain' && !session}
+							<Button size="sm" onclick={() => execute(true)}>查詢結果</Button>
+							{#if attempt}
+								<Button size="sm" variant="outline" onclick={() => execute()}
+									>重試同一請求</Button
+								>
+							{/if}
+						{:else if phase === 'created'}
+							<Button size="sm" onclick={() => newOperation()}>新增另一筆</Button>
+						{:else if phase === 'rejected' || phase === 'error'}
+							<Button size="sm" onclick={() => newOperation(false)}
+								>修改後重新送出</Button
 							>
 						{/if}
-					{:else if phase === 'created'}
-						<Button size="sm" onclick={() => newOperation()}>新增另一筆</Button>
-					{:else if phase === 'rejected' || phase === 'error'}
-						<Button size="sm" onclick={() => newOperation(false)}>修改後重新送出</Button
-						>
-					{/if}
+					</div>
 				</div>
 			</div>
-		</div>
+		{/if}
 	</div>
 
 	<div class="shrink-0 space-y-2">
@@ -796,7 +1114,11 @@
 			>
 			<textarea
 				id="semantic-entry-text"
-				aria-label={composingReply ? '補充資訊' : '記帳內容'}
+				aria-label={phase === 'drafts'
+					? '補充草稿'
+					: composingReply
+						? '補充資訊'
+						: '記帳內容'}
 				aria-describedby="semantic-entry-hint"
 				bind:value={
 					() => (composingReply ? reply : text),
@@ -811,13 +1133,17 @@
 				disabled={converting || !canCompose || (phase === 'input' && attempt !== null)}
 				rows="2"
 				class="min-w-0 flex-1 resize-none bg-transparent px-2 py-1 text-sm focus-visible:outline-none"
-				placeholder={composingReply ? '輸入你的回答…' : '例如：今天午餐100元'}
+				placeholder={phase === 'drafts'
+					? '例如：第三筆是午餐'
+					: composingReply
+						? '輸入你的回答…'
+						: '例如：今天午餐100元'}
 			></textarea>
 			<Button
 				size="icon"
 				class="shrink-0 rounded-xl"
-				aria-label={composingReply ? '送出補充' : '送出記帳'}
-				title={composingReply ? '送出補充' : '送出記帳'}
+				aria-label={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
+				title={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
 				disabled={!$user ||
 					converting ||
 					!canCompose ||
