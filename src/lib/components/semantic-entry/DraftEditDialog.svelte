@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Draft } from '@jopie/semantic-entry-contract';
 	import * as Dialog from '$lib/components/shadcn/dialog';
+	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
 	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 	import DraftCard from './DraftCard.svelte';
@@ -23,6 +24,7 @@
 		onClose: (changed: boolean) => void;
 	} = $props();
 	let open = $state(true);
+	let showConfirmClose = $state(false);
 	let changed = false;
 	let selecting = $state(false);
 	let selected = $state<string[]>([]);
@@ -164,7 +166,13 @@
 		}
 	}}
 >
-	<Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]">
+	<Dialog.Content
+		class="max-h-[90vh] overflow-y-auto sm:max-w-[425px]"
+		onInteractOutside={(event) => {
+			event.preventDefault();
+			showConfirmClose = true;
+		}}
+	>
 		<Dialog.Header><Dialog.Title>編輯草稿</Dialog.Title></Dialog.Header>
 		<div
 			class="sticky top-0 z-20 flex items-center justify-between bg-popover/95 py-1 backdrop-blur-sm"
@@ -269,3 +277,24 @@
 		</Dialog.Root>
 	</Dialog.Content>
 </Dialog.Root>
+
+<AlertDialog.Root bind:open={showConfirmClose}>
+	<AlertDialog.Content>
+		<AlertDialog.Header>
+			<AlertDialog.Title>要關閉編輯草稿嗎？</AlertDialog.Title>
+			<AlertDialog.Description>你的編輯會保留在草稿中。</AlertDialog.Description>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel>繼續編輯</AlertDialog.Cancel>
+			<AlertDialog.Action
+				onclick={() => {
+					open = false;
+					onClose(changed);
+					showConfirmClose = false;
+				}}
+			>
+				關閉
+			</AlertDialog.Action>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>

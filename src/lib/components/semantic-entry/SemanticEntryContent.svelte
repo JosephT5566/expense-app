@@ -73,6 +73,7 @@
 			: []
 	);
 	let editingDrafts = $state(false);
+	let closeGuard = false;
 	function onEditDrafts() {
 		if (session) {
 			session = {
@@ -386,6 +387,9 @@
 		controller?.abort();
 	});
 	export function requestClose() {
+		if (editingDrafts || closeGuard) {
+			return;
+		}
 		changeOpen(false);
 	}
 	function changeOpen(next: boolean) {
@@ -1187,6 +1191,9 @@
 			session = next;
 		}}
 		onClose={(changed) => {
+			// Block the same outside click from dismissing the parent after the editor closes.
+			closeGuard = true;
+			setTimeout(() => (closeGuard = false), 400);
 			editingDrafts = false;
 			if (changed) {
 				followLatest = true;

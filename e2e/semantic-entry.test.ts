@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 import {
 	draftIssues,
 	effectiveDrafts,
@@ -1814,6 +1814,17 @@ test('manual merge and exclusion commit only effective drafts with merged proven
 	expect(commit.drafts!.some((draft) => draft.draftId === makeDraft(3).draftId)).toBe(false);
 });
 
+// The dialog's outside-click listener attaches shortly after it opens; a click that lands
+// earlier is ignored (harmless), so retry until the confirmation appears.
+async function outsideClickUntilConfirm(page: Page, confirmation: Locator) {
+	await expect(async () => {
+		if (!(await confirmation.isVisible())) {
+			await page.mouse.click(5, 5);
+		}
+		await expect(confirmation).toBeVisible({ timeout: 1000 });
+	}).toPass();
+}
+
 test('automatic merge can be removed and all closure paths preserve changes', async ({ page }) => {
 	const drafts = [makeDraft(1), makeDraft(2)];
 	drafts[1].note.value = drafts[0].note.value;
@@ -1824,12 +1835,41 @@ test('automatic merge can be removed and all closure paths preserve changes', as
 	await expect(draftCards(page)).toHaveCount(2);
 	await editDialog(page).getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(2);
+	await expect(page.getByText('已套用你的編輯。', { exact: true })).toHaveCount(1);
 	await openDraftEditor(page);
 	// No changes this time: closing must not append a second edit acknowledgement.
-	await page.mouse.click(5, 5);
+	const confirmation = page.getByRole('alertdialog', { name: '要關閉編輯草稿嗎？', exact: true });
+	const aiDialog = page.getByRole('dialog', { name: 'AI 記帳', exact: true });
+	await outsideClickUntilConfirm(page, confirmation);
+	await expect(editDialog(page)).toBeVisible();
+	await expect(aiDialog).toBeVisible();
+	await confirmation.getByRole('button', { name: '繼續編輯', exact: true }).click();
+	await expect(confirmation).toHaveCount(0);
+	await expect(editDialog(page)).toBeVisible();
+	await expect(draftCards(page)).toHaveCount(2);
+	await outsideClickUntilConfirm(page, confirmation);
+	await confirmation.getByRole('button', { name: '關閉', exact: true }).click();
 	await expect(editDialog(page)).toHaveCount(0);
+	await expect(aiDialog).toBeVisible();
 	await expect(page.getByText('已套用你的編輯。', { exact: true })).toHaveCount(1);
 	await expect(page.getByLabel('補充草稿')).toBeEditable();
+});
+
+test('outside close confirmation preserves draft changes without closing AI entry or writing expenses', async ({
+	page
+}) => {
+	const state = await editableDrafts(page, [makeDraft(1), makeDraft(2)]);
+	await draftCards(page).nth(0).getByRole('button', { name: '排除', exact: true }).click();
+	const confirmation = page.getByRole('alertdialog', { name: '要關閉編輯草稿嗎？', exact: true });
+	await outsideClickUntilConfirm(page, confirmation);
+	await confirmation.getByRole('button', { name: '關閉', exact: true }).click();
+	await expect(editDialog(page)).toHaveCount(0);
+	await expect(page.getByRole('dialog', { name: 'AI 記帳', exact: true })).toBeVisible();
+	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(1);
+	await expect(draftBlock(page)).toContainText('合成帳目2');
+	await expect(draftBlock(page)).not.toContainText('合成帳目1');
+	await expect(page.getByText('已套用你的編輯。', { exact: true })).toHaveCount(1);
+	expect(state.writes()).toBe(0);
 });
 
 test('JPY panel validates an empty TWD amount, preserves unchanged fields and commits user conversion', async ({
