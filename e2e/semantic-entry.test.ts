@@ -1,11 +1,9 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
-import { loadEnv } from 'vite';
-import type { SemanticRequest } from '../packages/semantic-entry-contract/src/index';
-const env = loadEnv('production', process.cwd(), 'PUBLIC_');
-const endpoint =
-	process.env.PUBLIC_SEMANTIC_ENTRY_URL ??
-	env.PUBLIC_SEMANTIC_ENTRY_URL ??
-	'https://semantic.example.test';
+import type { SemanticRequestV3 } from '../packages/semantic-entry-contract/src/index';
+const env = {
+	PUBLIC_SUPABASE_URL: process.env.PUBLIC_SUPABASE_URL ?? 'https://synthetic.supabase.co'
+};
+const endpoint = process.env.PUBLIC_SEMANTIC_ENTRY_URL ?? 'https://semantic.example.test';
 const basePath = process.env.E2E_BASE_PATH ?? '';
 const user = {
 	id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -32,7 +30,7 @@ const row = {
 const created = (requestId: string, replayed = false) => ({
 	status: 'created',
 	requestId,
-	expense: row,
+	expenses: [row],
 	replayed,
 	metadata: {
 		model: 'synthetic',
@@ -45,9 +43,17 @@ const created = (requestId: string, replayed = false) => ({
 test.use({ viewport: { width: 430, height: 900 }, timezoneId: 'Asia/Taipei' });
 async function setup(
 	page: Page,
-	handler: (route: Route, body: SemanticRequest | null) => Promise<void>,
+	handler: (route: Route, body: SemanticRequestV3 | null) => Promise<void>,
 	initialRows: (typeof row)[] = []
 ) {
+	await page.route('**/*', async (route) => {
+		const url = new URL(route.request().url());
+		if (['localhost', '127.0.0.1'].includes(url.hostname)) {
+			await route.continue();
+		} else {
+			await route.abort();
+		}
+	});
 	await page.clock.setFixedTime(new Date('2026-10-01T12:00:00+08:00'));
 	const storageKey = `sb-${new URL(env.PUBLIC_SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
 	const session = {
@@ -64,7 +70,7 @@ async function setup(
 	);
 	let rows = initialRows;
 	let writes = 0;
-	const posts: SemanticRequest[] = [];
+	const posts: SemanticRequestV3[] = [];
 	await page.route(`${env.PUBLIC_SUPABASE_URL}/**`, async (route) => {
 		const path = new URL(route.request().url()).pathname;
 		if (path.endsWith('/auth/v1/user')) {
@@ -102,7 +108,12 @@ async function setup(
 		expect(route.request().headers().authorization).toBe('Bearer synthetic-jwt');
 		const body = route.request().method() === 'POST' ? route.request().postDataJSON() : null;
 		if (body) {
+			expect(body.action).toBe('analyze');
+			expect(route.request().headers().accept).toBe('text/event-stream; semantic-version=3');
 			posts.push(body);
+		}
+		if (!body) {
+			expect(route.request().headers().accept).toBe('application/json; semantic-version=3');
 		}
 		await handler(route, body);
 	});
@@ -237,7 +248,7 @@ test('not_found stays uncertain and a subsequent GET restores completion', async
 				json:
 					++query === 1
 						? { status: 'not_found', requestId }
-						: { status: 'completed', requestId, expense: row, replayed: true }
+						: { status: 'completed', requestId, expenses: [row], replayed: true }
 			});
 		}
 	});
@@ -306,7 +317,6 @@ test('processing locks close, Escape and outside interaction until completion', 
 	});
 	await submit(page);
 	await expect.poll(() => s.posts.length).toBe(1);
-	await expect(page.getByRole('button', { name: '圖片分析', exact: true })).toBeDisabled();
 	await expect(
 		page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
 	).toHaveCount(0);
@@ -438,7 +448,7 @@ for (const status of [422, 429, 502]) {
 						json: {
 							status: 'completed',
 							requestId: route.request().url().split('/').at(-1),
-							expense: row,
+							expenses: [row],
 							replayed: true
 						}
 					});
@@ -491,7 +501,7 @@ for (const lifecycle of ['reload', 'navigate']) {
 					json: {
 						status: 'completed',
 						requestId: route.request().url().split('/').at(-1),
-						expense: row,
+						expenses: [row],
 						replayed: true
 					}
 				});
@@ -577,7 +587,7 @@ test('clarification supplements the same request and automatically writes withou
 }) => {
 	const question = '這筆支出的金額是多少？';
 	const s = await setup(page, async (route, body) => {
-		expect(route.request().headers().accept).toBe('text/event-stream; semantic-version=2');
+		expect(route.request().headers().accept).toBe('text/event-stream; semantic-version=3');
 		const result = body!.history
 			? created(body!.requestId)
 			: {
@@ -792,7 +802,7 @@ for (const fault of ['wrong-id', 'unknown-event', 'question-after-writing', 'exp
 for (const fault of ['gap', 'duplicate', 'wrong-id', 'oversize', 'after-writing']) {
 	test(`analysis ${fault} keeps uncertain recovery`, async ({ page }) => {
 		await setup(page, async (route) => {
-			const body = route.request().postDataJSON() as SemanticRequest;
+			const body = route.request().postDataJSON() as SemanticRequestV3;
 			const id = body.requestId;
 			const delta = (seq: number, text: string, requestId = id) =>
 				`event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq, text })}\n\n`;
@@ -823,7 +833,7 @@ for (const fault of ['gap', 'duplicate', 'wrong-id', 'oversize', 'after-writing'
 
 test('analysis is plain text and is cleared for the next operation', async ({ page }) => {
 	await setup(page, async (route) => {
-		const { requestId } = route.request().postDataJSON() as SemanticRequest;
+		const { requestId } = route.request().postDataJSON() as SemanticRequestV3;
 		await route.fulfill({
 			contentType: 'text/event-stream',
 			body: `event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 0, text: '<b>午餐</b>' })}\n\nevent: result\ndata: ${JSON.stringify(created(requestId))}\n\n`
@@ -971,7 +981,9 @@ test('chat composer stays visible and shows a hint for the current phase', async
 	try {
 		const composer = page.getByRole('dialog').locator('textarea');
 		await expect(composer).toHaveCount(1);
-		await expect(page.getByText('資訊完整後會直接記帳。', { exact: true })).toBeVisible();
+		await expect(
+			page.getByText('資訊完整後會直接記帳；多筆或不完整時會先列出草稿。', { exact: true })
+		).toBeVisible();
 		await submit(page);
 		await expect(composer).toBeVisible();
 		await expect(composer).toBeDisabled();
@@ -985,40 +997,16 @@ test('chat composer stays visible and shows a hint for the current phase', async
 	}
 });
 
-test('AI dialog defaults to semantic entry and preserves input across mode switches', async ({
-	page
-}) => {
+test('AI dialog has one visible title and no mode switch', async ({ page }) => {
 	await setup(page, async (route, body) => {
 		await route.fulfill({ json: created(body!.requestId) });
 	});
-	await expect(page.getByRole('dialog')).toHaveAccessibleName('文字記帳');
-	await expect(page.getByLabel('記帳內容')).toBeVisible();
-	await page.getByRole('button', { name: '圖片分析', exact: true }).click();
-	await expect(page.getByRole('dialog')).toHaveAccessibleName('圖片分析');
-	await expect(page.getByLabel('記帳內容')).toBeHidden();
-	await expect(page.getByText('上傳收據', { exact: true })).toBeVisible();
-	await page.locator('input[type=file][multiple]').setInputFiles({
-		name: 'synthetic-receipt.png',
-		mimeType: 'image/png',
-		buffer: Buffer.from(
-			'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9l8AAAAASUVORK5CYII=',
-			'base64'
-		)
-	});
-	await expect(page.getByRole('img', { name: 'Preview', exact: true })).toBeVisible();
-	await page.getByRole('button', { name: '文字記帳', exact: true }).click();
-	await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
-	await submit(page);
-	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-	await page.getByRole('button', { name: '圖片分析', exact: true }).click();
-	await expect(page.getByText('synthetic-receipt.png', { exact: true })).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await page
-		.locator('[data-date="2026-10-01"]')
-		.getByRole('button', { name: 'AI 記帳', exact: true })
-		.click();
-	await expect(page.getByLabel('記帳內容')).toBeVisible();
-	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+	await expect(page.getByRole('dialog')).toHaveAccessibleName('AI 記帳');
+	await expect(page.getByRole('heading', { name: 'AI 記帳', exact: true })).toBeVisible();
+	await expect(page.getByRole('group', { name: 'AI 記帳模式' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '文字記帳', exact: true })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '圖片分析', exact: true })).toHaveCount(0);
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
 });
 
 test.describe('Taiwan conversation date baseline', () => {
@@ -1075,4 +1063,213 @@ test.describe('Taiwan conversation date baseline', () => {
 		expect(s.posts[0].referenceDate).toBe('2026-10-01');
 		expect(s.posts[1]).toEqual({ ...s.posts[0], history: [{ question, answer: '100元' }] });
 	});
+});
+
+const png = {
+	name: 'synthetic.png',
+	mimeType: 'image/png',
+	buffer: Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9l8AAAAASUVORK5CYII=',
+		'base64'
+	)
+};
+const imagePath = `uploads/${user.id}/synthetic.png`;
+async function mockUploads(page: Page, errorCode?: string) {
+	const calls: unknown[] = [];
+	let puts = 0;
+	await page.route(`${endpoint}/semantic-entry/uploads`, async (route) => {
+		expect(route.request().headers().authorization).toBe('Bearer synthetic-jwt');
+		expect(route.request().method()).toBe('POST');
+		calls.push(route.request().postDataJSON());
+		if (errorCode) {
+			await route.fulfill({
+				status: 400,
+				json: { error: { code: errorCode, uncertain: false } }
+			});
+		} else {
+			await route.fulfill({
+				json: {
+					uploads: [
+						{
+							path: imagePath,
+							url: 'https://storage.example.test/synthetic.png',
+							expiresAt: '2026-10-01T04:15:00Z',
+							requiredHeaders: { 'Content-Type': 'image/png' }
+						}
+					]
+				}
+			});
+		}
+	});
+	await page.route('https://storage.example.test/**', async (route) => {
+		puts++;
+		expect(route.request().method()).toBe('PUT');
+		expect(route.request().headers().authorization).toBeUndefined();
+		expect(route.request().headers()['content-type']).toBe('image/png');
+		expect(route.request().postDataBuffer()).toEqual(png.buffer);
+		await route.fulfill({ status: 200, body: '' });
+	});
+	return { calls, puts: () => puts };
+}
+const attach = (page: Page) => page.locator('input[type=file][multiple]').setInputFiles(png);
+const pending = (page: Page) =>
+	page.evaluate((id) => localStorage.getItem(`jopie:semantic-pending:${id}`), user.id);
+
+test('image and text upload once then create a summary and update home without client writes', async ({
+	page
+}, testInfo) => {
+	const s = await setup(page, async (route, body) => {
+		const requestId = body!.requestId;
+		await route.fulfill({
+			contentType: 'text/event-stream',
+			body:
+				`event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 0, text: '合成收據分析' })}\n\n` +
+				`event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\n\n` +
+				`event: result\ndata: ${JSON.stringify(created(requestId))}\n\n`
+		});
+	});
+	const uploads = await mockUploads(page);
+	await page.getByLabel('記帳內容').fill('昨天晚餐');
+	await attach(page);
+	await expect(page.getByRole('img', { name: '第 1 張附圖' })).toBeVisible();
+	await submit(page);
+	const summary = page.getByRole('group', { name: '已記帳摘要' });
+	await expect(summary).toContainText('已記帳 1 筆');
+	await expect(summary).toContainText('2026-10-01');
+	await expect(summary.getByRole('button')).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '新增另一筆', exact: true })).toHaveCount(0);
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
+	expect(uploads.calls).toEqual([
+		{ files: [{ contentType: 'image/png', size: png.buffer.length }] }
+	]);
+	expect(uploads.puts()).toBe(1);
+	expect(s.posts[0]).toEqual({
+		action: 'analyze',
+		requestId: s.posts[0].requestId,
+		referenceDate: '2026-10-01',
+		text: '昨天晚餐',
+		images: [imagePath]
+	});
+	expect(await pending(page)).toBeNull();
+	expect(s.writes()).toBe(0);
+	await testInfo.attach('image-created-aria', {
+		body: await page.getByRole('dialog').ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	await page.screenshot({ path: testInfo.outputPath('image-created.png') });
+	// The next submit starts a fresh operation while retaining this summary.
+	await page.getByLabel('記帳內容').fill('另一筆午餐100');
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
+	expect(s.posts[1].images).toBeUndefined();
+	await expect(summary).toBeVisible();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(
+		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
+	).toBeVisible();
+	expect(s.writes()).toBe(0);
+});
+
+test('client rejects image count, size and type without network calls', async ({ page }) => {
+	const s = await setup(page, async (route) => route.abort());
+	const uploads = await mockUploads(page);
+	const input = page.locator('input[type=file][multiple]');
+	await input.setInputFiles(
+		Array.from({ length: 5 }, (_, i) => ({ ...png, name: `synthetic-${i}.png` }))
+	);
+	await expect(page.locator('#semantic-entry-hint')).toHaveText('最多附加 4 張圖片。');
+	await input.setInputFiles({ ...png, buffer: Buffer.alloc(10 * 1024 * 1024 + 1) });
+	await expect(page.locator('#semantic-entry-hint')).toHaveText('單張圖片不能超過 10 MiB。');
+	await input.setInputFiles({
+		name: 'synthetic.gif',
+		mimeType: 'image/gif',
+		buffer: Buffer.from('GIF89a')
+	});
+	await expect(page.locator('#semantic-entry-hint')).toHaveText(
+		'只支援 JPG、PNG、WebP、HEIC 圖片。'
+	);
+	expect(uploads.calls).toHaveLength(0);
+	expect(uploads.puts()).toBe(0);
+	expect(s.posts).toHaveLength(0);
+	await expect(page.getByRole('button', { name: '移除第 1 張圖片' })).toHaveCount(0);
+	await attach(page);
+	await expect(page.locator('#semantic-entry-hint')).toHaveText(
+		'資訊完整後會直接記帳；多筆或不完整時會先列出草稿。'
+	);
+});
+
+for (const [code, message] of [
+	['quota_exceeded', '今天的解析次數已用完。'],
+	['image_limit', '圖片上傳失敗，請稍後再試。']
+]) {
+	test(`upload endpoint ${code} clears pending without analyzing`, async ({ page }) => {
+		const s = await setup(page, async (route) => route.abort());
+		const uploads = await mockUploads(page, code);
+		await attach(page);
+		await submit(page);
+		await expect(page.getByText('未新增', { exact: true })).toBeVisible();
+		await expect(page.getByText(message, { exact: true })).toBeVisible();
+		expect(await pending(page)).toBeNull();
+		expect(uploads.calls).toHaveLength(1);
+		expect(uploads.puts()).toBe(0);
+		expect(s.posts).toHaveLength(0);
+		expect(s.writes()).toBe(0);
+	});
+}
+
+test('uncertain image analyze retries the identical payload without uploading again', async ({
+	page
+}) => {
+	let count = 0;
+	const s = await setup(page, async (route, body) => {
+		if (++count === 1) {
+			await route.abort();
+		} else {
+			await route.fulfill({ json: created(body!.requestId) });
+		}
+	});
+	const uploads = await mockUploads(page);
+	await attach(page);
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '附加圖片', exact: true })).toBeDisabled();
+	await page.getByRole('button', { name: '重試同一請求' }).click();
+	await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText('已記帳 1 筆');
+	expect(s.posts[1]).toEqual(s.posts[0]);
+	expect(s.posts[1].images).toEqual([imagePath]);
+	expect(uploads.calls).toHaveLength(1);
+	expect(uploads.puts()).toBe(1);
+	expect(await pending(page)).toBeNull();
+});
+
+test('non receipt rejection displays image guidance and performs zero writes', async ({ page }) => {
+	const s = await setup(page, async (route, body) => {
+		await route.fulfill({
+			status: 422,
+			json: {
+				status: 'rejected',
+				requestId: body!.requestId,
+				issues: [{ field: 'images', code: 'not_a_receipt' }]
+			}
+		});
+	});
+	await mockUploads(page);
+	await attach(page);
+	await submit(page);
+	await expect(
+		page.getByText('圖片看起來不是收據，請重新選擇圖片。', { exact: true })
+	).toBeVisible();
+	expect(s.writes()).toBe(0);
+	expect(await pending(page)).toBeNull();
+});
+
+test('removing the last thumbnail disables an empty composer', async ({ page }) => {
+	await setup(page, async (route) => route.abort());
+	await page.getByLabel('記帳內容').fill('');
+	await attach(page);
+	await expect(page.getByRole('button', { name: '送出記帳', exact: true })).toBeEnabled();
+	await page.getByRole('button', { name: '移除第 1 張圖片' }).click();
+	await expect(page.getByRole('img', { name: '第 1 張附圖' })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '送出記帳', exact: true })).toBeDisabled();
 });

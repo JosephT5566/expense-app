@@ -10,7 +10,9 @@ from conftest import CONTEXT, RAW, REQUEST, REQUEST_ID, ROW
 from test_contract_v3 import JSON_INVALID, export_v3
 
 from semantic_entry.contracts import parse_request
+from semantic_entry.errors import SemanticError
 from semantic_entry.graph import Dependencies, input_hash
+from semantic_entry.images import parse_upload_request
 from semantic_entry.server import create_app
 
 
@@ -31,6 +33,35 @@ class Adapter:
 
     async def persist_expense(self, request_id, input_hash, expense):
         return {"expense": ROW, "replayed": False}
+
+
+def export_uploads():
+    file = {"contentType": "image/png", "size": 1}
+    mib = 1024 * 1024
+    inputs = [
+        {"files": [file]},
+        {"files": [file] * 4},
+        {"files": [{**file, "size": 10 * mib}]},
+        {"files": [{**file, "size": 10 * mib}] * 2},
+        {"files": []},
+        {"files": [file] * 5},
+        *[{"files": [{**file, "size": size}]} for size in [0, 1.5, "1", 10 * mib + 1]],
+        {"files": [{**file, "size": 10 * mib}] * 2 + [file]},
+        {"files": [{**file, "contentType": "image/gif"}]},
+        {"files": [file], "extra": True},
+        {"files": [{**file, "extra": True}]},
+        {},
+        {"files": [{"contentType": "image/png"}]},
+        {"files": [{"size": 1}]},
+    ]
+    cases = []
+    for raw in inputs:
+        try:
+            parsed = parse_upload_request(raw)
+            cases.append({"raw": raw, "parsed": {"files": parsed}})
+        except (SemanticError, ValueError, TypeError):
+            cases.append({"raw": raw, "invalid": True})
+    return cases
 
 
 async def main():
@@ -181,6 +212,7 @@ async def main():
     print(
         json.dumps(
             {
+                "uploads": export_uploads(),
                 "requests": requests,
                 "responses": responses,
                 "streams": streams,

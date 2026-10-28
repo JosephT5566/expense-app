@@ -68,3 +68,11 @@ household 只接受平分，餘數給 `min(key collate "C")`。
 已知限制：單筆 RPC 對格式錯誤的 ts、category_id 或超大金額會拋出原生錯誤。
 
 完整文件於 #49 的 PR3 補上。
+
+## 上傳端點
+
+`POST /semantic-entry/uploads` 使用同一個 Supabase Bearer，接受 `{files:[{contentType,size}]}`。
+每次 1–4 張，僅 JPEG／PNG／WebP；每張正整數 bytes，最多 10 MiB，合計最多 20 MiB。
+回應 `{uploads:[{path,url,expiresAt,requiredHeaders}]}` 與輸入順序相同。
+用戶端只以 requiredHeaders 對 HTTPS signed URL PUT 圖片，不附 Authorization；
+後續 v3 analyze 的 images 僅送 path，不送 generation。上傳失敗不代表有支出寫入。

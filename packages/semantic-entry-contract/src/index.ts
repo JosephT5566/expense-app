@@ -824,3 +824,75 @@ export function loadJsonV3(text: string): unknown {
 	finite(parsed);
 	return object(parsed);
 }
+
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
+export const UPLOAD_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+export type UploadImageType = (typeof UPLOAD_IMAGE_TYPES)[number];
+export interface UploadRequest {
+	files: { contentType: UploadImageType; size: number }[];
+}
+export interface UploadTarget {
+	path: string;
+	url: string;
+	expiresAt: string;
+	requiredHeaders: Record<string, string>;
+}
+export interface UploadResponse {
+	uploads: UploadTarget[];
+}
+export function parseUploadRequest(raw: unknown): UploadRequest {
+	const r = object(raw);
+	exactKeys(r, ['files']);
+	const files = listV3(r.files, MAX_IMAGES, (raw) => {
+		const f = object(raw);
+		exactKeys(f, ['contentType', 'size']);
+		if (
+			!UPLOAD_IMAGE_TYPES.includes(f.contentType as UploadImageType) ||
+			typeof f.size !== 'number' ||
+			!Number.isInteger(f.size) ||
+			f.size <= 0 ||
+			f.size > MAX_IMAGE_BYTES
+		) {
+			throw new Error('Invalid upload file');
+		}
+		return { contentType: f.contentType as UploadImageType, size: f.size };
+	});
+	if (files.reduce((sum, f) => sum + f.size, 0) > MAX_TOTAL_IMAGE_BYTES) {
+		throw new Error('Invalid upload total');
+	}
+	return { files };
+}
+export function parseUploadResponse(raw: unknown, expectedCount: number): UploadResponse {
+	const r = object(raw);
+	exactKeys(r, ['uploads']);
+	if (!Array.isArray(r.uploads) || r.uploads.length !== expectedCount) {
+		throw new Error('Invalid upload count');
+	}
+	return {
+		uploads: r.uploads.map((raw) => {
+			const t = object(raw);
+			exactKeys(t, ['path', 'url', 'expiresAt', 'requiredHeaders']);
+			const path = string(t.path);
+			const url = string(t.url);
+			const expiresAt = timestamp(t.expiresAt);
+			if (
+				!/^uploads\/[^/]+\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(path) ||
+				path.length > MAX_IMAGE_PATH_LENGTH ||
+				path.includes('..') ||
+				new URL(url).protocol !== 'https:'
+			) {
+				throw new Error('Invalid upload target');
+			}
+			const headers = object(t.requiredHeaders);
+			const requiredHeaders: Record<string, string> = {};
+			for (const [key, value] of Object.entries(headers)) {
+				if (key.toLowerCase() !== 'content-type' || typeof value !== 'string') {
+					throw new Error('Invalid upload headers');
+				}
+				requiredHeaders[key] = value;
+			}
+			return { path, url, expiresAt, requiredHeaders };
+		})
+	};
+}

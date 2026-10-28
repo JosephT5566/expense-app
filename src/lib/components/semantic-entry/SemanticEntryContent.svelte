@@ -2,6 +2,11 @@
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Button } from '$lib/components/shadcn/button';
+	import Paperclip from 'lucide-svelte/icons/paperclip';
+	import Camera from 'lucide-svelte/icons/camera';
+	import X from 'lucide-svelte/icons/x';
+	import CreatedSummary from './CreatedSummary.svelte';
+	import type { ExpenseRow } from '$lib/types/expense';
 	import Send from 'lucide-svelte/icons/send';
 	import { user } from '$lib/stores/session.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
@@ -10,13 +15,18 @@
 	import {
 		submitSemanticEntry,
 		getSemanticEntryStatus,
+		requestImageUploads,
+		uploadImage,
 		SemanticEntryError
 	} from '$lib/data/semantic-entry.fetcher';
 	import {
-		parseRequest,
-		type CompletedResult,
-		type Issue,
-		type SemanticRequest,
+		parseRequestV3,
+		MAX_IMAGE_BYTES,
+		MAX_TOTAL_IMAGE_BYTES,
+		UPLOAD_IMAGE_TYPES,
+		type UploadImageType,
+		type IssueV3,
+		type SemanticRequestV3,
 		type ClarificationTurn
 	} from '@jopie/semantic-entry-contract';
 	let { busy = $bindable(false), onClose }: { busy?: boolean; onClose: () => void } = $props();
@@ -31,22 +41,28 @@
 		| 'uncertain'
 		| 'error'
 	>('input');
-	let attempt = $state<(SemanticRequest & { accountId: string }) | null>(null);
+	let attempt = $state<(SemanticRequestV3 & { accountId: string }) | null>(null);
 	let history = $state<ClarificationTurn[]>([]);
 	let question = $state('');
 	let reply = $state('');
 	let pendingId = $state<string | null>(null);
-	let savedExpense = $state<CompletedResult['expense'] | null>(null);
+	let savedExpense = $state<ExpenseRow | null>(null);
 	const processing = $derived(phase === 'processing' || phase === 'persisting');
 	$effect(() => {
-		busy = processing;
+		busy = processing || converting;
 	});
-	let issues = $state<Issue[]>([]);
+	let issues = $state<IssueV3[]>([]);
 	let message = $state('');
 	let analysis = $state('');
-	let conversation = $state<{ role: 'user' | 'assistant'; text: string; analysis?: string }[]>(
-		[]
-	);
+	let conversation = $state<
+		{
+			role: 'user' | 'assistant';
+			text: string;
+			analysis?: string;
+			images?: string[];
+			expenses?: ExpenseRow[];
+		}[]
+	>([]);
 	let conversationElement = $state<HTMLDivElement>();
 	let followLatest = true;
 	$effect(() => {
@@ -62,6 +78,98 @@
 			}
 		});
 	});
+	let selectedImages = $state<{ file: File; url: string }[]>([]);
+	let imageError = $state('');
+	let converting = $state(false);
+	let uploading = $state(false);
+	let fileInput: HTMLInputElement;
+	let cameraInput: HTMLInputElement;
+
+	function clearImages() {
+		selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+		selectedImages = [];
+		imageError = '';
+		converting = false;
+		uploading = false;
+	}
+	function clearConversation() {
+		conversation.forEach((entry) => entry.images?.forEach((url) => URL.revokeObjectURL(url)));
+		conversation = [];
+	}
+	function removeImage(index: number) {
+		URL.revokeObjectURL(selectedImages[index].url);
+		selectedImages = selectedImages.filter((_, i) => i !== index);
+		imageError = '';
+	}
+	async function selectImages(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const files = Array.from(input.files ?? []);
+		input.value = '';
+		if (!files.length || attachmentsDisabled) {
+			return;
+		}
+		if (selectedImages.length + files.length > 4) {
+			imageError = '最多附加 4 張圖片。';
+			return;
+		}
+		const version = revision;
+		const owner = accountId;
+		converting = true;
+		const converted: File[] = [];
+		try {
+			for (const file of files) {
+				if (
+					/\.(heic|heif)$/i.test(file.name) ||
+					['image/heic', 'image/heif'].includes(file.type)
+				) {
+					imageError = '轉換 HEIC 中…';
+					try {
+						const heic2any = (await import('heic2any')).default;
+						const result = await heic2any({
+							blob: file,
+							toType: 'image/jpeg',
+							quality: 0.7
+						});
+						converted.push(
+							new File(
+								[Array.isArray(result) ? result[0] : result],
+								file.name.replace(/\.(heic|heif)$/i, '') + '.jpg',
+								{ type: 'image/jpeg' }
+							)
+						);
+					} catch {
+						if (version === revision && owner === accountId) {
+							imageError = 'HEIC/HEIF 圖片轉換失敗，請改用 JPEG、PNG 或 WebP。';
+						}
+						return;
+					}
+				} else {
+					converted.push(file);
+				}
+				if (version !== revision || owner !== accountId || destroyed) {
+					return;
+				}
+			}
+			const all = [...selectedImages.map((image) => image.file), ...converted];
+			if (all.some((file) => !UPLOAD_IMAGE_TYPES.includes(file.type as UploadImageType))) {
+				imageError = '只支援 JPG、PNG、WebP、HEIC 圖片。';
+			} else if (all.some((file) => file.size > MAX_IMAGE_BYTES)) {
+				imageError = '單張圖片不能超過 10 MiB。';
+			} else if (all.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_IMAGE_BYTES) {
+				imageError = '圖片總計不能超過 20 MiB。';
+			} else {
+				selectedImages = [
+					...selectedImages,
+					...converted.map((file) => ({ file, url: URL.createObjectURL(file) }))
+				];
+				imageError = '';
+			}
+		} finally {
+			if (version === revision && owner === accountId) {
+				converting = false;
+			}
+		}
+	}
 	let revision = 0;
 	let controller: AbortController | undefined;
 	let accountId: string | undefined;
@@ -82,7 +190,11 @@
 			}
 			const raw = JSON.parse(saved);
 			// Read legacy UUIDs without restoring their text/history, then minimize storage.
-			const id = parseRequest({ requestId: raw.requestId, text: 'status' }).requestId;
+			const id = parseRequestV3({
+				action: 'analyze',
+				requestId: raw.requestId,
+				text: 'status'
+			}).requestId;
 			localStorage.setItem(pendingKey(owner), JSON.stringify({ requestId: id }));
 			pendingId = id;
 			phase = 'uncertain';
@@ -95,12 +207,15 @@
 	const replyCount = $derived([...reply.trim()].length);
 	const composingReply = $derived(phase === 'needs_input');
 	const canCompose = $derived(phase === 'input' || composingReply);
+	const attachmentsDisabled = $derived(
+		!canCompose || composingReply || converting || selectedImages.length >= 4
+	);
 	const composerCount = $derived(composingReply ? replyCount : count);
 	const composerHint = $derived(
 		composerCount > 500 && canCompose
 			? '訊息最多 500 字，請縮短後再送出。'
 			: {
-					input: '資訊完整後會直接記帳。',
+					input: '資訊完整後會直接記帳；多筆或不完整時會先列出草稿。',
 					needs_input: attempt?.referenceDate
 						? `本次「今天」固定為 ${attempt.referenceDate}（台灣日期）。日期更正請填完整年月日。`
 						: '補充這筆支出的資訊，接續剛才的對話。',
@@ -113,6 +228,7 @@
 				}[phase]
 	);
 	const fields: Record<string, string> = {
+		images: '圖片',
 		amount: '金額',
 		note: '描述',
 		date: '日期',
@@ -136,6 +252,9 @@
 		const next = $user?.id;
 		untrack(() => {
 			if (next !== accountId) {
+				if (uploading && accountId) {
+					clearPending(accountId);
+				}
 				accountId = next;
 				revision++;
 				controller?.abort();
@@ -150,7 +269,8 @@
 				issues = [];
 				message = '';
 				analysis = '';
-				conversation = [];
+				clearConversation();
+				clearImages();
 				if (next) {
 					restorePending(next);
 				}
@@ -158,8 +278,12 @@
 		});
 	});
 	onDestroy(() => {
+		if (uploading && accountId) {
+			clearPending(accountId);
+		}
 		analysis = '';
-		conversation = [];
+		clearConversation();
+		clearImages();
 		destroyed = true;
 		revision++;
 		controller?.abort();
@@ -168,7 +292,7 @@
 		changeOpen(false);
 	}
 	function changeOpen(next: boolean) {
-		if (!next && processing) {
+		if (!next && (processing || converting)) {
 			message = '正在處理這筆記帳，請等待結果。';
 			return;
 		}
@@ -183,7 +307,8 @@
 	}
 	function newOperation(clear = true) {
 		analysis = '';
-		conversation = [];
+		clearConversation();
+		clearImages();
 		followLatest = true;
 		revision++;
 		controller?.abort();
@@ -203,56 +328,93 @@
 		return !destroyed && version === revision && get(user)?.id === owner;
 	}
 	function leavePage() {
+		const interruptedUpload = uploading;
 		analysis = '';
-		conversation = [];
+		clearConversation();
+		clearImages();
 		revision++;
 		controller?.abort();
-		if (processing) {
+		if (interruptedUpload) {
+			if (accountId) {
+				clearPending(accountId);
+			}
+			pendingId = null;
+			attempt = null;
+			phase = 'error';
+			message = '圖片上傳失敗，請稍後再試。';
+		} else if (processing) {
 			phase = 'uncertain';
 			message = '結果待確認，請查詢結果。';
 		}
 	}
-	async function accept(result: CompletedResult, version: number, owner: string) {
+	async function accept(
+		result: { expenses: ExpenseRow[]; replayed: boolean },
+		version: number,
+		owner: string
+	) {
 		if (!stillCurrent(version, owner)) {
 			return;
 		}
+		let refreshFailed = false;
 		if (result.replayed) {
-			const existing = get(expensesStore.items).find((row) => row.id === result.expense.id);
-			const months = new Set([
-				getTaiwanMonthKey(result.expense.ts),
-				...(existing ? [getTaiwanMonthKey(existing.ts)] : [])
-			]);
+			const existing = get(expensesStore.items).filter((row) =>
+				result.expenses.some((saved) => saved.id === row.id)
+			);
+			const months = new Set(
+				[...result.expenses, ...existing].map((row) => getTaiwanMonthKey(row.ts))
+			);
 			for (const month of months) {
 				const refreshed = await forceRefetchMonthlyExpenses(month, undefined, () =>
 					stillCurrent(version, owner)
 				);
-				if (!refreshed && stillCurrent(version, owner)) {
-					clearPending(owner);
-					pendingId = null;
-					savedExpense = result.expense;
-					phase = 'created';
-					message = '先前請求已完成，但清單更新失敗，請重新整理。';
-					return;
-				}
 				if (!stillCurrent(version, owner)) {
 					return;
 				}
+				if (!refreshed) {
+					refreshFailed = true;
+				}
 			}
 		} else {
-			expensesStore.upsertOne(result.expense);
+			result.expenses.forEach((row) => expensesStore.upsertOne(row));
 		}
-		if (stillCurrent(version, owner)) {
-			clearPending(owner);
-			pendingId = null;
-			savedExpense = result.expense;
+		if (!stillCurrent(version, owner)) {
+			return;
+		}
+		clearPending(owner);
+		pendingId = null;
+		message = refreshFailed
+			? '先前請求已完成，但清單更新失敗，請重新整理。'
+			: result.replayed
+				? '這是先前請求的完成結果，清單已重新整理。'
+				: '';
+		if (attempt?.images) {
+			conversation.push({
+				role: 'assistant',
+				text: message,
+				analysis,
+				expenses: result.expenses
+			});
+			clearImages();
+			attempt = null;
+			history = [];
+			question = '';
+			reply = '';
+			text = '';
+			analysis = '';
+			message = '';
+			phase = 'input';
+		} else {
+			savedExpense = result.expenses[0];
 			phase = 'created';
-			message = result.replayed ? '這是先前請求的完成結果，清單已重新整理。' : '';
 		}
 	}
 	async function execute(query = false) {
-		if (processing || !$user || (phase === 'uncertain' && !query && !attempt)) {
+		if (processing || converting || !$user || (phase === 'uncertain' && !query && !attempt)) {
 			return;
 		}
+		imageError = '';
+		let uploadContext: { requestId: string; referenceDate: string; text?: string } | undefined;
+		const filesToUpload = selectedImages.map((image) => image.file);
 		const hadUncertainty = phase === 'uncertain';
 		const owner = $user.id;
 		const outgoingText = query
@@ -266,28 +428,44 @@
 			try {
 				const nextHistory =
 					phase === 'needs_input' ? [...history, { question, answer: reply }] : history;
-				const request = parseRequest({
+				const identity = {
 					requestId: attempt?.requestId ?? crypto.randomUUID(),
 					referenceDate:
 						attempt?.referenceDate ??
-						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)),
-					text,
-					...(nextHistory.length ? { history: nextHistory } : {})
-				});
+						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000))
+				};
+				if (count > 500) {
+					return;
+				}
+				const request = filesToUpload.length
+					? null
+					: parseRequestV3({
+							action: 'analyze',
+							...identity,
+							text,
+							...(nextHistory.length ? { history: nextHistory } : {})
+						});
 				localStorage.setItem(
 					pendingKey(owner),
-					JSON.stringify({ requestId: request.requestId })
+					JSON.stringify({ requestId: identity.requestId })
 				);
-				attempt = { ...request, accountId: owner };
-				pendingId = request.requestId;
-				history = request.history ?? [];
+				if (request) {
+					attempt = { ...request, accountId: owner };
+					history = request.history ?? [];
+				} else {
+					uploadContext = {
+						...identity,
+						...(text.trim() ? { text: text.trim().normalize('NFC') } : {})
+					};
+				}
+				pendingId = identity.requestId;
 				reply = '';
 			} catch {
 				message = '目前無法保留請求，請允許此網站儲存資料後再試。';
 				return;
 			}
 		}
-		const operation = attempt;
+		let operation = attempt;
 		const id = operation?.requestId ?? pendingId;
 		if (!id) {
 			return;
@@ -299,7 +477,14 @@
 				analysis: query ? undefined : analysis
 			});
 		}
-		conversation.push({ role: 'user', text: outgoingText });
+		conversation.push({
+			role: 'user',
+			text: outgoingText,
+			...(!query && !hadUncertainty && selectedImages.length
+				? { images: selectedImages.map((image) => image.url) }
+				: {})
+		});
+		selectedImages = [];
 		followLatest = true;
 		const version = ++revision;
 		controller = new AbortController();
@@ -319,11 +504,43 @@
 					phase = 'uncertain';
 					message = '尚未查到完成結果，仍待確認。';
 				}
-			} else if (operation) {
-				const request = parseRequest({
+			} else if (operation || uploadContext) {
+				if (uploadContext) {
+					uploading = true;
+					const targets = await requestImageUploads(
+						filesToUpload.map((file) => ({
+							contentType: file.type as UploadImageType,
+							size: file.size
+						})),
+						controller.signal
+					);
+					if (!stillCurrent(version, owner)) {
+						return;
+					}
+					for (let i = 0; i < targets.length; i++) {
+						await uploadImage(targets[i], filesToUpload[i], controller.signal);
+						if (!stillCurrent(version, owner)) {
+							return;
+						}
+					}
+					operation = {
+						action: 'analyze',
+						...uploadContext,
+						images: targets.map((target) => target.path),
+						accountId: owner
+					};
+					attempt = operation;
+					uploading = false;
+				}
+				if (!operation) {
+					throw new SemanticEntryError('invalid_request', false);
+				}
+				const request = parseRequestV3({
+					action: operation.action,
 					requestId: operation.requestId,
-					text: operation.text,
 					...(operation.referenceDate ? { referenceDate: operation.referenceDate } : {}),
+					...(operation.images ? { images: operation.images } : {}),
+					...(operation.text !== undefined ? { text: operation.text } : {}),
 					...(operation.history ? { history: operation.history } : {})
 				});
 				const result = await submitSemanticEntry(
@@ -355,7 +572,11 @@
 						question = result.question;
 						phase = 'needs_input';
 					} else {
-						issues = result.issues;
+						if (result.status === 'drafts') {
+							message = `找到 ${result.drafts.length} 筆草稿，草稿編輯功能尚未完成。`;
+						} else {
+							issues = result.issues;
+						}
 						phase = 'rejected';
 					}
 				}
@@ -364,26 +585,36 @@
 			if (!stillCurrent(version, owner)) {
 				return;
 			}
+			const failedUpload = uploading;
 			const uncertain =
-				hadUncertainty ||
-				query ||
-				!(error instanceof SemanticEntryError) ||
-				error.uncertain;
+				!failedUpload &&
+				(hadUncertainty ||
+					query ||
+					!(error instanceof SemanticEntryError) ||
+					error.uncertain);
 			if (!uncertain) {
 				clearPending(owner);
 				pendingId = null;
 			}
 			phase = uncertain ? 'uncertain' : 'error';
 			message =
-				error instanceof SemanticEntryError && error.code === 'configuration'
-					? '文字記帳服務尚未設定。'
-					: error instanceof SemanticEntryError && error.code === 'unauthorized'
-						? '請重新登入。'
-						: error instanceof SemanticEntryError && error.code === 'quota_exceeded'
-							? '今天的解析次數已用完。'
-							: uncertain
-								? '連線中斷或逾時，請查詢結果或重試同一請求。'
-								: '解析服務無法完成，請稍後再試。';
+				!uncertain && error instanceof SemanticEntryError && error.code.startsWith('image_')
+					? failedUpload
+						? '圖片上傳失敗，請稍後再試。'
+						: '圖片無法使用，請重新選擇圖片。'
+					: error instanceof SemanticEntryError && error.code === 'configuration'
+						? '文字記帳服務尚未設定。'
+						: error instanceof SemanticEntryError && error.code === 'unauthorized'
+							? '請重新登入。'
+							: error instanceof SemanticEntryError && error.code === 'quota_exceeded'
+								? '今天的解析次數已用完。'
+								: uncertain
+									? '連線中斷或逾時，請查詢結果或重試同一請求。'
+									: '解析服務無法完成，請稍後再試。';
+		} finally {
+			if (stillCurrent(version, owner)) {
+				uploading = false;
+			}
 		}
 	}
 </script>
@@ -424,6 +655,14 @@
 							{entry.analysis}
 						</p>
 					{/if}
+					{#if entry.images}<div class="mb-2 flex gap-2">
+							{#each entry.images as url (url)}<img
+									src={url}
+									alt="附加圖片"
+									class="h-12 w-12 rounded-lg object-cover"
+								/>{/each}
+						</div>{/if}
+					{#if entry.expenses}<CreatedSummary expenses={entry.expenses} />{/if}
 					<p
 						aria-label={entry.role === 'user' ? '你的訊息' : '助手訊息'}
 						class="whitespace-pre-wrap break-words"
@@ -452,7 +691,7 @@
 				{/if}
 				<div aria-live="polite" class="space-y-2">
 					{#if phase === 'processing'}<p role="status">
-							{analysis ? 'Gemini 分析中…' : '處理中…'}
+							{uploading ? '上傳圖片中…' : analysis ? 'Gemini 分析中…' : '處理中…'}
 						</p>
 					{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
 					{:else if phase === 'created'}<p class="font-semibold">已新增</p>
@@ -461,7 +700,11 @@
 						</p>
 					{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
 					{#each issues as issue, index (index)}<p>
-							{fields[issue.field] ?? '內容'}：{codes[issue.code] ?? '資訊無效'}
+							{issue.field === 'images' && issue.code === 'not_a_receipt'
+								? '圖片看起來不是收據，請重新選擇圖片。'
+								: issue.code === 'too_many_drafts'
+									? '一次最多 20 筆，請分批送出。'
+									: `${fields[issue.field] ?? '內容'}：${codes[issue.code] ?? '資訊無效'}`}
 						</p>{/each}
 					{#if savedExpense && phase === 'created'}
 						<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
@@ -497,12 +740,60 @@
 
 	<div class="shrink-0 space-y-2">
 		<div class="text-muted-foreground flex items-start justify-between gap-3 px-1 text-xs">
-			<p id="semantic-entry-hint">{composerHint}</p>
+			<p id="semantic-entry-hint">{imageError || composerHint}</p>
 			{#if canCompose}<span class="shrink-0 tabular-nums">{composerCount}/500</span>{/if}
 		</div>
+		{#if selectedImages.length}<div class="flex gap-2 px-1">
+				{#each selectedImages as image, i (image.url)}<div class="relative">
+						<img
+							src={image.url}
+							alt={`第 ${i + 1} 張附圖`}
+							class="h-12 w-12 rounded-lg object-cover"
+						/><Button
+							size="icon"
+							variant="outline"
+							class="absolute -right-1 -top-1 h-5 w-5 rounded-full"
+							aria-label={`移除第 ${i + 1} 張圖片`}
+							disabled={processing || converting}
+							onclick={() => removeImage(i)}><X class="h-3 w-3" /></Button
+						>
+					</div>{/each}
+			</div>{/if}
+		<input
+			bind:this={fileInput}
+			type="file"
+			multiple
+			accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+			class="hidden"
+			onchange={selectImages}
+		/>
+		<input
+			bind:this={cameraInput}
+			type="file"
+			accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
+			capture="environment"
+			class="hidden"
+			onchange={selectImages}
+		/>
 		<div
 			class="bg-background flex items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
 		>
+			<Button
+				size="icon"
+				variant="ghost"
+				class="shrink-0"
+				aria-label="附加圖片"
+				disabled={attachmentsDisabled}
+				onclick={() => fileInput.click()}><Paperclip class="h-4 w-4" /></Button
+			>
+			<Button
+				size="icon"
+				variant="ghost"
+				class="shrink-0"
+				aria-label="拍照"
+				disabled={attachmentsDisabled}
+				onclick={() => cameraInput.click()}><Camera class="h-4 w-4" /></Button
+			>
 			<textarea
 				id="semantic-entry-text"
 				aria-label={composingReply ? '補充資訊' : '記帳內容'}
@@ -517,7 +808,7 @@
 						}
 					}
 				}
-				disabled={!canCompose || (phase === 'input' && attempt !== null)}
+				disabled={converting || !canCompose || (phase === 'input' && attempt !== null)}
 				rows="2"
 				class="min-w-0 flex-1 resize-none bg-transparent px-2 py-1 text-sm focus-visible:outline-none"
 				placeholder={composingReply ? '輸入你的回答…' : '例如：今天午餐100元'}
@@ -527,7 +818,11 @@
 				class="shrink-0 rounded-xl"
 				aria-label={composingReply ? '送出補充' : '送出記帳'}
 				title={composingReply ? '送出補充' : '送出記帳'}
-				disabled={!$user || !canCompose || composerCount === 0 || composerCount > 500}
+				disabled={!$user ||
+					converting ||
+					!canCompose ||
+					(composerCount === 0 && selectedImages.length === 0) ||
+					composerCount > 500}
 				onclick={() => execute()}
 			>
 				<Send class="h-4 w-4" aria-hidden="true" />
