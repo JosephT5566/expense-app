@@ -57,7 +57,6 @@ jobs:
             PUBLIC_SUPABASE_URL: https://synthetic.supabase.co
             PUBLIC_SUPABASE_PUBLISHABLE_KEY: synthetic-publishable-key
             PUBLIC_EMAIL_NAME_MAPPING: '{}'
-            PUBLIC_GOOGLE_AI_GCF: https://receipt.example.test
             PUBLIC_SEMANTIC_ENTRY_URL: https://semantic.example.test
             BASE_PATH: ''
         steps:
@@ -76,8 +75,8 @@ jobs:
             # Whole-repository Prettier has a pre-existing baseline failure; scope is explicit.
             - name: Semantic change formatting and lint
               run: |
-                  npx prettier --check packages/semantic-entry-contract src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
-                  npx eslint packages/semantic-entry-contract/src src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte e2e/semantic-entry.test.ts
+                  npx prettier --check packages/semantic-entry-contract src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte src/lib/components/AIEntryDialog.svelte src/lib/components/ExpenseDrawerContent.svelte e2e/semantic-entry.test.ts
+                  npx eslint packages/semantic-entry-contract/src src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte src/lib/components/AIEntryDialog.svelte src/lib/components/ExpenseDrawerContent.svelte e2e/semantic-entry.test.ts
             - run: npx playwright install --with-deps chromium
             - run: npm run test:e2e -- e2e/semantic-entry.test.ts e2e/daily-carousel.test.ts
             - name: Verify semantic entry under Pages base path

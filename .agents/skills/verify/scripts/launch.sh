@@ -22,8 +22,8 @@ fi
 # Same as `npm run preview`, but without the npm wrapper so $! is the listener.
 nohup node node_modules/vite/bin/vite.js preview --port "$PORT" --strictPort >"$OUT/preview.log" 2>&1 &
 PID=$!
-printf 'PID=%s\nRUN_ID=%s\nOUT=%s\nURL=http://localhost:%s\nSUPABASE=%s\nSEMANTIC=%s\nRECEIPT=%s\n' \
-	"$PID" "$RUN_ID" "$OUT" "$PORT" "$PUBLIC_SUPABASE_URL" "$PUBLIC_SEMANTIC_ENTRY_URL" "$PUBLIC_GOOGLE_AI_GCF" >"$STATE"
+printf 'PID=%s\nRUN_ID=%s\nOUT=%s\nURL=http://localhost:%s\nSUPABASE=%s\nSEMANTIC=%s\nRECEIPT=https://receipt.verify.invalid\n' \
+	"$PID" "$RUN_ID" "$OUT" "$PORT" "$PUBLIC_SUPABASE_URL" "$PUBLIC_SEMANTIC_ENTRY_URL" >"$STATE"
 for _ in $(seq 1 60); do
 	if grep -q 'Loading JoPie' <<<"$(curl -fsS "http://localhost:$PORT/" 2>/dev/null)"; then
 		echo "READY pid=$PID url=http://localhost:$PORT run=$RUN_ID evidence=$OUT"

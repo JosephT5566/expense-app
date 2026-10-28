@@ -1,34 +1,23 @@
-# Semantic chat entry
+# Semantic entry v3: text, images and drafts
 
-The `AI 記帳` button on a day card opens a dialog where the user types a sentence such as `午餐100`. The semantic service parses it and creates the expense, asks a follow-up question, or rejects it with a reason.
+The `AI 記帳` button on a day card opens one conversation. Users can type a single expense or attach receipt images, review drafts, continue with text, and commit all visible complete drafts. There is no text/image mode switch.
 
-## Sub-features
+## User paths
 
-- `semantic-create` creates an expense in one submit and shows `已新增`.
-- `semantic-reject` shows `未新增` and the field reason without writing.
-- `semantic-followup` asks a question (`role=status`) and accepts a reply in `補充資訊`.
-- `semantic-image` switches to `圖片分析` for receipt images (receipt service).
+- **Text.** Fill `記帳內容`, submit, and verify `已新增`, a clarification question, or `未新增`. Pure text retains single-expense clarification; replies use `補充資訊`.
+- **Attach.** Use `附加圖片` or the camera action. Preview thumbnails can be removed before submit. JPEG/PNG/WebP are accepted; HEIC/HEIF are converted locally. Limits are four images, 10 MiB each, 20 MiB total after conversion. Image-only submission is supported.
+- **Analyze.** The client requests upload URLs, PUTs bytes to storage, then sends v3 `analyze` with paths and optional text. One complete expense is written directly. Multiple or incomplete image results appear as `草稿` / `尚未記帳` with completeness and field issues.
+- **Continue.** With drafts present, submit correction text. The v3 `revise` request sends current drafts; results update the inline draft block without expense writes.
+- **Edit.** `進入編輯` opens draft cards. Users can edit fields using the shared editor, select and merge entries, ungroup, hide and restore entries. Changes remain local; hidden entries are excluded from commit. Follow accessible names in `DraftEditDialog.svelte` and the existing E2E specs.
+- **Commit.** `全部記帳（N 筆）` is enabled only when all visible drafts are complete. Verify a v3 `commit` request, then a created summary and store/cache updates. Rejection preserves drafts and shows field errors; an uncertain result locks editing and preserves the exact commit UUID/payload for retry.
+- **Recover.** Reload retains only the account-scoped unresolved requestId. Status lookup returns completed expenses or an uncertain not_found; it cannot restore discarded drafts or request text.
 
-## How to get to it (user POV)
+## Mocked verification
 
-- On a day card choose button `AI 記帳`.
-- In the dialog, group `AI 記帳模式` has `文字記帳` and `圖片分析`.
+Use `npm run test:e2e -- e2e/semantic-entry.test.ts e2e/daily-carousel.test.ts`, then `BASE_PATH=/expense-app E2E_BASE_PATH=/expense-app npm run test:e2e -- e2e/semantic-entry.test.ts` with synthetic public configuration. Do not supply a legacy receipt endpoint. `e2e/semantic-entry.test.ts` is the executable reference for mock payloads and assertions; no drive.mjs journey is registered yet.
 
-## Driving it with Playwright (drive.mjs)
+For a browser journey, install `page.route` mocks before navigation for all Supabase requests, the semantic origin (including `/semantic-entry/uploads` and status), and signed storage URLs; abort any other external traffic. Use only synthetic image buffers and accounts. Semantic POST/GET carry the synthetic Supabase bearer and negotiate `semantic-version=3`; storage PUT carries only returned requiredHeaders and no Authorization. Responses must match the parsers in `packages/semantic-entry-contract/src/index.ts`.
 
-Preconditions:
+Capture ARIA/screenshots after attachments, returned drafts, local editing, revise and commit, plus request evidence. Assert no direct expense REST write, no write on revise, new UUID for a new commit, and unchanged UUID/payload for uncertain retry. After first creation, close/reload and verify the cached expense; replay/status recovery refreshes current rows rather than restoring stale snapshots.
 
-- Baseline plus a `semantic` mock for `https://semantic.verify.invalid/semantic-entry/**` that checks `Authorization: Bearer <synthetic token>` and returns the contract shapes used in `e2e/semantic-entry.test.ts` (`status: 'created'`, `'rejected'` with `issues`).
-- No journey file yet.
-
-- **Open.** In the selected card click button `AI 記帳` (exact). Textbox `記帳內容` is visible.
-- **Submit.** Fill `記帳內容` with `午餐100` and click button `送出記帳`. Text `已新增` appears; exactly one POST reached the semantic mock and no expense REST write happened.
-- **Second view.** Close the dialog with button `Close`. The `2026-10-01` card shows the created note. Reload and it is still there (IndexedDB cache).
-- **Reject.** With a 422 `rejected` mock, `未新增` and `金額：缺少必要資訊` appear.
-- **Proof.** ARIA and screenshot after submit and after reload, plus `requests.json` showing the semantic POST.
-
-## Gotchas
-
-- `npm run test:e2e -- e2e/semantic-entry.test.ts` with the synthetic env from `.github/workflows/semantic-entry-check.yml` already covers these paths more deeply; use the journey for user-path evidence.
-- The mock proves the browser contract only, not model output, Cloud Run, or the atomic write in the service.
-- `圖片分析` posts to the receipt service; keep it mocked and never upload real receipts.
+Mocks establish browser behavior and wire compatibility only. They do not verify Gemini extraction quality, deployed RLS, GCS IAM/CORS/lifecycle, Cloud Run buffering or production RPC transactions. Never upload real receipts or call deployed services in this workflow.

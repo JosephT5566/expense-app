@@ -9,7 +9,6 @@ EVIDENCE_ROOT="$ROOT/test-results/verify"
 export PUBLIC_SUPABASE_URL=https://verify-stub.invalid
 export PUBLIC_SUPABASE_PUBLISHABLE_KEY=verify-publishable-key
 export PUBLIC_EMAIL_NAME_MAPPING='{}'
-export PUBLIC_GOOGLE_AI_GCF=https://receipt.verify.invalid
 export PUBLIC_SEMANTIC_ENTRY_URL=https://semantic.verify.invalid
 export BASE_PATH=''
 

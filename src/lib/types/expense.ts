@@ -58,14 +58,6 @@ export interface ScheduledExpenseRow {
 	updated_at: string;
 }
 
-export interface PreviewExpense extends Partial<ExpenseRow> {
-	isGrouped?: boolean;
-	groupId?: number;
-	isHidden?: boolean;
-}
-
-export type PreviewGroupExpense = Record<number, PreviewExpense>;
-
 export class NewExpense implements Partial<ExpenseRow> {
 	currency: Currency;
 	amount: number;
@@ -104,50 +96,3 @@ export interface PageResult<T> {
 	items: T[];
 	nextCursor: string | null;
 }
-
-export type UnrecognizedExtraction = {
-	state: 'unrecognized';
-};
-
-export type RecognizedExtraction<T> = {
-	state: 'recognized';
-	value: T;
-};
-
-/**
- * A property containing this type may also be omitted. Omission and `null`
- * intentionally retain their distinct meanings from the extraction API.
- */
-export type ExtractionValue<T> = null | UnrecognizedExtraction | RecognizedExtraction<T>;
-
-export interface ReceiptMerchant {
-	name: string;
-}
-
-export interface ReceiptTotals {
-	grand_total: string;
-}
-
-export interface ReceiptLineItem {
-	description?: ExtractionValue<string>;
-	quantity?: ExtractionValue<string>;
-	unit_price?: ExtractionValue<string>;
-	line_total?: ExtractionValue<string>;
-}
-
-export interface Receipt {
-	merchant?: ExtractionValue<ReceiptMerchant>;
-	purchase_date?: ExtractionValue<string>;
-	totals?: ExtractionValue<ReceiptTotals>;
-	currency?: ExtractionValue<Currency>;
-	line_items?: ExtractionValue<ReceiptLineItem[]>;
-}
-
-export type ReceiptAnalysisResult =
-	| {
-		document_type: 'receipt';
-		receipt: Receipt;
-	}
-	| {
-		document_type: 'not_a_receipt';
-	};

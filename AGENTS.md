@@ -4,12 +4,12 @@
 
 JoPie is a personal and household expense tracker with a primarily Traditional Chinese interface. It uses Svelte 5, SvelteKit, TypeScript, and a static GitHub Pages build. The browser accesses Supabase directly; Supabase is the persistent source of truth, while stores and IndexedDB are client caches.
 
-- Preserve personal/household expense handling, monthly summaries, settlement, scheduled expenses, and receipt review unless the task explicitly changes them.
+- Preserve personal/household expense handling, monthly summaries, settlement, scheduled expenses, and AI entry draft review unless the task explicitly changes them.
 - Preserve Taiwan date/month boundaries and `Asia/Taipei` recurrence behavior. Use the existing helpers in `src/lib/utils/dates.ts` and schedule logic in `src/lib/data/scheduled-expenses.fetcher.ts`.
 - Preserve the GitHub Pages base path in navigation, assets, and OAuth redirects. Consult `svelte.config.js` and `src/lib/supabase/auth.ts` before changing routing or deployment.
 - Expense shares are monetary amounts. Settlement uses expense rows directly; the inherited database view notes are not the current settlement implementation.
-- Receipt analysis produces editable entries that are saved only after user confirmation. Preserve recognized, unrecognized, explicit-null, and missing field distinctions in the response adapter and review UI.
-- Identity and database authorization depend on Supabase and external RLS policies. Frontend filters and allowlists are not security enforcement. The semantic SQL migration is a draft verified only on disposable fixtures; no receipt-service implementation is checked in; do not claim their constraints or behavior are verified from client code or mocks.
+- AI entry (text or receipt images) writes a single complete expense directly; multiple or incomplete results become editable drafts that are saved only after user confirmation. Preserve recognized, unrecognized, explicit-null, and missing field distinctions in the contract parser and draft review UI.
+- Identity and database authorization depend on Supabase and external RLS policies. Frontend filters and allowlists are not security enforcement. The semantic SQL migration is a draft verified only on disposable fixtures; do not claim their constraints or behavior are verified from client code or mocks.
 - Scheduled approval currently makes separate expense and schedule requests. Do not describe it as atomic or idempotent without implementation and external evidence supporting that claim.
 
 ## Context routing
@@ -22,7 +22,6 @@ Read the relevant context before changing code:
 | Routes, UI, stores, caching, auth             | [Architecture](docs/architecture.md), then the affected route/component, store, fetcher, and cache                                                                                          |
 | Expense rows, shares, settlement, scheduling  | [Database and service contracts](docs/database.md), `src/lib/types/expense.ts`, relevant fetchers and routes                                                                                |
 | Semantic entry and backend                    | [Deployment](docs/semantic-entry-deployment.md), [service contracts](docs/database.md#semantic-entry-service), `services/semantic-entry/`, `packages/semantic-entry-contract/`, `supabase/` |
-| Receipt import and API adaptation             | [Receipt service contract](docs/database.md#receipt-analysis-service), `src/lib/data/ai-receipt.fetcher.ts`, `src/lib/types/ai-receipt.ts`, `src/lib/components/ai-receipt/`                |
 | Agent instructions or documentation ownership | This file and [expense-app-guide](.agents/skills/expense-app-guide/SKILL.md)                                                                                                                |
 
 Implementation and fresh check results take precedence over stale documentation. These documents are the current context sources; read detailed issue artifacts and historical logs only when relevant. Ordinary coding does not require unrelated coaching or training workflows.

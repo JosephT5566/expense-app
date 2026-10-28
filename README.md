@@ -12,14 +12,13 @@ Use Node.js 22.12 or later within Node 22 to match CI, then install dependencies
 npm ci
 ```
 
-Create a local `.env` with these values from your existing Supabase project and receipt service. This repository does not provision either service.
+Create a local `.env` with these values from your existing Supabase project and semantic-entry service. Service deployment is an operator action; see [deployment](docs/semantic-entry-deployment.md).
 
 ```dotenv
 PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 PUBLIC_EMAIL_NAME_MAPPING={"member@example.com":{"name":"Member","color":"#808080"}}
-PUBLIC_GOOGLE_AI_GCF=https://your-receipt-service.example.com
-# Optional: enable the separate semantic-entry service
+# Enable AI entry for text and receipt images
 PUBLIC_SEMANTIC_ENTRY_URL=https://your-semantic-service.run.app
 BASE_PATH=
 ```

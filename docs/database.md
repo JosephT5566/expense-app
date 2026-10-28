@@ -1,6 +1,6 @@
 # Database and service contracts
 
-This document describes client/service contracts. A captured public-schema baseline, semantic migrations, and synthetic fixtures are checked in. Live schema metadata was inspected on 2026-10-13; real-user authorization and hosted service behavior remain unverified, and the receipt-analysis backend remains external. Types and queries establish what the app expects, but do not verify deployed schema, constraints, RLS policies, or service internals.
+This document describes client/service contracts. A captured public-schema baseline, semantic migrations, and synthetic fixtures are checked in. Live schema metadata was inspected on 2026-10-13; real-user authorization and hosted service behavior remain unverified. Receipt analysis is implemented in `services/semantic-entry`. Types and queries establish what the app expects, but do not verify deployed schema, constraints, RLS policies, or service internals.
 
 ## Expenses
 
@@ -45,6 +45,16 @@ Approval uses separate Supabase requests, not a transaction or RPC. If schedule 
 
 ## Semantic-entry service
 
+Current browser clients negotiate v3 with `Accept: text/event-stream; semantic-version=3` (POST) and `application/json; semantic-version=3` (GET). The complete field limits, response shapes, draft states, upload errors, and hash rules are in [Contract v3](../packages/semantic-entry-contract/CONTRACT_V3.md).
+
+- `analyze` accepts text or 1–4 uploaded image paths with optional text. Pure text delegates to the existing clarification graph described below; it does not extract multiple text expenses. Image analysis creates one complete expense directly, or returns 1–20 drafts with reason `multiple` or `incomplete`.
+- `revise` accepts text plus the current drafts and returns revised drafts without writing. `commit` accepts drafts without text/history/images, validates their current values against trusted categories/members and the server Taiwan day, then calls `create_semantic_expenses(p_request_id,p_input_hash,p_expenses)`. This batch RPC writes all rows and snapshots in one transaction; deployed behavior still requires operator verification. A rejected commit returns `draftIssues` without a partial write.
+- `POST /semantic-entry/uploads` authenticates the same Supabase bearer and checks membership before issuing 15-minute signed PUT URLs. It accepts JPEG/PNG/WebP, 1–4 images, up to 10 MiB each and 20 MiB total. The browser converts HEIC/HEIF before upload, sends only required headers to storage, and sends only returned paths in `analyze`. The backend checks caller-owned paths, object metadata, generation and file signatures. Bucket CORS/lifecycle are operator configuration.
+- v3 request bodies are limited to 65,536 bytes. Cloud Run is configured for 90 seconds/1 GiB; image analysis currently has an 85-second service deadline and 92-second browser transport timeout. Text/revise/commit retain a 30-second service deadline and 32-second browser timeout.
+- v3 `created` and status `completed` return `expenses` arrays, including single-expense results. Drafts are not ledger snapshots. Each new revise/commit receives a new browser UUID; an uncertain commit preserves its exact payload/UUID for retry. Status `not_found` is still uncertain. Image/draft requests use `input_hash_v4`, including server-read image generations and validated client draft fields; computed status/issues/updated and requestId are excluded.
+
+### Legacy text flow retained by v3
+
 Sources: `packages/semantic-entry-contract/src/index.ts`, `services/semantic-entry/semantic_entry/`, and `supabase/migrations/202610120001_semantic_entry.sql`. The public baseline and semantic chain were replayed locally and compared with live metadata on 2026-10-13; the citext trigger fix was applied. See [database evidence](evidence/semantic-entry/2026-10-13-database-baseline.md). This does not verify real production expense transactions or GoTrue/RLS behavior.
 
 - `POST /semantic-entry` accepts `{requestId,text,history?,referenceDate?}` with a UUID and 1–500 trimmed Unicode code points of initial text, at most 8 KiB total. History has at most three exact `{question,answer}` pairs, limited to 300/500 trimmed Unicode code points each; text is NFC-normalized and empty history is omitted. The backend verifies the session JWT, checks the allowlist, and uses the same caller JWT for Supabase queries/RPC. Client-supplied identity/hash fields are rejected. Optional `referenceDate` is a canonical `YYYY-MM-DD` date, with year at least 0100, and cannot be later than the server Taiwan day. The browser captures it once at first submission using fixed UTC+08:00, independent of browser timezone, and preserves it through clarification and uncertain retries. It is user-supplied expense timing, not authentication context; legacy requests without it use the server day.
@@ -55,7 +65,7 @@ Sources: `packages/semantic-entry-contract/src/index.ts`, `services/semantic-ent
 - Caller roles cannot directly mutate either table. Owners may read their own snapshots; anonymous RPC access is revoked. Privileged fixture clients exist only in localhost-guarded tests, never runtime or public frontend configuration.
 - `GET /semantic-entry/:requestId` returns `completed` or `not_found` after authentication/allowlist checks, without model/quota calls. `not_found` leaves the result uncertain. A timeout or closed browser cannot establish that an accepted SQL operation was cancelled.
 
-POST clients requesting `Accept: text/event-stream; semantic-version=2` can first receive `analysis_delta` (`{requestId,seq,text}`): sequential plain-text fragments of a user-facing Gemini summary, limited to 200 Unicode code points in total. This summary never determines completeness, questions, or writes. Clients without version 2 receive no analysis events. Both versions receive SSE `persisting` (`{status:"persisting",requestId}`), then `result` (the usual created/needs_input/rejected response), or `error` (`{error:{code,uncertain}}`). A question/rejection/replay can return directly without `persisting`. Non-streaming POST remains JSON; GET status remains JSON. Errors before stream acceptance use HTTP JSON errors. Streaming errors after acceptance use events under HTTP 200. The summary is incrementally extracted from Gemini structured JSON; provider thought parts and raw JSON are never forwarded. Complete extraction still passes the same normalizer and fixed-question rules before writing. The response is bounded to 30 seconds, and the frontend permits 32 seconds for transport.
+POST clients requesting `Accept: text/event-stream; semantic-version=2` can first receive `analysis_delta` (`{requestId,seq,text}`): sequential plain-text fragments of a user-facing Gemini summary, limited to 200 Unicode code points in total. This summary never determines completeness, questions, or writes. Clients without version 2 receive no analysis events. Both versions receive SSE `persisting` (`{status:"persisting",requestId}`), then `result` (the usual created/needs_input/rejected response), or `error` (`{error:{code,uncertain}}`). A question/rejection/replay can return directly without `persisting`. Non-streaming POST remains JSON; GET status remains JSON. Errors before stream acceptance use HTTP JSON errors. Streaming errors after acceptance use events under HTTP 200. The summary is incrementally extracted from Gemini structured JSON; provider thought parts and raw JSON are never forwarded. Complete extraction still passes the same normalizer and fixed-question rules before writing. The text flow is bounded to 30 seconds, and the frontend permits 32 seconds for transport.
 
 An in-flight service task is retained once the RPC starts, so closing the response stream does not cancel that task within its deadline. Before persistence, disconnection can cancel extraction. Process termination, deadline expiry, or database connection loss still require status recovery; this is not durable background execution or a guarantee of write completion. The frontend blocks ordinary modal closing from submission until a definite response or uncertain error. Page exit cannot guarantee cancellation.
 
@@ -67,18 +77,7 @@ The captured schema uses `public.citext[]` for allowed emails and `public.citext
 
 ## Receipt-analysis service
 
-Sources: `src/lib/data/ai-receipt.fetcher.ts`, `src/lib/types/ai-receipt.ts`, and `src/lib/components/ai-receipt/UploadStep.svelte`.
-
-Both actions POST JSON to `PUBLIC_GOOGLE_AI_GCF` with `Authorization: Bearer <Supabase session access token>`:
-
-| Action            | Request fields                                    | Expected response                                                |
-| ----------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
-| `get_upload_url`  | `files` containing `file_name` and `content_type` | `uploads` with `file_name`, signed `upload_url`, and `file_path` |
-| `analyze_receipt` | `file_paths`                                      | `ReceiptAnalysisResponse` in `src/lib/types/ai-receipt.ts`       |
-
-The UI uploads image bytes directly to signed URLs before analysis. Frontend limits are four images, 10 MiB per image, and 20 MiB total. JPEG, PNG, and WebP are accepted, with HEIC/HEIF conversion on the client.
-
-The adapter handles normalized data and validation outcomes. Extraction fields distinguish recognized values, unrecognized values, explicit null, and omitted fields; preserve these distinctions when changing the adapter or preview UI. Saving reviewed expenses is a separate Supabase bulk upsert after user confirmation.
+舊收據服務已移除，由 semantic-entry v3 取代；見 [Semantic-entry service](#semantic-entry-service)。
 
 ## Inherited Supabase notes
 

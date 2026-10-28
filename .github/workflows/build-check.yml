@@ -26,6 +26,5 @@ jobs:
                   PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.PUBLIC_SUPABASE_PUBLISHABLE_KEY }}
                   PUBLIC_EMAIL_NAME_MAPPING: ${{ vars.PUBLIC_EMAIL_NAME_MAPPING }}
                   PUBLIC_SEMANTIC_ENTRY_URL: ${{ vars.PUBLIC_SEMANTIC_ENTRY_URL }}
-                  PUBLIC_GOOGLE_AI_GCF: ${{ vars.PUBLIC_GOOGLE_AI_GCF }}
                   BASE_PATH: /${{ github.event.repository.name }}
               run: npm run build

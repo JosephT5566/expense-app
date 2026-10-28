@@ -1,17 +1,13 @@
 <script lang="ts">
-	import type { ExpenseRow } from '$lib/types/expense';
 	import * as Dialog from '$lib/components/shadcn/dialog';
 	import { Button } from '$lib/components/shadcn/button';
 	import X from 'lucide-svelte/icons/x';
 	import SemanticEntryContent from './semantic-entry/SemanticEntryContent.svelte';
 
-	// eslint-disable-next-line svelte/no-unused-props -- onImport stays declared until task D migrates the caller.
 	let {
 		open = $bindable(false)
 	}: {
 		open: boolean;
-		// Kept for the caller until task D.
-		onImport?: (expenses: ExpenseRow[]) => void;
 	} = $props();
 
 	let semanticContent = $state<SemanticEntryContent>();
