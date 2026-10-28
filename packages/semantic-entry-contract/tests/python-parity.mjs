@@ -92,6 +92,8 @@ for (const body of [
 	assert.throws(() => parseStreamEvent('analysis_delta', body));
 }
 
+const clientDraftHashes = new Map();
+
 // V3 cases have independent expected acceptance/rejection in the Python fixture.
 for (const item of cases.v3) {
 	const parse = () =>
@@ -110,15 +112,14 @@ for (const item of cases.v3) {
 		assert.deepEqual(parsed, item.parsed, item.name);
 		if (item.kind === 'request') {
 			assert.throws(() => parseRequest(item.raw));
+			for (const draft of parsed.drafts ?? []) {
+				for (const key of ['status', 'issues', 'updated']) {
+					assert.equal(Object.hasOwn(draft, key), false, item.name);
+				}
+			}
 			let payload;
 			if (parsed.images || parsed.drafts) {
-				const drafts = (parsed.drafts ?? []).map((draft) =>
-					Object.fromEntries(
-						Object.entries(draft).filter(
-							([key]) => !['status', 'issues', 'updated'].includes(key)
-						)
-					)
-				);
+				const drafts = parsed.drafts ?? [];
 				payload = `v4\n${JSON.stringify({ action: parsed.action, text: parsed.text ?? '', history: parsed.history ?? [], referenceDate: parsed.referenceDate ?? null, images: item.images, drafts })}`;
 			} else {
 				payload = parsed.referenceDate
@@ -127,7 +128,15 @@ for (const item of cases.v3) {
 						? `v2\n${JSON.stringify({ text: parsed.text, history: parsed.history })}`
 						: `v1\n${parsed.text}`;
 			}
-			assert.equal(createHash('sha256').update(payload).digest('hex'), item.hash, item.name);
+			const hash = createHash('sha256').update(payload).digest('hex');
+			assert.equal(hash, item.hash, item.name);
+			if (item.name.startsWith('client-computed-')) {
+				const previous = clientDraftHashes.get(parsed.action);
+				if (previous) {
+					assert.equal(hash, previous, item.name);
+				}
+				clientDraftHashes.set(parsed.action, hash);
+			}
 		}
 	}
 }

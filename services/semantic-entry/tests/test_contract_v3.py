@@ -54,6 +54,21 @@ def draft():
     return result
 
 
+def client_draft_variants():
+    editable = {k: v for k, v in draft().items() if k not in ("status", "issues")}
+    for patch in (
+        {},
+        {"status": "incomplete"},
+        {"issues": [{"field": "note", "code": "missing"}]},
+        {
+            "status": "incomplete",
+            "issues": [{"field": "note", "code": "missing"}],
+            "updated": True,
+        },
+    ):
+        yield {**deepcopy(editable), **patch}
+
+
 def vectors():
     """Every invalid vector has an explicit expected rejection, not just parity."""
     result = []
@@ -77,6 +92,25 @@ def vectors():
     }
     revise = {**REQUEST, "action": "revise", "drafts": [draft()]}
     commit = {"requestId": REQUEST_ID, "action": "commit", "drafts": [draft()]}
+    for request in (revise, commit):
+        for index, d in enumerate(client_draft_variants()):
+            add(
+                f"client-computed-{request['action']}-{index}",
+                "request",
+                {**request, "drafts": [d]},
+            )
+        for key, value in (
+            ("status", "invented"),
+            ("issues", [{"field": "note", "code": "invented"}]),
+            ("updated", 1),
+            ("issues", "x"),
+        ):
+            add(
+                f"bad-client-computed-{request['action']}-{key}",
+                "request",
+                {**request, "drafts": [{**draft(), key: value}]},
+                True,
+            )
     for name, raw in [
         ("text", analyze),
         ("image", image),
@@ -283,6 +317,11 @@ def vectors():
         reason="incomplete",
         metadata=METADATA,
     )
+    for key in ("status", "issues"):
+        missing = {k: v for k, v in draft().items() if k != key}
+        body = {**drafts, "drafts": [missing]}
+        add(f"response-draft-missing-{key}", "response", body, True)
+        add(f"result-draft-missing-{key}", "stream", body, True, "result")
     rejected = dict(
         status="rejected",
         requestId=REQUEST_ID,
@@ -407,7 +446,28 @@ def test_v3_contract_vectors(case):
         with pytest.raises(ValueError):
             parse_vector(case)
     else:
-        assert parse_vector(case) is not None
+        parsed = parse_vector(case)
+        assert parsed is not None
+        if case["kind"] == "request":
+            for d in parsed.get("drafts", []):
+                assert not {"status", "issues", "updated"}.intersection(d)
+
+
+@pytest.mark.parametrize("action", ["revise", "commit"])
+def test_v3_client_draft_variants_normalize_and_hash_identically(action):
+    requests = [
+        {
+            "requestId": REQUEST_ID,
+            "action": action,
+            "drafts": [d],
+            **({"text": "補充"} if action == "revise" else {}),
+        }
+        for d in client_draft_variants()
+    ]
+    normalized = parse_request_v3(requests[0])
+    for request in requests:
+        assert parse_request_v3(request) == normalized
+        assert input_hash_v4(request) == input_hash_v4(requests[0])
 
 
 def test_v3_v2_isolation_and_legacy_hashes():

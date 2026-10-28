@@ -137,17 +137,13 @@ def input_hash_v4(request: JSON, images: list[JSON] | None = None) -> str:
             resolved.append({"path": path, "generation": string(image["generation"])})
     elif images:
         raise ValueError("Unexpected image metadata")
-    drafts = [
-        {k: v for k, v in draft.items() if k not in ("status", "issues", "updated")}
-        for draft in parsed.get("drafts", [])
-    ]
     payload = {
         "action": parsed["action"],
         "text": parsed.get("text", ""),
         "history": parsed.get("history", []),
         "referenceDate": parsed.get("referenceDate"),
         "images": resolved,
-        "drafts": drafts,
+        "drafts": parsed.get("drafts", []),
     }
     content = "v4\n" + input_hash_v4_json(payload)
     return hashlib.sha256(content.encode()).hexdigest()

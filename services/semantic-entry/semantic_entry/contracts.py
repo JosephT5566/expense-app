@@ -378,6 +378,14 @@ def parse_draft_v3(raw: Any) -> JSON:
     return result
 
 
+def parse_client_draft_v3(raw: Any) -> JSON:
+    """Validate client echoes like service drafts, then discard server-computed fields."""
+    result = parse_draft_v3({"status": "complete", "issues": [], **object_(raw)})
+    for key in ("status", "issues", "updated"):
+        result.pop(key, None)
+    return result
+
+
 def parse_request_v3(raw: Any) -> JSON:
     r = object_(raw)
     action = r.get("action")
@@ -436,7 +444,7 @@ def parse_request_v3(raw: Any) -> JSON:
 
         result["images"] = list_v3(r["images"], MAX_IMAGES, path)
     if "drafts" in r:
-        result["drafts"] = list_v3(r["drafts"], MAX_DRAFTS, parse_draft_v3)
+        result["drafts"] = list_v3(r["drafts"], MAX_DRAFTS, parse_client_draft_v3)
     return result
 
 

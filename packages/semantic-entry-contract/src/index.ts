@@ -379,6 +379,7 @@ export interface Draft {
 	issues: DraftIssue[];
 	updated?: boolean;
 }
+export type ClientDraft = Omit<Draft, 'status' | 'issues' | 'updated'>;
 const draftFields = [
 	'note',
 	'amount',
@@ -430,10 +431,10 @@ export type SemanticRequestV3 = { requestId: string; referenceDate?: string } & 
 			action: 'revise';
 			text: string;
 			history?: ClarificationTurn[];
-			drafts: Draft[];
+			drafts: ClientDraft[];
 			images?: never;
 	  }
-	| { action: 'commit'; drafts: Draft[]; text?: never; history?: never; images?: never }
+	| { action: 'commit'; drafts: ClientDraft[]; text?: never; history?: never; images?: never }
 );
 export interface IssueV3 {
 	field: string;
@@ -618,6 +619,15 @@ export function parseDraftV3(raw: unknown): Draft {
 	}
 	return result as unknown as Draft;
 }
+// Client echoes are validated like service drafts, then server-computed fields are discarded.
+export function parseClientDraftV3(raw: unknown): ClientDraft {
+	const parsed = parseDraftV3({ status: 'complete', issues: [], ...object(raw) });
+	const result: Record<string, unknown> = { ...parsed };
+	delete result.status;
+	delete result.issues;
+	delete result.updated;
+	return result as unknown as ClientDraft;
+}
 export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 	const r = object(raw);
 	const image = r.action === 'analyze' && Object.hasOwn(r, 'images');
@@ -668,7 +678,7 @@ export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 		});
 	}
 	if (Object.hasOwn(r, 'drafts')) {
-		result.drafts = listV3(r.drafts, MAX_DRAFTS, parseDraftV3);
+		result.drafts = listV3(r.drafts, MAX_DRAFTS, parseClientDraftV3);
 	}
 	return result as SemanticRequestV3;
 }
