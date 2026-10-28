@@ -4,6 +4,12 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+	parseDraftV3,
+	parseRequestV3,
+	parseResponseV3,
+	parseStatusResponseV3,
+	parseStreamEventV3,
+	loadJsonV3,
 	parseRequest,
 	parseResponse,
 	parseStatusResponse,
@@ -85,3 +91,69 @@ for (const body of [
 ]) {
 	assert.throws(() => parseStreamEvent('analysis_delta', body));
 }
+
+const clientDraftHashes = new Map();
+
+// V3 cases have independent expected acceptance/rejection in the Python fixture.
+for (const item of cases.v3) {
+	const parse = () =>
+		item.kind === 'stream'
+			? parseStreamEventV3(item.event, item.raw)
+			: {
+					request: parseRequestV3,
+					draft: parseDraftV3,
+					response: parseResponseV3,
+					status: parseStatusResponseV3
+				}[item.kind](item.raw);
+	if (item.invalid) {
+		assert.throws(parse, item.name);
+	} else {
+		const parsed = parse();
+		assert.deepEqual(parsed, item.parsed, item.name);
+		if (item.kind === 'request') {
+			assert.throws(() => parseRequest(item.raw));
+			for (const draft of parsed.drafts ?? []) {
+				for (const key of ['status', 'issues', 'updated']) {
+					assert.equal(Object.hasOwn(draft, key), false, item.name);
+				}
+			}
+			let payload;
+			if (parsed.images || parsed.drafts) {
+				const drafts = parsed.drafts ?? [];
+				payload = `v4\n${JSON.stringify({ action: parsed.action, text: parsed.text ?? '', history: parsed.history ?? [], referenceDate: parsed.referenceDate ?? null, images: item.images, drafts })}`;
+			} else {
+				payload = parsed.referenceDate
+					? `v3\n${JSON.stringify({ text: parsed.text, history: parsed.history ?? [], referenceDate: parsed.referenceDate })}`
+					: parsed.history
+						? `v2\n${JSON.stringify({ text: parsed.text, history: parsed.history })}`
+						: `v1\n${parsed.text}`;
+			}
+			const hash = createHash('sha256').update(payload).digest('hex');
+			assert.equal(hash, item.hash, item.name);
+			if (item.name.startsWith('client-computed-')) {
+				const previous = clientDraftHashes.get(parsed.action);
+				if (previous) {
+					assert.equal(hash, previous, item.name);
+				}
+				clientDraftHashes.set(parsed.action, hash);
+			}
+		}
+	}
+}
+for (const text of cases.jsonInvalidV3) {
+	assert.throws(() => loadJsonV3(text));
+}
+assert.deepEqual(loadJsonV3('{"a":[{},[],{"x":1}],"b":"é"}'), { a: [{}, [], { x: 1 }], b: 'é' });
+for (const number of [NaN, Infinity, -Infinity]) {
+	const draft = structuredClone(
+		cases.v3.find((item) => item.kind === 'draft' && !item.invalid).raw
+	);
+	draft.note.confidence = number;
+	assert.throws(() => parseDraftV3(draft));
+	draft.note.confidence = null;
+	draft.amount.value = number;
+	assert.throws(() => parseDraftV3(draft));
+}
+console.log(
+	`V3 Python/browser contract parity: ${cases.v3.length} acceptance/rejection vectors and v4 hashes passed`
+);

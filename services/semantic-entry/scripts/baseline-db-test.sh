@@ -26,3 +26,4 @@ for migration in supabase/migrations/*.sql; do
     docker exec -i -e PGPASSWORD="$password" "$container" psql -h 127.0.0.1 -U postgres -d jopie_baseline_test -v ON_ERROR_STOP=1 < "$migration" >/dev/null
 done
 docker exec -i -e PGPASSWORD="$password" "$container" psql -h 127.0.0.1 -U postgres -d jopie_baseline_test -v ON_ERROR_STOP=1 < supabase/tests/semantic-entry-baseline.sql
+docker exec -i -e PGPASSWORD="$password" "$container" psql -h 127.0.0.1 -U postgres -d jopie_baseline_test -v ON_ERROR_STOP=1 < supabase/tests/semantic-entry-batch.sql

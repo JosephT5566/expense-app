@@ -37,6 +37,7 @@ jobs:
                   supabase start > "$RUNNER_TEMP/supabase-start.log" 2>&1
                   docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/fixtures/semantic-entry-test-schema.sql
                   docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610120001_semantic_entry.sql
+                  docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610280001_semantic_entry_batch.sql
                   supabase status -o env > "$RUNNER_TEMP/semantic-supabase.env"
             - name: Disposable integration tests only
               run: |
