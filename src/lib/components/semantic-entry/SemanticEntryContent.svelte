@@ -7,6 +7,7 @@
 	import X from 'lucide-svelte/icons/x';
 	import CreatedSummary from './CreatedSummary.svelte';
 	import DraftBlock from './DraftBlock.svelte';
+	import DraftEditDialog from './DraftEditDialog.svelte';
 	import {
 		fromServerDrafts,
 		effectiveDrafts,
@@ -60,6 +61,7 @@
 		session
 			? effectiveDrafts(session, draftContext).map((draft) =>
 					serverDraftIssues[draft.draftId] &&
+					!draft.mergedFrom?.length &&
 					!session?.items.find((item) => item.id === draft.draftId)?.edited
 						? {
 								...draft,
@@ -70,8 +72,26 @@
 				)
 			: []
 	);
+	let editingDrafts = $state(false);
 	function onEditDrafts() {
-		// TODO T4b-2: open the draft editor here.
+		if (session) {
+			session = {
+				...session,
+				items: session.items.map((item) =>
+					serverDraftIssues[item.id] && !item.edited
+						? {
+								...item,
+								draft: {
+									...item.draft,
+									issues: serverDraftIssues[item.id],
+									status: 'incomplete'
+								}
+							}
+						: item
+				)
+			};
+		}
+		editingDrafts = true;
 	}
 	function receiveDrafts(result: Extract<SemanticResponseV3, { status: 'drafts' }>) {
 		session = fromServerDrafts(result.drafts);
@@ -158,6 +178,7 @@
 		conversation.forEach((entry) => entry.images?.forEach((url) => URL.revokeObjectURL(url)));
 		conversation = [];
 		session = null;
+		editingDrafts = false;
 		revised = false;
 		serverDraftIssues = {};
 		draftHeading = '';
@@ -474,6 +495,7 @@
 		if (attempt?.images || attempt?.action === 'commit' || result.expenses.length > 1) {
 			conversation = conversation.filter((entry) => !entry.drafts);
 			session = null;
+			editingDrafts = false;
 			revised = false;
 			serverDraftIssues = {};
 			draftWarning = '';
@@ -1156,3 +1178,20 @@
 		</div>
 	</div>
 </div>
+
+{#if editingDrafts && session}
+	<DraftEditDialog
+		{session}
+		context={draftContext}
+		onChange={(next) => {
+			session = next;
+		}}
+		onClose={(changed) => {
+			editingDrafts = false;
+			if (changed) {
+				followLatest = true;
+				conversation.push({ role: 'assistant', text: '已套用你的編輯。' });
+			}
+		}}
+	/>
+{/if}

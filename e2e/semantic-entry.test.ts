@@ -58,7 +58,8 @@ test.use({ viewport: { width: 430, height: 900 }, timezoneId: 'Asia/Taipei' });
 async function setup(
 	page: Page,
 	handler: (route: Route, body: SemanticRequestV3 | null) => Promise<void>,
-	initialRows: (typeof row)[] = []
+	initialRows: (typeof row)[] = [],
+	allowedEmails = [user.email, 'b@example.test']
 ) {
 	await page.route('**/*', async (route) => {
 		const url = new URL(route.request().url());
@@ -91,7 +92,7 @@ async function setup(
 			await route.fulfill({ json: user });
 		} else if (path.endsWith('/rest/v1/app_settings')) {
 			await route.fulfill({
-				json: [{ id: true, allowed_emails: [user.email, 'b@example.test'] }]
+				json: [{ id: true, allowed_emails: allowedEmails }]
 			});
 		} else if (path.endsWith('/rest/v1/categories')) {
 			await route.fulfill({
@@ -1719,4 +1720,340 @@ test('draft model recalculates merged and edited issues with one priority per fi
 		field: 'categoryId',
 		code: 'invalid'
 	});
+});
+
+const editDialog = (page: Page) => page.getByRole('dialog', { name: '編輯草稿', exact: true });
+const draftCards = (page: Page) => editDialog(page).locator('[data-draft-card="item"]');
+async function openDraftEditor(page: Page) {
+	await page.getByRole('button', { name: '進入編輯', exact: true }).click();
+	await expect(editDialog(page)).toBeVisible();
+}
+async function editableDrafts(page: Page, drafts: Draft[]) {
+	const state = await setup(page, async (route, body) => {
+		await route.fulfill({
+			json:
+				body?.action === 'commit'
+					? created(body.requestId)
+					: draftResponse(body!.requestId, drafts)
+		});
+	});
+	await startDrafts(page);
+	await openDraftEditor(page);
+	return state;
+}
+
+test('s4 incomplete draft editor keeps completion enabled and edits survive Escape', async ({
+	page
+}, testInfo) => {
+	const drafts = [1, 2, 3, 4].map(makeDraft);
+	drafts[2].amount = { value: null, state: 'missing', confidence: null, source: 'text' };
+	drafts[2].issues = [{ field: 'amount', code: 'missing' }];
+	drafts[2].status = 'incomplete';
+	await editableDrafts(page, drafts);
+	await expect(
+		editDialog(page).getByRole('heading', { name: '編輯草稿', exact: true })
+	).toBeVisible();
+	await expect(editDialog(page)).toContainText('整理項目並送出：');
+	await expect(draftCards(page)).toHaveCount(4);
+	await expect(editDialog(page)).toContainText('請先補齊所有預覽項目的必要欄位。');
+	await expect(
+		editDialog(page).getByRole('button', { name: '完成，回到對話', exact: true })
+	).toBeEnabled();
+	await testInfo.attach('s4-aria', {
+		body: await editDialog(page).ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	await page.screenshot({ path: testInfo.outputPath('s4.png') });
+	await draftCards(page).nth(0).getByRole('button', { name: '排除', exact: true }).click();
+	await page.keyboard.press('Escape');
+	await expect(editDialog(page)).toHaveCount(0);
+	await expect(page.getByText('已套用你的編輯。', { exact: true })).toBeVisible();
+	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(3);
+	await openDraftEditor(page);
+	await expect(
+		draftCards(page).nth(0).getByRole('button', { name: '恢復', exact: true })
+	).toBeVisible();
+	await draftCards(page).nth(0).getByRole('button', { name: '恢復', exact: true }).click();
+	await page.keyboard.press('Escape');
+	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(4);
+});
+
+test('manual merge and exclusion commit only effective drafts with merged provenance', async ({
+	page
+}, testInfo) => {
+	const state = await editableDrafts(page, [1, 2, 3, 4].map(makeDraft));
+	// Clicking a card outside selection does not open a panel.
+	await draftCards(page).nth(0).getByText('合成帳目1', { exact: true }).click();
+	await expect(page.getByRole('heading', { name: '編輯草稿 1/4' })).toHaveCount(0);
+	await editDialog(page).getByRole('button', { name: '合併', exact: true }).click();
+	await expect(
+		editDialog(page).getByRole('button', { name: '完成，回到對話', exact: true })
+	).toBeDisabled();
+	await draftCards(page).nth(0).getByText('合成帳目1', { exact: true }).click();
+	await editDialog(page).getByRole('checkbox', { name: '選取第 2 筆', exact: true }).check();
+	await editDialog(page).getByRole('button', { name: '合併所選 (2)', exact: true }).click();
+	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toContainText('NT$ 300');
+	await draftCards(page).nth(2).getByRole('button', { name: '排除', exact: true }).click();
+	await testInfo.attach('s5a-aria', {
+		body: await editDialog(page).ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	await page.screenshot({ path: testInfo.outputPath('s5a.png') });
+	await editDialog(page)
+		.getByRole('button', { name: '完成，回到對話（2 筆）', exact: true })
+		.click();
+	await expect(page.getByText('已套用你的編輯。', { exact: true })).toBeVisible();
+	await expect(draftBlock(page)).toContainText('合成帳目1 等 2 項');
+	await commitDrafts(page, 2).click();
+	await expect.poll(() => state.posts.filter((post) => post.action === 'commit').length).toBe(1);
+	const commit = state.posts.find((post) => post.action === 'commit')!;
+	expect(commit.drafts).toHaveLength(2);
+	expect(commit.drafts![0].amount.value).toBe(300);
+	expect(commit.drafts![0].mergedFrom).toEqual([makeDraft(1).draftId, makeDraft(2).draftId]);
+	expect(commit.drafts![1].draftId).toBe(makeDraft(4).draftId);
+	expect(commit.drafts!.some((draft) => draft.draftId === makeDraft(3).draftId)).toBe(false);
+});
+
+test('automatic merge can be removed and all closure paths preserve changes', async ({ page }) => {
+	const drafts = [makeDraft(1), makeDraft(2)];
+	drafts[1].note.value = drafts[0].note.value;
+	await editableDrafts(page, drafts);
+	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toContainText('NT$ 300');
+	await editDialog(page).getByRole('button', { name: '解除合併', exact: true }).click();
+	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toHaveCount(0);
+	await expect(draftCards(page)).toHaveCount(2);
+	await editDialog(page).getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(2);
+	await openDraftEditor(page);
+	// No changes this time: closing must not append a second edit acknowledgement.
+	await page.mouse.click(5, 5);
+	await expect(editDialog(page)).toHaveCount(0);
+	await expect(page.getByText('已套用你的編輯。', { exact: true })).toHaveCount(1);
+	await expect(page.getByLabel('補充草稿')).toBeEditable();
+});
+
+test('JPY panel validates an empty TWD amount, preserves unchanged fields and commits user conversion', async ({
+	page
+}, testInfo) => {
+	const draft = makeDraft(1);
+	draft.currency.value = 'JPY';
+	draft.amount.value = 1300;
+	draft.originalAmount = { text: '1300', currency: 'JPY' };
+	draft.status = 'incomplete';
+	draft.issues = [{ field: 'currency', code: 'non_twd' }];
+	const state = await editableDrafts(page, [draft, makeDraft(2)]);
+	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '編輯草稿 1/2', exact: true });
+	await expect(panel).toBeVisible();
+	await expect(panel).toContainText('金額（TWD）');
+	await expect(panel).toContainText('原幣 JPY 1300');
+	await expect(panel.locator('#amount-input')).toHaveValue('');
+	await expect(panel.getByText('建議', { exact: true })).toBeVisible();
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await expect(panel.getByRole('alert')).toHaveText('請輸入有效金額');
+	await expect(panel).toBeVisible();
+	await panel.locator('#amount-input').fill('260');
+	await testInfo.attach('s6-aria', {
+		body: await panel.ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	await page.screenshot({ path: testInfo.outputPath('s6.png') });
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await expect(panel).toHaveCount(0);
+	await expect(draftCards(page).nth(0)).toContainText('NT$ 260');
+	await expect(draftCards(page).nth(0)).not.toContainText('非 TWD');
+	await editDialog(page).getByRole('button', { name: '完成，回到對話', exact: true }).click();
+	await commitDrafts(page, 2).click();
+	await expect.poll(() => state.posts.filter((post) => post.action === 'commit').length).toBe(1);
+	const committed = state.posts.find((post) => post.action === 'commit')!.drafts![0];
+	expect(committed.currency).toEqual({
+		value: 'TWD',
+		state: 'recognized',
+		source: 'user',
+		confidence: null
+	});
+	expect(committed.amount).toEqual({
+		value: 260,
+		state: 'recognized',
+		source: 'user',
+		confidence: null
+	});
+	for (const key of [
+		'note',
+		'date',
+		'categoryId',
+		'scope',
+		'payerEmail',
+		'splitMemberEmails',
+		'originalAmount'
+	] as const) {
+		expect(committed[key]).toEqual(draft[key]);
+	}
+});
+
+test('household draft shares are readonly and distribute remainder in email code unit order', async ({
+	page
+}) => {
+	const draft = makeDraft(1);
+	draft.scope.value = 'household';
+	draft.splitMemberEmails.value = [
+		'c@example.test',
+		user.email,
+		'b@example.test',
+		'b@example.test'
+	];
+	const state = await setup(
+		page,
+		async (route, body) =>
+			route.fulfill({
+				json:
+					body?.action === 'commit'
+						? created(body.requestId)
+						: draftResponse(body!.requestId, [draft])
+			}),
+		[],
+		['c@example.test', 'b@example.test', user.email]
+	);
+	await startDrafts(page);
+	await openDraftEditor(page);
+	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '編輯草稿 1/1', exact: true });
+	const shares = panel.getByRole('group', { name: '草稿分帳', exact: true });
+	await expect(shares.locator('[data-member-email="a@example.test"]')).toHaveText(/34$/);
+	await expect(shares.locator('[data-member-email="b@example.test"]')).toHaveText(/33$/);
+	await expect(shares.locator('[data-member-email="c@example.test"]')).toHaveText(/33$/);
+	await expect(shares.locator('input')).toHaveCount(0);
+	await expect(panel.getByRole('button', { name: '平分', exact: true })).toHaveCount(0);
+	await expect(panel.getByLabel('已結清', { exact: true })).toHaveCount(0);
+	await panel.locator('#amount-input').fill('101');
+	await expect(shares.locator('[data-member-email="b@example.test"]')).toHaveText(/34$/);
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await editDialog(page).getByRole('button', { name: '完成，回到對話', exact: true }).click();
+	await commitDrafts(page, 1).click();
+	await expect.poll(() => state.posts.filter((post) => post.action === 'commit').length).toBe(1);
+	expect(
+		state.posts.find((post) => post.action === 'commit')!.drafts![0].splitMemberEmails.value
+	).toEqual(['c@example.test', user.email, 'b@example.test']);
+});
+
+test('Taipei date edit commits the exact calendar day and excluded editors omit position', async ({
+	page
+}) => {
+	const draft = makeDraft(1);
+	draft.date = { ...draft.date, source: 'default', defaulted: 'unreadable' };
+	draft.issues = [{ field: 'date', code: 'date_defaulted' }];
+	draft.status = 'incomplete';
+	const state = await editableDrafts(page, [draft, makeDraft(2)]);
+	await draftCards(page).nth(1).getByRole('button', { name: '排除', exact: true }).click();
+	await editDialog(page).getByRole('button', { name: '編輯第 2 筆', exact: true }).click();
+	await expect(page.getByRole('heading', { name: /^編輯草稿 \d/ })).toHaveCount(0);
+	await page
+		.getByRole('dialog', { name: '編輯草稿', exact: true })
+		.last()
+		.getByRole('button', { name: 'Close', exact: true })
+		.click();
+	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '編輯草稿 1/1', exact: true });
+	await expect(panel.locator('#date-input')).toBeEnabled();
+	await expect(panel.locator('#date-input')).toHaveAttribute('max', '2026-10-01');
+	await panel.locator('#date-input').fill('2026-09-29');
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await editDialog(page)
+		.getByRole('button', { name: '完成，回到對話（1 筆）', exact: true })
+		.click();
+	await commitDrafts(page, 1).click();
+	await expect.poll(() => state.posts.filter((post) => post.action === 'commit').length).toBe(1);
+	expect(state.posts.find((post) => post.action === 'commit')!.drafts![0].date).toEqual({
+		value: '2026-09-29',
+		state: 'recognized',
+		source: 'user',
+		confidence: null,
+		defaulted: null
+	});
+});
+
+test('edited merge summary preserves effective ids and provenance', async ({ page }) => {
+	const state = await editableDrafts(page, [makeDraft(1), makeDraft(2), makeDraft(3)]);
+	await editDialog(page).getByRole('button', { name: '合併', exact: true }).click();
+	await editDialog(page).getByRole('checkbox', { name: '選取第 1 筆', exact: true }).check();
+	await editDialog(page).getByRole('checkbox', { name: '選取第 2 筆', exact: true }).check();
+	await editDialog(page).getByRole('button', { name: '合併所選 (2)', exact: true }).click();
+	await editDialog(page).getByRole('button', { name: '編輯合併摘要', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '編輯草稿 1/2', exact: true });
+	await panel.locator('#content-input').fill('合併後摘要');
+	await panel.locator('#amount-input').fill('350');
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toContainText('NT$ 350');
+	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toContainText(
+		'合併後摘要'
+	);
+	await editDialog(page)
+		.getByRole('button', { name: '完成，回到對話（2 筆）', exact: true })
+		.click();
+	await commitDrafts(page, 2).click();
+	await expect.poll(() => state.posts.filter((post) => post.action === 'commit').length).toBe(1);
+	const merged = state.posts.find((post) => post.action === 'commit')!.drafts![0];
+	expect(merged.draftId).toBe(makeDraft(1).draftId);
+	expect(merged.mergedFrom).toEqual([makeDraft(1).draftId, makeDraft(2).draftId]);
+	expect(merged.amount.value).toBe(350);
+	expect(merged.note.value).toBe('合併後摘要');
+});
+
+test('draft model recalculates saved summaries and controls merged identity', () => {
+	const ctx = {
+		today: '2026-10-01',
+		categoryIds: new Set([categoryId]),
+		allowedEmails: [user.email, 'b@example.test'],
+		currentUserEmail: user.email
+	};
+	const first = makeDraft(1);
+	const second = makeDraft(2);
+	second.note.value = first.note.value;
+	const session = fromServerDrafts([first, second]);
+	const merged = effectiveDrafts(session, ctx)[0];
+	session.groupSummaries[session.items[0].groupId!] = {
+		...merged,
+		draftId: makeDraft(9).draftId,
+		mergedFrom: [makeDraft(9).draftId],
+		amount: { value: 0, state: 'recognized', source: 'user', confidence: null },
+		issues: [],
+		status: 'complete'
+	};
+	const invalid = effectiveDrafts(session, ctx)[0];
+	expect(invalid.draftId).toBe(first.draftId);
+	expect(invalid.mergedFrom).toEqual([first.draftId, second.draftId]);
+	expect(invalid.status).toBe('incomplete');
+	expect(invalid.issues).toEqual([{ field: 'amount', code: 'invalid' }]);
+	session.groupSummaries[session.items[0].groupId!].amount.value = 350;
+	expect(effectiveDrafts(session, ctx)[0].status).toBe('complete');
+	expect(effectiveDrafts(session, ctx)[0].amount.value).toBe(350);
+});
+
+test('legacy create and edit dialogs retain amount, date, manual shares and delete controls', async ({
+	page
+}) => {
+	await setup(page, async (route, body) => route.fulfill({ json: created(body!.requestId) }), [
+		row
+	]);
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	const day = page.locator('[data-date="2026-10-01"]');
+	await day.getByRole('button', { name: '新增項目', exact: true }).click();
+	const createPanel = page.getByRole('dialog', { name: '新增項目', exact: true });
+	await expect(createPanel.getByLabel('金額', { exact: true })).toBeVisible();
+	await expect(createPanel.locator('#date-input')).toBeDisabled();
+	await expect(createPanel.getByRole('button', { name: '新增', exact: true })).toBeVisible();
+	await expect(createPanel.getByRole('button', { name: '刪除', exact: true })).toHaveCount(0);
+	await expect(createPanel.getByText('已辨識', { exact: true })).toHaveCount(0);
+	await createPanel.getByRole('radio', { name: '家庭', exact: true }).click();
+	await expect(createPanel.getByRole('button', { name: '平分', exact: true })).toBeVisible();
+	await expect(createPanel.locator('input[name="a@example.test"]')).toBeEditable();
+	await expect(createPanel.getByRole('checkbox', { name: '已結清', exact: true })).toBeEnabled();
+	await createPanel.getByRole('button', { name: 'Close', exact: true }).click();
+	await day.getByRole('button', { name: 'Edit', exact: true }).click();
+	const editPanel = page.getByRole('dialog', { name: '編輯項目', exact: true });
+	await expect(editPanel.getByLabel('金額', { exact: true })).toHaveValue('100');
+	await expect(editPanel.locator('#date-input')).toBeEnabled();
+	await expect(editPanel.getByRole('button', { name: '更新', exact: true })).toBeVisible();
+	await expect(editPanel.getByRole('button', { name: '刪除', exact: true })).toBeVisible();
+	await expect(editPanel.getByRole('button', { name: '套用到草稿', exact: true })).toHaveCount(0);
 });

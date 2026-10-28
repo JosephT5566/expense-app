@@ -179,7 +179,16 @@ export function effectiveDrafts(session: DraftSession, ctx?: DraftContext): Draf
 			return [{ ...item.draft, issues, status: issues.length ? 'incomplete' : 'complete' }];
 		}
 		if (item.groupId !== undefined && session.groupSummaries[item.groupId]) {
-			return [session.groupSummaries[item.groupId]];
+			const summary = {
+				...session.groupSummaries[item.groupId],
+				draftId: members[0].id,
+				mergedFrom: members.map((member) => member.id)
+			};
+			if (ctx) {
+				summary.issues = draftIssues(summary, ctx);
+				summary.status = summary.issues.length ? 'incomplete' : 'complete';
+			}
+			return [summary];
 		}
 		const amount = members.some((member) => member.draft.amount.value === null)
 			? null
