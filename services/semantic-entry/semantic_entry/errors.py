@@ -36,6 +36,15 @@ def error_details(error: Exception) -> JSON:
         "provider_refusal": "Gemini refused the request.",
         "provider_timeout": "Gemini request exceeded its deadline.",
         "persist_uncertain": "Request outcome could not be confirmed before the deadline.",
+        "image_forbidden_path": "Image path does not belong to the caller.",
+        "image_too_large": "Image size is outside the allowed range.",
+        "image_limit": "Image count or total size exceeds the allowed limit.",
+        "image_unsupported": "Image type or signature is unsupported.",
+        "image_not_found": "Image was not found.",
+        "image_changed": "Image changed after metadata verification.",
+        "image_error": "Image storage operation failed.",
+        "image_configuration": "Image storage is not configured.",
+        "unsupported_version": "Result requires a supported semantic version.",
         "service_error": "Unexpected service exception.",
     }
     if isinstance(error, SemanticError):

@@ -5,6 +5,8 @@ description = "Caller-scoped semantic expense entry service"
 requires-python = ">=3.12,<3.15"
 dependencies = [
     "fastapi>=0.115,<1",
+    "google-cloud-storage>=3.17.1,<4",
+    "google-genai>=2.33,<3",
     "httpx>=0.28,<0.29",
     "langgraph>=1.0,<2",
     "langsmith>=0.14,<1",
@@ -38,3 +40,7 @@ files = ["semantic_entry"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["semantic_entry"]
+
+[[tool.mypy.overrides]]
+module = ["google.cloud", "google.cloud.*"]
+ignore_missing_imports = true

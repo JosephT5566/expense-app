@@ -11,6 +11,7 @@ from langsmith import tracing_context
 from .clarification import clarification_result
 from .contracts import JSON, parse_request
 from .errors import SemanticError, error_details, log_failure
+from .images import ImageStore
 from .normalize import normalize_extraction
 from .prompt import PROMPT_VERSION
 from .provider_stream import AnalysisCallback
@@ -22,6 +23,12 @@ class Adapter(Protocol):
     async def lookup_completed(
         self, request_id: str, input_hash: str | None = None
     ) -> JSON | None: ...
+    async def lookup_completed_v3(
+        self, request_id: str, input_hash: str | None = None
+    ) -> JSON | None: ...
+    async def persist_expenses(
+        self, request_id: str, input_hash: str, expenses: list[JSON]
+    ) -> JSON: ...
     async def consume_quota(self) -> bool: ...
     async def persist_expense(
         self, request_id: str, input_hash: str, expense: JSON
@@ -36,6 +43,9 @@ class Dependencies:
     allowed_origins: tuple[str, ...] = ()
     http_deadline: float = 30
     stream_entry: Callable[[str, JSON, AnalysisCallback], Awaitable[JSON]] | None = None
+    image_store: ImageStore | None = None
+    image_deadline: float = 85
+    extract_drafts: Callable[[JSON, JSON], Awaitable[JSON]] | None = None
 
 
 class State(TypedDict, total=False):

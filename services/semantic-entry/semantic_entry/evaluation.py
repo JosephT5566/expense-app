@@ -15,9 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import JSON, parse_request
+from .drafts import expense_from_draft, normalize_draft, parse_raw_extraction
 from .graph import conversation_payload
 from .normalize import normalize_extraction
-from .prompt import PROMPT_VERSION
+from .prompt import PROMPT_VERSION, RECEIPT_PROMPT_VERSION
 from .provider import DEFAULT_MODEL
 
 COMMON = ("note", "amount", "currency", "scope", "category_id")
@@ -259,13 +260,166 @@ async def run_evaluation(
     }
 
 
+def receipt_result(case: JSON) -> JSON:
+    """Exercise the receipt normalizer/gate without any provider or persistence."""
+    raw = parse_raw_extraction(case["raw"], case["imageCount"])
+    items = raw["drafts"]
+    if not items or len(items) > 20:
+        field, code = (
+            ("drafts", "too_many_drafts")
+            if len(items) > 20
+            else ("images", "not_a_receipt")
+            if case["imageCount"]
+            and set(raw["nonReceiptImages"]) == set(range(case["imageCount"]))
+            else ("drafts", "missing")
+        )
+        return {"status": "rejected", "issues": [{"field": field, "code": code}]}
+    drafts = [normalize_draft(d, case["context"]) for d in items]
+    return {
+        "status": "created"
+        if len(drafts) == 1 and drafts[0]["status"] == "complete"
+        else "drafts",
+        "drafts": [
+            {
+                "status": d["status"],
+                "issues": d["issues"],
+                "values": {
+                    k: d[k]["value"]
+                    for k in (
+                        "note",
+                        "amount",
+                        "currency",
+                        "date",
+                        "categoryId",
+                        "scope",
+                        "payerEmail",
+                        "splitMemberEmails",
+                    )
+                },
+                "dateDefaulted": d["date"]["defaulted"],
+                "originalAmount": d.get("originalAmount"),
+                "expense": expense_from_draft(d, case["context"])
+                if d["status"] == "complete"
+                else None,
+            }
+            for d in drafts
+        ],
+    }
+
+
+def receipt_matches(expected: object, actual: object) -> bool:
+    """Listed fields are exact; lists (including issues) must match in full."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            k in actual and receipt_matches(v, actual[k]) for k, v in expected.items()
+        )
+    if isinstance(expected, list):
+        return (
+            isinstance(actual, list)
+            and len(expected) == len(actual)
+            and all(
+                receipt_matches(e, a) for e, a in zip(expected, actual, strict=True)
+            )
+        )
+    return type(expected) is type(actual) and expected == actual
+
+
+def run_receipt_evaluation(
+    cases: list[JSON], runs: int = 1, max_calls: int = 120
+) -> JSON:
+    validate_options("fixture", runs, max_calls, len(cases))
+    if not cases or len({c["id"] for c in cases}) != len(cases):
+        raise ValueError("Invalid receipt cases")
+    observations = []
+    for case in cases:
+        expected = case["expected"]
+        if expected.get("status") not in ("created", "drafts", "rejected"):
+            raise ValueError("Invalid receipt expectation")
+        if expected["status"] != "rejected" and (
+            not expected.get("drafts")
+            or any(
+                d.get("status") not in ("complete", "incomplete") or "issues" not in d
+                for d in expected["drafts"]
+            )
+        ):
+            raise ValueError("Missing draft expectations")
+        for run in range(1, runs + 1):
+            result = receipt_result(case)
+            observations.append(
+                {
+                    "id": case["id"],
+                    "run": run,
+                    "result": result,
+                    "passed": receipt_matches(expected, result),
+                }
+            )
+    return {
+        "observations": observations,
+        "paidCalls": 0,
+        "summary": {
+            "observations": len(observations),
+            "passed": sum(o["passed"] for o in observations),
+            "failures": sum(not o["passed"] for o in observations),
+        },
+    }
+
+
+async def receipt_main(args: argparse.Namespace) -> None:
+    if args.mode != "fixture":
+        raise ValueError("Receipt suite only supports fixture mode")
+    root = (await asyncio.to_thread(Path(__file__).resolve)).parent.parent
+    path = root / "evals/receipt-cases.json"
+    case_bytes = path.read_bytes()
+    cases = json.loads(case_bytes)
+    result = run_receipt_evaluation(cases, args.runs, args.max_calls)
+    now = datetime.now(UTC).isoformat()
+    out = args.out or path.parent / "runs" / now.replace(":", "-")
+    manifest = {
+        "mode": "fixture",
+        "caseSuite": "receipt",
+        "caseFile": path.name,
+        "caseHash": hashlib.sha256(case_bytes).hexdigest(),
+        "runs": args.runs,
+        "maxCalls": args.max_calls,
+        "paidCalls": 0,
+        "promptVersion": RECEIPT_PROMPT_VERSION,
+        "model": "fixture",
+        "methodology": "Synthetic raw receipt normalization and gate checks only; no model quality measurement or persistence.",
+    }
+    out.mkdir(parents=True, exist_ok=True)
+    for name, data in (
+        ("manifest", manifest),
+        ("summary", result["summary"]),
+        ("observations", result["observations"]),
+    ):
+        (out / f"{name}.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        )
+    print(
+        json.dumps(
+            {
+                "out": str(out),
+                "caseIds": len(cases),
+                **result["summary"],
+                "paidCalls": 0,
+            }
+        )
+    )
+    if result["summary"]["failures"]:
+        raise SystemExit(1)
+
+
 async def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("fixture", "live"), default="fixture")
+    parser.add_argument("--suite", choices=("receipt",))
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--max-calls", type=int, default=120)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
+    if args.suite == "receipt":
+        await receipt_main(args)
+        return
     root = (await asyncio.to_thread(Path(__file__).resolve)).parent.parent
     case_path, cases = load_cases(args.mode)
     case_text = case_path.read_text()
