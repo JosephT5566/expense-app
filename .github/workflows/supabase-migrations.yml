@@ -41,9 +41,12 @@ jobs:
             SUPABASE_PROJECT_REF: ${{ vars.SUPABASE_PROJECT_REF }}
             SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
             SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-            CLI_WORKDIR: ${{ runner.temp }}/jopie-supabase-production
-            HISTORY_FILE: ${{ runner.temp }}/jopie-baseline-history.json
         steps:
+            - name: Set migration workspace paths
+              shell: bash
+              run: |
+                  echo "CLI_WORKDIR=$RUNNER_TEMP/jopie-supabase-production" >> "$GITHUB_ENV"
+                  echo "HISTORY_FILE=$RUNNER_TEMP/jopie-baseline-history.json" >> "$GITHUB_ENV"
             - uses: actions/checkout@v4
             - uses: supabase/setup-cli@v3
               with:
