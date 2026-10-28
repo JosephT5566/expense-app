@@ -6,6 +6,7 @@ from conftest import CONTEXT, REQUEST, REQUEST_ID, ROW
 from fakes_v3 import DRAFT_ID, IMAGE_REQUEST, PATH, client_draft, make_setup, raw_draft
 
 from semantic_entry.contracts import parse_response_v3
+from semantic_entry.drafts import normalize_draft
 from semantic_entry.errors import SemanticError
 from semantic_entry.graph import input_hash, input_hash_v4
 from semantic_entry.graph_v3 import invoke_v3
@@ -349,3 +350,152 @@ async def test_image_quota_denial_prevents_download_and_model():
         await run(IMAGE_REQUEST, deps)
     assert store.calls == [("metadata", PATH)]
     deps.extract_drafts.assert_not_awaited()
+
+
+@pytest.mark.parametrize("source", ["text", "user"])
+@pytest.mark.parametrize("confidence", [0.3, 0.7])
+async def test_image_supplemental_amount_confidence_gate(source, confidence):
+    deps, adapter, _ = make_setup()
+    deps.extract_drafts.return_value["raw"]["drafts"][0]["amount"].update(
+        source=source, confidence=confidence
+    )
+    result = await run({**IMAGE_REQUEST, "text": "金額 851 元"}, deps)
+    if confidence < 0.7:
+        assert result["status"] == "drafts" and result["reason"] == "incomplete"
+        assert {"field": "amount", "code": "low_confidence"} in result["drafts"][0][
+            "issues"
+        ]
+        adapter.persist_expense.assert_not_awaited()
+    else:
+        assert result["status"] == "created"
+        adapter.persist_expense.assert_awaited_once()
+    adapter.persist_expenses.assert_not_awaited()
+
+
+def marked_original(marker):
+    raw = raw_draft()
+    raw["date"].update(
+        value=None if marker == "unreadable" else "2026-03-05",
+        state="unrecognized" if marker == "unreadable" else "recognized",
+    )
+    original = normalize_draft(raw, deepcopy(CONTEXT))
+    assert original["date"]["defaulted"] == marker
+    return original
+
+
+def raw_from_original(original):
+    raw = raw_draft()
+    for key in raw.keys() - {"draftId", "originalAmountText"}:
+        raw[key] = {k: v for k, v in original[key].items() if k != "defaulted"}
+    return raw
+
+
+async def revise_result(original, revised, deps):
+    deps.extract_drafts.return_value["raw"]["drafts"] = [revised]
+    return (
+        await run(
+            {
+                "requestId": REQUEST_ID,
+                "action": "revise",
+                "text": "改分類或備註",
+                "drafts": [original],
+            },
+            deps,
+        )
+    )["drafts"][0]
+
+
+@pytest.mark.parametrize("marker", ["unreadable", "future"])
+async def test_revise_other_field_keeps_date_marker(marker):
+    deps, _, _ = make_setup()
+    original = marked_original(marker)
+    revised = raw_draft()
+    revised["date"] = {k: v for k, v in original["date"].items() if k != "defaulted"}
+    revised["categoryId"].update(
+        value=CONTEXT["categories"][-1]["id"], source="text", confidence=0.9
+    )
+    d = await revise_result(original, revised, deps)
+    assert d["draftId"] == DRAFT_ID
+    assert d["date"] == original["date"]
+    assert d["date"]["defaulted"] == marker
+    assert ({"field": "date", "code": "date_defaulted"} in d["issues"]) == (
+        marker == "unreadable"
+    )
+    assert d["status"] == ("incomplete" if marker == "unreadable" else "complete")
+
+
+@pytest.mark.parametrize("marker", ["unreadable", "future"])
+@pytest.mark.parametrize("source", ["image", "default"])
+async def test_revise_same_date_source_drift_keeps_marker(marker, source):
+    deps, _, _ = make_setup()
+    original = marked_original(marker)
+    revised = raw_from_original(original)
+    revised["date"].update(source=source, confidence=None)
+    d = await revise_result(original, revised, deps)
+    assert d["date"] == original["date"]
+    assert "updated" not in d
+
+
+@pytest.mark.parametrize("same_day", [False, True])
+async def test_revise_explicit_date_correction_or_confirmation_clears_marker(same_day):
+    deps, _, _ = make_setup()
+    original = marked_original("unreadable")
+    revised = raw_from_original(original)
+    revised["date"].update(
+        value=original["date"]["value"] if same_day else "2026-02-27",
+        source="user",
+        confidence=None,
+    )
+    d = await revise_result(original, revised, deps)
+    assert d["date"]["defaulted"] is None
+    assert {"field": "date", "code": "date_defaulted"} not in d["issues"]
+    assert d["status"] == "complete" and d["updated"]
+
+
+@pytest.mark.parametrize(
+    "source,confidence", [("image", None), ("image", 0.9), ("default", None)]
+)
+async def test_revise_note_keeps_service_defaults(source, confidence):
+    deps, _, _ = make_setup()
+    raw = raw_draft()
+    raw["currency"]["value"] = None
+    raw["date"].update(source="default", confidence=None)
+    original = normalize_draft(raw, deepcopy(CONTEXT))
+    revised = raw_from_original(original)
+    revised["note"].update(value="晚餐", source="text")
+    fields = ("currency", "scope", "payerEmail", "splitMemberEmails", "date")
+    for field in fields:
+        revised[field].update(source=source, confidence=confidence)
+    d = await revise_result(original, revised, deps)
+    for field in fields:
+        assert d[field] == original[field]
+        assert d[field]["source"] == "default"
+    assert d["note"]["value"] == "晚餐"
+    assert d["status"] == "complete" and d["updated"]
+
+
+async def test_revise_text_currency_change_is_not_preserved_as_default():
+    deps, _, _ = make_setup()
+    raw = raw_draft()
+    raw["currency"]["value"] = None
+    original = normalize_draft(raw, deepcopy(CONTEXT))
+    revised = raw_from_original(original)
+    revised["currency"].update(value="USD", source="text", confidence=0.9)
+    d = await revise_result(original, revised, deps)
+    assert d["currency"]["value"] == "USD" and d["currency"]["source"] == "text"
+    assert {"field": "currency", "code": "non_twd"} in d["issues"]
+    assert d["status"] == "incomplete"
+
+
+async def test_revise_uses_revalidated_original_for_date_provenance_and_updated():
+    deps, _, _ = make_setup()
+    original = client_draft()
+    original["date"].update(value="2026-03-05", defaulted=None)
+    revised = raw_from_original(original)
+    revised["date"].update(value=CONTEXT["today"], source="image", confidence=0.9)
+    d = await revise_result(original, revised, deps)
+    sent = deps.extract_drafts.call_args.args[0]["drafts"][0]
+    assert sent["date"]["defaulted"] == "future"
+    assert d["date"] == sent["date"]
+    assert d["status"] == "complete"
+    assert "updated" not in d

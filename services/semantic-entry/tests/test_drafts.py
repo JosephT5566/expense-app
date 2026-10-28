@@ -55,12 +55,13 @@ def test_image_confidence_gate(confidence, complete, code):
 
 
 @pytest.mark.parametrize("source", ["text", "default", "user"])
-@pytest.mark.parametrize("confidence", [None, 0.01])
+@pytest.mark.parametrize("confidence", [None, 0.01, 0.69, 0.7])
 def test_other_sources_ignore_confidence(source, confidence):
-    assert (
-        normalized({"amount": {"source": source, "confidence": confidence}})["status"]
-        == "complete"
-    )
+    d = normalized({"amount": {"source": source, "confidence": confidence}})
+    low = confidence is not None and confidence < 0.7
+    assert d["status"] == ("incomplete" if low else "complete")
+    if low:
+        assert {"field": "amount", "code": "low_confidence"} in d["issues"]
 
 
 @pytest.mark.parametrize("confidence", [float("nan"), float("inf"), -1, 2, True, "bad"])

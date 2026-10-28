@@ -27,6 +27,7 @@ class DraftState(TypedDict, total=False):
     images: list[ImageMetadata]
     digest: str
     extraction: JSON
+    originals: dict[str, JSON]
     raw: JSON
     expenses: list[JSON]
     result: JSON
@@ -158,6 +159,7 @@ async def invoke_v3(
             normalize_draft(d, state["context"], client=True)
             for d in request.get("drafts", [])
         ]
+        originals = {d["draftId"]: d for d in drafts}
         # Only client draft fields go back to the model, never trusted status/issues.
         drafts = [
             {k: v for k, v in d.items() if k not in ("status", "issues", "updated")}
@@ -177,7 +179,7 @@ async def invoke_v3(
             raw = parse_raw_extraction(extraction["raw"], len(images))
         except (KeyError, TypeError, ValueError):
             raise SemanticError(502, "provider_invalid") from None
-        return {"extraction": extraction, "raw": raw}
+        return {"extraction": extraction, "raw": raw, "originals": originals}
 
     def reject(code: str, field: str = "drafts") -> JSON:
         return {
@@ -211,7 +213,7 @@ async def invoke_v3(
             )
         if len(raw["drafts"]) > 20:
             return reject("too_many_drafts")
-        originals = {d["draftId"]: d for d in request.get("drafts", [])}
+        originals = state["originals"]
         drafts = []
         seen: set[str] = set()
         for r in raw["drafts"]:
@@ -221,7 +223,7 @@ async def invoke_v3(
                 and r["draftId"] not in originals
             ):
                 raise SemanticError(502, "provider_invalid")
-            d = normalize_draft(r, ctx)
+            d = normalize_draft(r, ctx, previous=originals.get(r["draftId"]))
             if d["draftId"] in seen:
                 raise SemanticError(502, "provider_invalid")
             seen.add(d["draftId"])

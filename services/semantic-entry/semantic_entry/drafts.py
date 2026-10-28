@@ -82,11 +82,14 @@ def draft_issues(draft: JSON, ctx: JSON, *, commit: bool = False) -> list[JSON]:
         if not commit:
             if f["state"] in ("unrecognized", "missing"):
                 issue(key, f["state"])
-            if f["source"] == "image":
-                if f["confidence"] is not None and f["confidence"] < 0.7:
-                    issue(key, "low_confidence")
-                elif f["state"] == "recognized" and f["confidence"] is None:
-                    issue(key, "missing_confidence")
+            if f["confidence"] is not None and f["confidence"] < 0.7:
+                issue(key, "low_confidence")
+            if (
+                f["source"] == "image"
+                and f["state"] == "recognized"
+                and f["confidence"] is None
+            ):
+                issue(key, "missing_confidence")
     if values["note"] is not None and (
         not isinstance(values["note"], str) or not trim(values["note"])
     ):
@@ -129,7 +132,9 @@ def draft_issues(draft: JSON, ctx: JSON, *, commit: bool = False) -> list[JSON]:
     return issues
 
 
-def normalize_draft(raw: JSON, ctx: JSON, *, client: bool = False) -> JSON:
+def normalize_draft(
+    raw: JSON, ctx: JSON, *, client: bool = False, previous: JSON | None = None
+) -> JSON:
     d: JSON = {"draftId": raw["draftId"] or str(uuid4())}
     for key in DRAFT_FIELDS:
         f = deepcopy(raw[key])
@@ -146,6 +151,29 @@ def normalize_draft(raw: JSON, ctx: JSON, *, client: bool = False) -> JSON:
         ):
             f["confidence"] = None
         d[key] = f
+
+    preserved_date = None
+    if previous is not None:
+        for key in ("currency", "scope", "payerEmail", "splitMemberEmails", "date"):
+            original = previous[key]
+            field = d[key]
+            if field["value"] != original["value"]:
+                continue
+            preserve_default = original["source"] == "default" and field[
+                "source"
+            ] not in ("user", "text")
+            preserve_date = (
+                key == "date"
+                and original["defaulted"] is not None
+                and not (
+                    field["source"] in ("user", "text")
+                    and field["source"] != original["source"]
+                )
+            )
+            if preserve_default or preserve_date:
+                d[key] = deepcopy(original)
+                if key == "date":
+                    preserved_date = deepcopy(original)
 
     def invalid(key: str) -> None:
         d[key].update(value=None, state="unrecognized")
@@ -198,6 +226,8 @@ def normalize_draft(raw: JSON, ctx: JSON, *, client: bool = False) -> JSON:
         d["date"].update(value=ctx["today"], defaulted="future")
     elif client:
         d["date"]["defaulted"] = raw["date"].get("defaulted")
+    if preserved_date is not None:
+        d["date"] = preserved_date
     if not isinstance(d["categoryId"]["value"], str) or d["categoryId"][
         "value"
     ] not in {c["id"] for c in ctx["categories"]}:
