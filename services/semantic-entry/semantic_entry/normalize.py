@@ -136,11 +136,7 @@ def normalize_extraction(raw: Any, ctx: JSON) -> JSON:
                 key=lambda m: m["email"],
             )
             if len(members) == len(ids) and safe_integer(r["amount"], 1):
-                each, remainder = divmod(int(r["amount"]), len(members))
-                shares = {
-                    m["email"]: each + (remainder if i == 0 else 0)
-                    for i, m in enumerate(members)
-                }
+                shares = equal_shares(r["amount"], [m["email"] for m in members])
     category = r["categoryId"]
     if not ctx["categories"]:
         issue("categoryId", "configuration")
@@ -181,4 +177,12 @@ def normalize_extraction(raw: Any, ctx: JSON) -> JSON:
             "category_id": category,
             "is_settled": scope == "personal",
         },
+    }
+
+
+def equal_shares(amount: int, emails: list[str]) -> JSON:
+    ordered = sorted(emails)
+    each, remainder = divmod(int(amount), len(ordered))
+    return {
+        email: each + (remainder if i == 0 else 0) for i, email in enumerate(ordered)
     }

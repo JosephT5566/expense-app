@@ -8,9 +8,18 @@ from email.message import Message
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from .contracts import JSON, load_json, parse_request, request_id
+from .contracts import (
+    JSON,
+    MAX_REQUEST_BYTES_V3,
+    load_json,
+    load_json_v3,
+    parse_request,
+    parse_request_v3,
+    request_id,
+)
 from .errors import SemanticError, log_failure
 from .graph import Dependencies, invoke
+from .graph_v3 import invoke_v3
 from .images import issue_upload_urls, parse_upload_request
 
 # Strong references only for bounded in-flight requests; no conversation storage.
@@ -27,6 +36,7 @@ async def stream_operation(
     deps: Dependencies,
     deadline: float,
     include_analysis: bool = False,
+    version3: bool = False,
 ) -> AsyncIterator[bytes]:
     started = asyncio.get_running_loop().time()
     events: asyncio.Queue[tuple[str, JSON]] = asyncio.Queue(maxsize=64)
@@ -72,7 +82,7 @@ async def stream_operation(
     async def operation() -> None:
         try:
             async with asyncio.timeout(deadline):
-                result = await invoke(
+                result = await (invoke_v3 if version3 else invoke)(
                     parsed,
                     token,
                     deps,
@@ -125,6 +135,24 @@ def accepts_analysis(value: str) -> bool:
             message.get_content_type() == "text/event-stream"
             and message.get_param("semantic-version") == "2"
             and message.get_param("q", "1") != "0"
+        ):
+            return True
+    return False
+
+
+def accepts_v3(value: str, media_type: str) -> bool:
+    for item in value.split(","):
+        message = Message()
+        message["content-type"] = item.strip()
+        try:
+            quality = message.get_param("q", "1")
+            enabled = isinstance(quality, str) and float(quality) != 0
+        except (ValueError, TypeError):
+            enabled = False
+        if (
+            message.get_content_type() == media_type
+            and message.get_param("semantic-version") == "3"
+            and enabled
         ):
             return True
     return False
@@ -222,8 +250,12 @@ async def handle(request: Request, deps: Dependencies) -> Response:
     if not bearer:
         return error(SemanticError(401, "unauthorized"))
     started = asyncio.get_running_loop().time()
+    accept = request.headers.get("accept", "")
+    stream_v3 = accepts_v3(accept, "text/event-stream")
+    json_v3 = accepts_v3(accept, "application/json")
+    version3 = stream_v3 or json_v3
     try:
-        async with asyncio.timeout(deps.http_deadline):
+        async with asyncio.timeout(deps.http_deadline) as timeout_scope:
             if status_id:
                 try:
                     identifier = request_id(status_id)
@@ -235,7 +267,11 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                 active_node = "load_context"
                 await adapter.load_context(user)
                 active_node = "lookup"
-                saved = await adapter.lookup_completed(identifier)
+                saved = await (
+                    adapter.lookup_completed_v3(identifier)
+                    if json_v3
+                    else adapter.lookup_completed(identifier)
+                )
                 return JSONResponse(
                     {"status": "completed", "requestId": identifier, **saved}
                     if saved
@@ -245,16 +281,26 @@ async def handle(request: Request, deps: Dependencies) -> Response:
             body = bytearray()
             async for chunk in request.stream():
                 body.extend(chunk)
-                if len(body) > 8192:
+                if len(body) > (MAX_REQUEST_BYTES_V3 if version3 else 8192):
                     raise SemanticError(400, "body_too_large")
             try:
-                parsed = parse_request(load_json(body.decode("utf-8")))
+                parsed = (
+                    parse_request_v3(load_json_v3(body.decode("utf-8")))
+                    if version3
+                    else parse_request(load_json(body.decode("utf-8")))
+                )
             except (ValueError, TypeError, UnicodeError):
                 raise SemanticError(400, "invalid_request") from None
-            if "text/event-stream" in request.headers.get("accept", ""):
+            deadline = deps.http_deadline
+            if version3 and parsed["action"] == "analyze" and parsed.get("images"):
+                if not 0 < deps.image_deadline < 90:
+                    raise SemanticError(502, "image_configuration")
+                deadline = deps.image_deadline
+                timeout_scope.reschedule(started + deadline)
+            if stream_v3 or (not version3 and "text/event-stream" in accept):
                 remaining = max(
                     0,
-                    deps.http_deadline - (asyncio.get_running_loop().time() - started),
+                    deadline - (asyncio.get_running_loop().time() - started),
                 )
                 return StreamingResponse(
                     stream_operation(
@@ -262,16 +308,15 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                         bearer[1],
                         deps,
                         remaining,
-                        include_analysis=accepts_analysis(
-                            request.headers.get("accept", "")
-                        ),
+                        include_analysis=stream_v3 or accepts_analysis(accept),
+                        version3=version3,
                     ),
                     media_type="text/event-stream",
                     headers={**cors, "X-Accel-Buffering": "no"},
                 )
             identifier = parsed["requestId"]
             graph_started = True
-            result = await invoke(parsed, bearer[1], deps)
+            result = await (invoke_v3 if version3 else invoke)(parsed, bearer[1], deps)
             return JSONResponse(
                 result, 422 if result["status"] == "rejected" else 200, headers=cors
             )

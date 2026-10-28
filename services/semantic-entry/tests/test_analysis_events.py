@@ -13,7 +13,7 @@ from semantic_entry.graph import invoke
         ("text/event-stream", False),
         ('text/event-stream; semantic-version="2"', True),
         ("application/json, text/event-stream; semantic-version=2", True),
-        ("text/event-stream; semantic-version=3", False),
+        ("text/event-stream; semantic-version=4", False),
     ],
 )
 async def test_versioned_analysis_events_preserve_decisions(setup, accept, analysis):

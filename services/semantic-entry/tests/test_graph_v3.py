@@ -1,0 +1,351 @@
+from copy import deepcopy
+from unittest.mock import AsyncMock, Mock, call
+
+import pytest
+from conftest import CONTEXT, REQUEST, REQUEST_ID, ROW
+from fakes_v3 import DRAFT_ID, IMAGE_REQUEST, PATH, client_draft, make_setup, raw_draft
+
+from semantic_entry.contracts import parse_response_v3
+from semantic_entry.errors import SemanticError
+from semantic_entry.graph import input_hash, input_hash_v4
+from semantic_entry.graph_v3 import invoke_v3
+
+
+async def run(request, deps, **kwargs):
+    result = await invoke_v3(request, "synthetic", deps, **kwargs)
+    assert parse_response_v3(result) == result
+    return result
+
+
+async def test_text_uses_v2_hash_and_replays_v2_snapshot():
+    deps, adapter, _ = make_setup()
+    request = {**REQUEST, "action": "analyze"}
+    adapter.lookup_completed.return_value = {"expense": ROW, "replayed": True}
+    r = await run(request, deps)
+    assert r["expenses"] == [ROW] and r["replayed"]
+    adapter.lookup_completed.assert_awaited_once_with(REQUEST_ID, input_hash(REQUEST))
+    assert input_hash_v4(request) == input_hash(REQUEST)
+    adapter.consume_quota.assert_not_awaited()
+
+
+async def test_image_order_single_rpc_persisting_once_and_replay():
+    deps, adapter, store = make_setup()
+    order = Mock()
+    for name in (
+        "authenticate",
+        "load_context",
+        "lookup_completed_v3",
+        "consume_quota",
+        "persist_expense",
+    ):
+        order.attach_mock(getattr(adapter, name), name)
+    for name in ("metadata", "download"):
+        setattr(store, name, AsyncMock(side_effect=getattr(store, name)))
+        order.attach_mock(getattr(store, name), name)
+    order.attach_mock(deps.extract_drafts, "extract")
+    persisting = AsyncMock()
+    r = await run(IMAGE_REQUEST, deps, on_persisting=persisting)
+    assert r["expenses"] == [ROW] and not r["replayed"]
+    assert [c[0] for c in order.mock_calls] == [
+        "authenticate",
+        "load_context",
+        "metadata",
+        "lookup_completed_v3",
+        "consume_quota",
+        "download",
+        "extract",
+        "persist_expense",
+    ]
+    digest = input_hash_v4(IMAGE_REQUEST, [{"path": PATH, "generation": "17"}])
+    assert call.lookup_completed_v3(REQUEST_ID, digest) in order.mock_calls
+    adapter.persist_expenses.assert_not_awaited()
+    persisting.assert_awaited_once()
+    adapter.lookup_completed_v3.return_value = {"expenses": [ROW], "replayed": True}
+    order.reset_mock()
+    r = await run(IMAGE_REQUEST, deps)
+    assert r["replayed"]
+    assert [c[0] for c in order.mock_calls] == [
+        "authenticate",
+        "load_context",
+        "metadata",
+        "lookup_completed_v3",
+    ]
+
+
+@pytest.mark.parametrize("count,incomplete", [(2, False), (1, True)])
+async def test_multiple_or_incomplete_never_persists(count, incomplete):
+    deps, adapter, _ = make_setup()
+    r = raw_draft()
+    r["draftId"] = None
+    if incomplete:
+        r["note"].update(value=None, state="explicit_null")
+    deps.extract_drafts.return_value["raw"]["drafts"] = [
+        deepcopy(r) for _ in range(count)
+    ]
+    persisting = AsyncMock()
+    result = await run(IMAGE_REQUEST, deps, on_persisting=persisting)
+    assert result["status"] == "drafts"
+    assert result["reason"] == ("multiple" if count > 1 else "incomplete")
+    adapter.persist_expense.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+    persisting.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "count,nonreceipt,code",
+    [(0, [0], "not_a_receipt"), (0, [], "missing"), (21, [], "too_many_drafts")],
+)
+async def test_empty_and_too_many_drafts(count, nonreceipt, code):
+    deps, adapter, _ = make_setup()
+    deps.extract_drafts.return_value["raw"] = {
+        "drafts": [raw_draft() for _ in range(count)],
+        "nonReceiptImages": nonreceipt,
+    }
+    r = await run(IMAGE_REQUEST, deps)
+    assert r["status"] == "rejected" and r["issues"][0]["code"] == code
+    adapter.persist_expense.assert_not_awaited()
+
+
+@pytest.mark.parametrize("action", ["analyze", "revise"])
+async def test_missing_provider_configuration(action):
+    deps, _, _ = make_setup()
+    deps.extract_drafts = None
+    request = (
+        IMAGE_REQUEST
+        if action == "analyze"
+        else {
+            "requestId": REQUEST_ID,
+            "action": "revise",
+            "text": "修正",
+            "drafts": [client_draft()],
+        }
+    )
+    with pytest.raises(SemanticError, match="provider_configuration"):
+        await run(request, deps)
+
+
+async def test_revise_revalidates_client_no_images_and_always_drafts():
+    deps, adapter, store = make_setup()
+    d = client_draft()
+    d["categoryId"]["value"] = "tampered"
+    d["payerEmail"]["value"] = "outsider@example.test"
+    d["date"]["value"] = "2026-03-02"
+    d.update(status="complete", issues=[])
+    request = {
+        "requestId": REQUEST_ID,
+        "action": "revise",
+        "text": "修正",
+        "drafts": [d],
+    }
+    r = await run(request, deps)
+    assert store.calls == []
+    payload = deps.extract_drafts.call_args.args[0]
+    assert payload["images"] == [] and payload["mode"] == "revise"
+    sent = payload["drafts"][0]
+    assert "status" not in sent and "issues" not in sent
+    assert sent["categoryId"]["value"] is None
+    assert sent["payerEmail"]["value"] is None
+    assert sent["date"]["value"] == CONTEXT["today"]
+    assert r["status"] == "drafts" and r["drafts"][0]["status"] == "complete"
+    assert r["reason"] == "incomplete" and r["drafts"][0]["updated"]
+    adapter.consume_quota.assert_awaited_once()
+    adapter.persist_expense.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "ids",
+    [
+        [None],
+        [DRAFT_ID],
+        ["44444444-4444-4444-8444-444444444444"],
+        [DRAFT_ID, DRAFT_ID],
+    ],
+)
+async def test_revise_identity_updated_and_merged_from(ids):
+    deps, _, _ = make_setup()
+    d = client_draft()
+    d["mergedFrom"] = ["55555555-5555-4555-8555-555555555555"]
+    drafts = []
+    for identifier in ids:
+        r = raw_draft()
+        r["draftId"] = identifier
+        drafts.append(r)
+    deps.extract_drafts.return_value["raw"]["drafts"] = drafts
+    request = {
+        "requestId": REQUEST_ID,
+        "action": "revise",
+        "text": "確認",
+        "drafts": [d],
+    }
+    if len(ids) == 2 or ids[0] not in (None, DRAFT_ID):
+        with pytest.raises(SemanticError, match="provider_invalid"):
+            await run(request, deps)
+    else:
+        result = (await run(request, deps))["drafts"][0]
+        if ids[0] is None:
+            assert result["draftId"] != DRAFT_ID and result["updated"] is True
+        else:
+            assert "updated" not in result
+            assert result["mergedFrom"] == d["mergedFrom"]
+
+
+@pytest.mark.parametrize(
+    "field,value,code",
+    [
+        ("categoryId", "tampered", "invalid"),
+        ("payerEmail", "unknown@example.test", "unknown_member"),
+        ("date", "2026-03-02", "future_date"),
+        ("currency", "USD", "non_twd"),
+        ("note", None, "missing"),
+        ("scope", "household", "invalid"),
+    ],
+)
+async def test_commit_strict_rejection_without_writes(field, value, code):
+    deps, adapter, store = make_setup()
+    d = client_draft()
+    d[field]["value"] = value
+    callback = AsyncMock()
+    r = await run(
+        {"requestId": REQUEST_ID, "action": "commit", "drafts": [d]},
+        deps,
+        on_persisting=callback,
+    )
+    assert r["status"] == "rejected"
+    assert any(i["code"] == code for i in r["draftIssues"][0]["issues"])
+    adapter.consume_quota.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+    callback.assert_not_awaited()
+    deps.extract_drafts.assert_not_awaited()
+    assert store.calls == []
+
+
+@pytest.mark.parametrize("count", [1, 2])
+async def test_commit_batch_even_one_and_replay_without_quota_or_model(count):
+    deps, adapter, store = make_setup()
+    adapter.persist_expenses.return_value["expenses"] = [ROW] * count
+    callback = AsyncMock()
+    request = {
+        "requestId": REQUEST_ID,
+        "action": "commit",
+        "drafts": [client_draft() for _ in range(count)],
+    }
+    r = await run(request, deps, on_persisting=callback)
+    assert len(r["expenses"]) == count and r["metadata"] is None
+    callback.assert_awaited_once()
+    adapter.persist_expenses.assert_awaited_once()
+    adapter.persist_expense.assert_not_awaited()
+    adapter.consume_quota.assert_not_awaited()
+    deps.extract_drafts.assert_not_awaited()
+    assert store.calls == []
+    adapter.lookup_completed_v3.return_value = {
+        "expenses": [ROW] * count,
+        "replayed": True,
+    }
+    assert (await run(request, deps))["replayed"]
+    assert adapter.persist_expenses.await_count == 1
+
+
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), SemanticError(504, "database_error", True)]
+)
+async def test_batch_timeout_is_uncertain(error):
+    deps, adapter, _ = make_setup()
+    adapter.persist_expenses.side_effect = error
+    with pytest.raises(SemanticError) as exc:
+        await run(
+            {"requestId": REQUEST_ID, "action": "commit", "drafts": [client_draft()]},
+            deps,
+        )
+    assert exc.value.code == "persist_uncertain" and exc.value.uncertain
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        {},
+        {"drafts": [{}], "nonReceiptImages": []},
+        {"drafts": [], "nonReceiptImages": [9]},
+    ],
+)
+async def test_bad_model_shape_is_provider_invalid(raw):
+    deps, _, _ = make_setup()
+    deps.extract_drafts.return_value["raw"] = raw
+    with pytest.raises(SemanticError, match="provider_invalid"):
+        await run(IMAGE_REQUEST, deps)
+
+
+@pytest.mark.parametrize("action", ["analyze", "revise", "commit"])
+async def test_v3_future_reference_date_rejected_before_quota(action):
+    deps, adapter, _ = make_setup()
+    request = (
+        {**IMAGE_REQUEST, "referenceDate": "2026-03-02"}
+        if action == "analyze"
+        else {
+            "requestId": REQUEST_ID,
+            "action": action,
+            "drafts": [client_draft()],
+            "referenceDate": "2026-03-02",
+            **({"text": "修正"} if action == "revise" else {}),
+        }
+    )
+    with pytest.raises(SemanticError, match="invalid_request"):
+        await run(request, deps)
+    adapter.consume_quota.assert_not_awaited()
+
+
+async def test_changed_generation_changes_hash_before_quota():
+    deps, adapter, store = make_setup()
+    original = input_hash_v4(IMAGE_REQUEST, [{"path": PATH, "generation": "17"}])
+    store.add(PATH, generation="18")
+
+    async def lookup(identifier, digest):
+        assert digest != original
+        assert digest == input_hash_v4(
+            IMAGE_REQUEST, [{"path": PATH, "generation": "18"}]
+        )
+        raise SemanticError(409, "conflict")
+
+    adapter.lookup_completed_v3.side_effect = lookup
+    with pytest.raises(SemanticError, match="conflict"):
+        await run(IMAGE_REQUEST, deps)
+    adapter.consume_quota.assert_not_awaited()
+    assert store.calls == [("metadata", PATH)]
+
+
+async def test_partial_nonreceipt_images_keep_remaining_receipt():
+    deps, adapter, store = make_setup()
+    second = "uploads/a/other.jpg"
+    store.add(second)
+    deps.extract_drafts.return_value["raw"]["nonReceiptImages"] = [1]
+    r = await run({**IMAGE_REQUEST, "images": [PATH, second]}, deps)
+    assert r["status"] == "created" and len(r["expenses"]) == 1
+    adapter.consume_quota.assert_awaited_once()
+
+
+async def test_image_path_ownership_precedes_all_store_calls():
+    deps, adapter, store = make_setup()
+    with pytest.raises(SemanticError, match="image_forbidden_path"):
+        await run({**IMAGE_REQUEST, "images": [PATH, "uploads/b/other.jpg"]}, deps)
+    assert store.calls == []
+    adapter.lookup_completed_v3.assert_not_awaited()
+    adapter.consume_quota.assert_not_awaited()
+
+
+@pytest.mark.parametrize("rejected", [False, True])
+async def test_text_v3_needs_input_and_rejected_use_contract(rejected):
+    deps, _, _ = make_setup()
+    deps.extract_entry.return_value["raw"].update(
+        {"unsupportedReason": "refund"} if rejected else {"amount": None}
+    )
+    r = await run({**REQUEST, "action": "analyze"}, deps)
+    assert r["status"] == ("rejected" if rejected else "needs_input")
+
+
+async def test_image_quota_denial_prevents_download_and_model():
+    deps, adapter, store = make_setup()
+    adapter.consume_quota.return_value = False
+    with pytest.raises(SemanticError, match="quota_exceeded"):
+        await run(IMAGE_REQUEST, deps)
+    assert store.calls == [("metadata", PATH)]
+    deps.extract_drafts.assert_not_awaited()

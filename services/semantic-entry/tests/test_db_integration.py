@@ -406,3 +406,111 @@ async def test_batch_invalid_length(db, size):
 async def test_batch_anonymous_rpc_denied(db):
     response = await create_batch(db, "anon", str(uuid4()), [payload()])
     assert not response.is_success
+
+
+def batch_adapter_client(db):
+    from semantic_entry.supabase import SupabaseAdapter
+
+    async def forward(request):
+        # Exercise the real adapter wire format through the fixture's caller JWT.
+        path = request.url.path.removeprefix("/rest/v1")
+        return await db(
+            "a",
+            request.method,
+            path,
+            json.loads(request.content) if request.content else None,
+            dict(request.url.params),
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(forward))
+    adapter = SupabaseAdapter(
+        client,
+        "http://localhost",
+        jwt("anon"),
+        {},
+        jwt("authenticated", "a@example.test"),
+    )
+    return client, adapter
+
+
+async def set_batch_adapter_identity(db, adapter, identifier):
+    ledger = await db(
+        "a",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    ledger.raise_for_status()
+    adapter.verified = {"id": ledger.json()[0]["user_id"], "email": "a@example.test"}
+
+
+async def test_adapter_batch_success_replay_lookup_and_v2_guard(db):
+    from semantic_entry.errors import SemanticError
+
+    identifier = str(uuid4())
+    client, adapter = batch_adapter_client(db)
+    async with client:
+        first = await adapter.persist_expenses(
+            identifier, "a" * 64, [payload(), payload()]
+        )
+        assert len(first["expenses"]) == 2 and first["replayed"] is False
+        replay = await adapter.persist_expenses(
+            identifier, "a" * 64, [payload(), payload()]
+        )
+        assert replay == {**first, "replayed": True}
+        await set_batch_adapter_identity(db, adapter, identifier)
+        assert await adapter.lookup_completed_v3(identifier, "a" * 64) == replay
+        with pytest.raises(SemanticError) as exc:
+            await adapter.lookup_completed(identifier, "a" * 64)
+        assert exc.value.status == 409 and exc.value.code == "unsupported_version"
+
+
+async def test_adapter_batch_second_row_rejected_atomically(db):
+    from semantic_entry.errors import SemanticError
+
+    identifier = str(uuid4())
+    before = await batch_expense_ids(db)
+    client, adapter = batch_adapter_client(db)
+    async with client:
+        with pytest.raises(SemanticError) as exc:
+            await adapter.persist_expenses(
+                identifier, "a" * 64, [payload(), {**payload(), "currency": "USD"}]
+            )
+        assert exc.value.status == 422 and exc.value.code == "rpc_rejected"
+        assert exc.value.diagnostics["rowIndex"] == 1
+    assert await batch_expense_ids(db) == before
+    ledger = await db(
+        "admin",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    assert ledger.json() == []
+
+
+async def test_adapter_single_rpc_after_batch_is_certain_conflict(db):
+    from semantic_entry.errors import SemanticError
+
+    client, adapter = batch_adapter_client(db)
+    async with client:
+        identifier = str(uuid4())
+        await adapter.persist_expenses(identifier, "a" * 64, [payload(), payload()])
+        with pytest.raises(SemanticError) as exc:
+            await adapter.persist_expense(identifier, "a" * 64, payload())
+        assert (
+            exc.value.status == 409
+            and exc.value.code == "conflict"
+            and not exc.value.uncertain
+        )
+
+
+async def test_adapter_batch_different_hash_conflicts(db):
+    from semantic_entry.errors import SemanticError
+
+    client, adapter = batch_adapter_client(db)
+    async with client:
+        identifier = str(uuid4())
+        await adapter.persist_expenses(identifier, "a" * 64, [payload()])
+        with pytest.raises(SemanticError) as exc:
+            await adapter.persist_expenses(identifier, "b" * 64, [payload()])
+        assert exc.value.status == 409 and exc.value.code == "conflict"

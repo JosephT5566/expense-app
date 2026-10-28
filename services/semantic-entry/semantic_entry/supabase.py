@@ -55,8 +55,23 @@ class SupabaseAdapter:
                     code = ""
                 if code in {f"PT{s}" for s in (400, 401, 403, 409, 422, 429)}:
                     status = int(code[2:])
+                    diagnostics: JSON = {}
+                    if status == 422:
+                        try:
+                            details = json.loads(response.json().get("details", ""))
+                            index = (
+                                details.get("index")
+                                if isinstance(details, dict)
+                                else None
+                            )
+                            if type(index) is int and index >= 0:
+                                diagnostics["rowIndex"] = index
+                        except (ValueError, TypeError):
+                            pass
                     raise SemanticError(
-                        status, "conflict" if status == 409 else "rpc_rejected"
+                        status,
+                        "conflict" if status == 409 else "rpc_rejected",
+                        diagnostics=diagnostics,
                     )
                 raise SemanticError(
                     504 if uncertain else 502,
@@ -152,6 +167,11 @@ class SupabaseAdapter:
             raise SemanticError(502, "database_invalid")
         if input_hash and data[0].get("input_hash") != input_hash:
             raise SemanticError(409, "conflict")
+        if (
+            isinstance(data[0].get("result"), dict)
+            and data[0]["result"].get("batch") is True
+        ):
+            raise SemanticError(409, "unsupported_version")
         try:
             return {
                 "expense": database_expense(data[0].get("result")),
@@ -183,7 +203,78 @@ class SupabaseAdapter:
         )
         try:
             result = dict(object_(data))
+            if isinstance(result.get("expense"), dict) and "batch" in result["expense"]:
+                raise SemanticError(409, "conflict")
             result["expense"] = database_expense(result.get("expense"))
             return parse_completed_result(result)
+        except (ValueError, TypeError):
+            raise SemanticError(504, "persist_uncertain", True) from None
+
+    async def lookup_completed_v3(
+        self, request_id: str, input_hash: str | None = None
+    ) -> JSON | None:
+        if not self.verified:
+            raise SemanticError(401, "unauthorized")
+        data = await self.call(
+            "GET",
+            "/rest/v1/semantic_entry_requests",
+            params={
+                "select": "input_hash,result",
+                "user_id": f"eq.{self.verified['id']}",
+                "request_id": f"eq.{request_id}",
+            },
+        )
+        if data == []:
+            return None
+        if (
+            not isinstance(data, list)
+            or len(data) != 1
+            or not isinstance(data[0], dict)
+        ):
+            raise SemanticError(502, "database_invalid")
+        if input_hash and data[0].get("input_hash") != input_hash:
+            raise SemanticError(409, "conflict")
+        try:
+            result = object_(data[0].get("result"))
+            if result.get("batch") is True:
+                if set(result) != {"batch", "expenses"}:
+                    raise ValueError("Invalid batch snapshot")
+                expenses = self.batch_rows(result["expenses"])
+            else:
+                expenses = [database_expense(result)]
+            return {"expenses": expenses, "replayed": True}
+        except (ValueError, TypeError):
+            raise SemanticError(502, "database_invalid") from None
+
+    @staticmethod
+    def batch_rows(raw: object) -> list[JSON]:
+        if not isinstance(raw, list) or not 1 <= len(raw) <= 20:
+            raise ValueError("Invalid expense batch")
+        return [database_expense(row) for row in raw]
+
+    async def persist_expenses(
+        self, request_id: str, input_hash: str, expenses: list[JSON]
+    ) -> JSON:
+        data = await self.call(
+            "POST",
+            "/rest/v1/rpc/create_semantic_expenses",
+            body={
+                "p_request_id": request_id,
+                "p_input_hash": input_hash,
+                "p_expenses": expenses,
+            },
+            uncertain=True,
+        )
+        try:
+            result = object_(data)
+            if (
+                set(result) != {"expenses", "replayed"}
+                or type(result["replayed"]) is not bool
+            ):
+                raise ValueError("Invalid batch response")
+            rows = self.batch_rows(result["expenses"])
+            if len(rows) != len(expenses):
+                raise ValueError("Batch length mismatch")
+            return {"expenses": rows, "replayed": result["replayed"]}
         except (ValueError, TypeError):
             raise SemanticError(504, "persist_uncertain", True) from None
