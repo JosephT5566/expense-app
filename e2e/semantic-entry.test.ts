@@ -3259,6 +3259,10 @@ test('ten minutes plus a not_found check expires an item; the badge drops it and
 	);
 	await submit(page);
 	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	// The badge appears before the POST; wait until the interrupted stream has settled into
+	// the uncertain state so the fast-forward cannot fire the request timeout first.
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
 	await page.clock.runFor(9 * 60_000);
 	await trayAction(page, '查詢結果');
 	await expect.poll(() => queries).toBeGreaterThan(0);
