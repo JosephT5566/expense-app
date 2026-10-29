@@ -2702,6 +2702,107 @@ test('editing drafts after a pre-persist commit failure creates a fresh commit i
 	expect(await pending(page)).toBeNull();
 });
 
+for (const revise of ['failed', 'changed'] as const) {
+	test(`commit after a pre-persist commit failure and a ${revise} revise ${revise === 'failed' ? 'reuses' : 'replaces'} the commit id`, async ({
+		page
+	}) => {
+		const drafts = [1, 2, 3].map(makeDraft);
+		let commits = 0;
+		const s = await setup(page, async (route, body) => {
+			if (body!.action === 'analyze') {
+				await route.fulfill({ json: draftResponse(body!.requestId, drafts) });
+			} else if (body!.action === 'revise') {
+				if (revise === 'failed') {
+					await route.abort();
+				} else {
+					const next = drafts.map((draft, index) =>
+						index === 2 ? { ...draft, note: { ...draft.note, value: '午餐' } } : draft
+					);
+					await route.fulfill({ json: draftResponse(body!.requestId, next) });
+				}
+			} else if (++commits === 1) {
+				await route.abort();
+			} else {
+				await route.fulfill({ json: { ...created(body!.requestId), expenses: batchRows } });
+			}
+		});
+		await startDrafts(page);
+		await commitDrafts(page).click();
+		await expect(page.getByText(/未記帳：/)).toBeVisible();
+		await page.getByLabel('補充草稿').fill('第三筆是午餐');
+		await page.getByRole('button', { name: '送出補充', exact: true }).click();
+		if (revise === 'failed') {
+			await expect(page.getByText(/沒有更新草稿：/)).toBeVisible();
+		} else {
+			await expect(page.getByText('已更新草稿。', { exact: true })).toBeVisible();
+		}
+		await commitDrafts(page).click();
+		await expect(page.getByRole('group', { name: '已記帳摘要' })).toBeVisible();
+		expect(s.posts.map((post) => post.action)).toEqual([
+			'analyze',
+			'commit',
+			'revise',
+			'commit'
+		]);
+		const [, first, , second] = s.posts;
+		if (revise === 'failed') {
+			expect(second.requestId).toBe(first.requestId);
+			expect(second.referenceDate).toBe(first.referenceDate);
+			expect(second.drafts).toEqual(first.drafts);
+			expect(second).toEqual(first);
+		} else {
+			expect(second.requestId).not.toBe(first.requestId);
+			expect(second.drafts).not.toEqual(first.drafts);
+		}
+		expect(await pending(page)).toBeNull();
+	});
+}
+
+test('account switch while the dialog is closed leaves only lookup for the pending item', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	const original = await pending(page);
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	// The header avatar initial shows which account the store holds while the dialog is closed.
+	const avatar = page.locator('header .rounded-full').last();
+	await expect(avatar).toHaveText('S');
+	const switchAccount = (other: boolean) =>
+		page.evaluate(
+			({ storageKey, session, other }) => {
+				const next = other
+					? {
+							...session,
+							user: {
+								...session.user,
+								id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+								email: 'b@example.test',
+								user_metadata: { name: 'Other' }
+							}
+						}
+					: session;
+				localStorage.setItem(storageKey, JSON.stringify(next));
+				const channel = new BroadcastChannel(storageKey);
+				channel.postMessage({ event: 'SIGNED_IN', session: next });
+				channel.close();
+			},
+			{ storageKey: s.storageKey, session: s.session, other }
+		);
+	await switchAccount(true);
+	await expect(avatar).toHaveText('O');
+	await switchAccount(false);
+	await expect(avatar).toHaveText('S');
+	await reopen(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '重試同一請求', exact: true })).toHaveCount(0);
+	expect(await pending(page)).toBe(original);
+	expect(s.posts).toHaveLength(1);
+});
+
 test('clarification failure before persisting retains the same answered request id and history', async ({
 	page
 }) => {

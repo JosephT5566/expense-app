@@ -1,9 +1,28 @@
 <script lang="ts" module>
 	import { SvelteMap } from 'svelte/reactivity';
+	import { browser } from '$app/environment';
+	import { user as sessionUser } from '$lib/stores/session.store';
 	import type { SemanticRequestV3 as AttemptRequest } from '@jopie/semantic-entry-contract';
 	// Full retry payloads live in memory for the page lifetime so closing the dialog keeps
 	// 「重試同一請求」; a reload keeps only the localStorage metadata and status lookup.
 	const attempts = new SvelteMap<string, AttemptRequest & { accountId: string }>();
+	if (browser) {
+		// The dialog unmounts this component while closed, so prune here at module level:
+		// any account change drops every other account's full payload, leaving lookup only.
+		let observedAccount: string | undefined;
+		sessionUser.subscribe((value) => {
+			const next = value?.id;
+			if (next === observedAccount) {
+				return;
+			}
+			observedAccount = next;
+			for (const [id, retained] of attempts) {
+				if (retained.accountId !== next) {
+					attempts.delete(id);
+				}
+			}
+		});
+	}
 </script>
 
 <script lang="ts">
@@ -141,6 +160,9 @@
 	let focusedId = $state<string | null>(null);
 	let pendingItems = $state<PendingItem[]>([]);
 	let failedAttempt: (SemanticRequestV3 & { accountId: string }) | null = null;
+	// The last commit sent for the current drafts. A later revise (successful or failed)
+	// does not replace it, so an unchanged batch resends with the same requestId (§7).
+	let retainedCommit: (SemanticRequestV3 & { accountId: string }) | null = null;
 	let seenPersisting = false;
 	let recovering = false;
 	let limitHint = $state('');
@@ -195,6 +217,7 @@
 		conversation.forEach((entry) => entry.images?.forEach((url) => URL.revokeObjectURL(url)));
 		conversation = [];
 		session = null;
+		retainedCommit = null;
 		editingDrafts = false;
 		revised = false;
 		serverDraftIssues = {};
@@ -414,6 +437,7 @@
 					}
 				}
 				failedAttempt = null;
+				retainedCommit = null;
 				pendingItems = [];
 				accountId = next;
 				revision++;
@@ -569,6 +593,7 @@
 			attempts.delete(focusedId);
 		}
 		failedAttempt = null;
+		retainedCommit = null;
 		focusedId = null;
 		message = refreshFailed
 			? '先前請求已完成，但清單更新失敗，請重新整理。'
@@ -655,22 +680,18 @@
 					drafts: attempt.drafts
 				});
 			} else {
+				// Reuse the earlier commit identity only while the normalized drafts are unchanged.
+				const reuse =
+					action === 'commit' &&
+					retainedCommit?.accountId === owner &&
+					JSON.stringify(drafts.map(toClientDraft).map(parseClientDraftV3)) ===
+						JSON.stringify(retainedCommit.drafts)
+						? retainedCommit
+						: null;
 				request = parseRequestV3({
 					action,
-					requestId:
-						action === 'commit' &&
-						attempt?.action === 'commit' &&
-						JSON.stringify(drafts.map(toClientDraft).map(parseClientDraftV3)) ===
-							JSON.stringify(attempt.drafts)
-							? attempt.requestId
-							: freshRequestId(),
-					referenceDate:
-						action === 'commit' &&
-						attempt?.action === 'commit' &&
-						JSON.stringify(drafts.map(toClientDraft).map(parseClientDraftV3)) ===
-							JSON.stringify(attempt.drafts)
-							? attempt.referenceDate
-							: draftContext.today,
+					requestId: reuse?.requestId ?? freshRequestId(),
+					referenceDate: reuse?.referenceDate ?? draftContext.today,
 					drafts: drafts.map(toClientDraft),
 					...(action === 'revise' ? { text } : {})
 				});
@@ -701,6 +722,9 @@
 			return;
 		}
 		attempt = { ...request, accountId: owner };
+		if (action === 'commit') {
+			retainedCommit = attempt;
+		}
 		focusedId = action === 'commit' ? request.requestId : null;
 		if (action === 'revise') {
 			conversation.push({ role: 'user', text: text.trim() });
@@ -738,6 +762,10 @@
 			if (result.status === 'created') {
 				await accept(result, version, owner);
 				return;
+			}
+			if (action === 'commit') {
+				// Any non-created commit result is final for this id: nothing was written.
+				retainedCommit = null;
 			}
 			if (retry) {
 				// A replayed non-created commit result is final: nothing was written for this id.
@@ -1011,6 +1039,9 @@
 					if (item && pending.isPastWindow(item, Date.now())) {
 						pendingItems = pending.markExpired(owner, id, Date.now());
 						attempts.delete(id);
+						if (retainedCommit?.requestId === id) {
+							retainedCommit = null;
+						}
 						attempt = null;
 						focusedId = null;
 						phase = 'input';
