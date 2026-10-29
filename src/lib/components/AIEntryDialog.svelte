@@ -3,6 +3,7 @@
 	import { Button } from '$lib/components/shadcn/button';
 	import X from 'lucide-svelte/icons/x';
 	import SemanticEntryContent from './semantic-entry/SemanticEntryContent.svelte';
+	import type { Snippet } from 'svelte';
 
 	let {
 		open = $bindable(false)
@@ -12,6 +13,8 @@
 
 	let semanticContent = $state<SemanticEntryContent>();
 	let busy = $state(false);
+	// The pending badge and its tray, rendered beside the title by SemanticEntryContent.
+	let header = $state<Snippet>();
 
 	function requestClose() {
 		semanticContent?.requestClose();
@@ -50,13 +53,17 @@
 			</Button>
 		{/if}
 		<Dialog.Header class="pr-8 text-left">
-			<Dialog.Title>AI 記帳</Dialog.Title>
+			<div class="relative flex items-center gap-2">
+				<Dialog.Title>AI 記帳</Dialog.Title>
+				{@render header?.()}
+			</div>
 			<Dialog.Description class="sr-only">用文字或收據圖片新增支出。</Dialog.Description>
 		</Dialog.Header>
 		<div class="flex-1 overflow-y-auto px-1">
 			<SemanticEntryContent
 				bind:this={semanticContent}
 				bind:busy
+				bind:header
 				onClose={() => (open = false)}
 			/>
 		</div>
