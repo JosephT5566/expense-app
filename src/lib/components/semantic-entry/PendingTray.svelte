@@ -157,15 +157,8 @@
 					<li
 						class="flex items-center gap-2 rounded-[10px] border border-slate-200 bg-slate-100 px-2.5 py-2 text-slate-500"
 					>
-						<div class="min-w-0 flex-1">
-							<p class="truncate text-[13px] font-medium">{title(item)}</p>
-							{#if item.submittedAt !== null}
-								<p class="mt-0.5 flex items-center gap-1.5 text-[11px]">
-									{sentAt(item.submittedAt)}
-									{@render kindTag(item)}
-								</p>
-							{/if}
-						</div>
+						<!-- §5: an expired row shows only 已過期 and ×, with no other description. -->
+						<span class="flex-1" aria-hidden="true"></span>
 						<span class="shrink-0 text-xs font-semibold text-slate-600">已過期</span>
 						<Button
 							variant="ghost"

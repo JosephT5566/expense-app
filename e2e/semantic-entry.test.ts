@@ -2396,7 +2396,7 @@ for (const outcome of ['not_found', 'failure', 'completed'] as const) {
 		await page.clock.setFixedTime(new Date('2026-10-01T12:10:00+08:00'));
 		await trayAction(page, '查詢結果');
 		if (outcome === 'not_found') {
-			await expect(trayRows(page).first()).toContainText('已過期');
+			await expect(trayRows(page).first()).toHaveText(/^\s*已過期\s*$/);
 			await expect(
 				trayRows(page).first().getByRole('button', { name: '關閉已過期項目', exact: true })
 			).toBeVisible();
@@ -3139,7 +3139,7 @@ test('tray rows show Taipei time, kind, snippet and close only the popover', asy
 		/^（圖片，未存文字）\s*10\/01 11:59 送出\s*圖片 2 張\s*待確認\s*$/,
 		/^🍜一二三四五六七八九十甲…\s*10\/01 11:58 送出\s*文字\s*待確認\s*$/,
 		/^（草稿，未存內容）\s*10\/01 11:57 送出\s*確認 3 筆草稿\s*待確認\s*$/,
-		/^早餐\s*10\/01 11:40 送出\s*文字\s*已過期\s*$/
+		/^\s*已過期\s*$/
 	]);
 	await expect(page.getByRole('button', { name: '查詢結果' })).toHaveCount(0);
 	await expandPending(page, 1);
@@ -3267,7 +3267,8 @@ test('ten minutes plus a not_found check expires an item; the badge drops it and
 	// The 60-second check runs the not_found lookup once the window has passed; the
 	// submit happened a moment after the interval started, so allow one more tick.
 	await page.clock.runFor(2 * 60_000);
-	await expect(trayRows(page).first()).toContainText('已過期');
+	// §5: the expired row keeps only 已過期 and ×, without the snippet, time or kind.
+	await expect(trayRows(page).first()).toHaveText(/^\s*已過期\s*$/);
 	await expect(page.getByRole('button', { name: '待確認', exact: true })).toBeVisible();
 	await expect(page.getByRole('button', { name: '查詢結果' })).toHaveCount(0);
 	expect((await pendingItems(page))[0].expiredAt).toEqual(expect.any(Number));
@@ -3294,7 +3295,7 @@ test('seen expired items clear only when the tray closes', async ({ page }) => {
 		false
 	]);
 	await openPendingTray(page);
-	await expect(trayRows(page).nth(1)).toContainText('已過期');
+	await expect(trayRows(page).nth(1)).toHaveText(/^\s*已過期\s*$/);
 	// (c) A reload while the tray is open is not a close.
 	await page.reload();
 	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0, {
@@ -3311,7 +3312,7 @@ test('seen expired items clear only when the tray closes', async ({ page }) => {
 	await expandPending(page);
 	// The 60-second check looks the item up once its window passes.
 	await page.clock.runFor(5 * 60_000);
-	await expect(trayRows(page).first()).toContainText('已過期');
+	await expect(trayRows(page).first()).toHaveText(/^\s*已過期\s*$/);
 	await expect(page.getByRole('button', { name: '待確認', exact: true })).toBeVisible();
 	await pendingBadge(page).click();
 	await expect(pendingTray(page)).toHaveCount(0);
