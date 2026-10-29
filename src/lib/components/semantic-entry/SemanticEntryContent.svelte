@@ -1,3 +1,11 @@
+<script lang="ts" module>
+	import { SvelteMap } from 'svelte/reactivity';
+	import type { SemanticRequestV3 as AttemptRequest } from '@jopie/semantic-entry-contract';
+	// Full retry payloads live in memory for the page lifetime so closing the dialog keeps
+	// 「重試同一請求」; a reload keeps only the localStorage metadata and status lookup.
+	const attempts = new SvelteMap<string, AttemptRequest & { accountId: string }>();
+</script>
+
 <script lang="ts">
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
@@ -5,6 +13,8 @@
 	import Paperclip from 'lucide-svelte/icons/paperclip';
 	import Camera from 'lucide-svelte/icons/camera';
 	import X from 'lucide-svelte/icons/x';
+	import * as pending from './pending';
+	import type { PendingItem } from './pending';
 	import CreatedSummary from './CreatedSummary.svelte';
 	import DraftBlock from './DraftBlock.svelte';
 	import DraftEditDialog from './DraftEditDialog.svelte';
@@ -34,6 +44,7 @@
 	} from '$lib/data/semantic-entry.fetcher';
 	import {
 		parseRequestV3,
+		parseClientDraftV3,
 		MAX_IMAGE_BYTES,
 		MAX_TOTAL_IMAGE_BYTES,
 		UPLOAD_IMAGE_TYPES,
@@ -127,7 +138,12 @@
 	let history = $state<ClarificationTurn[]>([]);
 	let question = $state('');
 	let reply = $state('');
-	let pendingId = $state<string | null>(null);
+	let focusedId = $state<string | null>(null);
+	let pendingItems = $state<PendingItem[]>([]);
+	let failedAttempt: (SemanticRequestV3 & { accountId: string }) | null = null;
+	let seenPersisting = false;
+	let recovering = false;
+	let limitHint = $state('');
 	let savedExpense = $state<ExpenseRow | null>(null);
 	const processing = $derived(phase === 'processing' || phase === 'persisting');
 	$effect(() => {
@@ -265,39 +281,80 @@
 	let controller: AbortController | undefined;
 	let accountId: string | undefined;
 	let destroyed = false;
-	const pendingKey = (owner: string) => `jopie:semantic-pending:${owner}`;
-	function clearPending(owner: string) {
-		try {
-			localStorage.removeItem(pendingKey(owner));
-		} catch {
-			/* A stale key remains recoverable by lookup. */
+	function clearPending(owner: string, id = focusedId) {
+		if (!id) {
+			return;
 		}
+		try {
+			const items = pending.remove(owner, id);
+			if (owner === accountId) {
+				pendingItems = items;
+			}
+		} catch {
+			/* A stale item remains recoverable by lookup. */
+		}
+	}
+	function focusLatest() {
+		focusedId =
+			pendingItems
+				.filter((item) => item.expiredAt == null)
+				.sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0))[0]?.requestId ?? null;
+		phase = focusedId ? 'uncertain' : 'input';
 	}
 	function restorePending(owner: string) {
 		try {
-			const saved = localStorage.getItem(pendingKey(owner));
-			if (!saved) {
-				return;
+			pendingItems = pending.load(owner, Date.now());
+			for (const id of attempts.keys()) {
+				if (
+					!pendingItems.some((item) => item.requestId === id && item.expiredAt === null)
+				) {
+					attempts.delete(id);
+				}
 			}
-			const raw = JSON.parse(saved);
-			// Read legacy UUIDs without restoring their text/history, then minimize storage.
-			const id = parseRequestV3({
-				action: 'analyze',
-				requestId: raw.requestId,
-				text: 'status'
-			}).requestId;
-			localStorage.setItem(pendingKey(owner), JSON.stringify({ requestId: id }));
-			pendingId = id;
-			phase = 'uncertain';
+			focusLatest();
 		} catch {
 			phase = 'error';
 			message = '無法讀取先前請求，請先檢查此網站的儲存設定。';
 		}
 	}
+	function freshRequestId() {
+		let id = crypto.randomUUID();
+		while (pendingItems.some((item) => item.requestId === id)) {
+			id = crypto.randomUUID();
+		}
+		return id;
+	}
+	function atLimit() {
+		if (pending.activeCount(pendingItems) < pending.PENDING_LIMIT) {
+			return false;
+		}
+		limitHint = '已有3筆待確認，暫時無法建立新對話';
+		return true;
+	}
+	function retainAttempt() {
+		if (attempt && focusedId) {
+			attempts.set(focusedId, attempt);
+		}
+	}
+	function interruptPending() {
+		if (!processing || !accountId || recovering) {
+			return;
+		}
+		if (seenPersisting && attempt?.action !== 'revise') {
+			retainAttempt();
+		} else {
+			if (!uploading && attempt?.action === 'analyze') {
+				failedAttempt = attempt;
+			}
+			clearPending(accountId);
+		}
+	}
 	const count = $derived([...text.trim()].length);
 	const replyCount = $derived([...reply.trim()].length);
 	const composingReply = $derived(phase === 'needs_input');
-	const canCompose = $derived(phase === 'input' || phase === 'drafts' || composingReply);
+	const canCompose = $derived(
+		phase === 'input' || phase === 'drafts' || phase === 'uncertain' || composingReply
+	);
 	const attachmentsDisabled = $derived(
 		!canCompose || !!session || composingReply || converting || selectedImages.length >= 4
 	);
@@ -350,14 +407,19 @@
 		const next = $user?.id;
 		untrack(() => {
 			if (next !== accountId) {
-				if ((uploading || attempt?.action === 'revise') && accountId) {
-					clearPending(accountId);
+				interruptPending();
+				for (const [id, retained] of attempts) {
+					if (retained.accountId !== next) {
+						attempts.delete(id);
+					}
 				}
+				failedAttempt = null;
+				pendingItems = [];
 				accountId = next;
 				revision++;
 				controller?.abort();
 				attempt = null;
-				pendingId = null;
+				focusedId = null;
 				history = [];
 				question = '';
 				reply = '';
@@ -376,9 +438,8 @@
 		});
 	});
 	onDestroy(() => {
-		if ((uploading || attempt?.action === 'revise') && accountId) {
-			clearPending(accountId);
-		}
+		interruptPending();
+		failedAttempt = null;
 		analysis = '';
 		clearConversation();
 		clearImages();
@@ -398,15 +459,18 @@
 			return;
 		}
 		if (!next) {
-			const uncertain = phase === 'uncertain';
 			newOperation();
-			if (uncertain) {
-				phase = 'uncertain';
-			}
+			focusLatest();
 		}
 		onClose();
 	}
 	function newOperation(clear = true) {
+		const failedReply =
+			!clear && failedAttempt?.action === 'analyze' && failedAttempt.history?.length
+				? failedAttempt
+				: null;
+		focusedId = null;
+		limitHint = '';
 		analysis = '';
 		clearConversation();
 		clearImages();
@@ -422,6 +486,13 @@
 			text = '';
 		}
 		phase = 'input';
+		if (failedReply?.history?.length) {
+			attempt = failedReply;
+			history = failedReply.history.slice(0, -1);
+			question = failedReply.history[failedReply.history.length - 1].question;
+			reply = failedReply.history[failedReply.history.length - 1].answer;
+			phase = 'needs_input';
+		}
 		issues = [];
 		message = '';
 	}
@@ -429,6 +500,7 @@
 		return !destroyed && version === revision && get(user)?.id === owner;
 	}
 	function leavePage() {
+		interruptPending();
 		const interruptedUpload = uploading;
 		const interruptedRevision = attempt?.action === 'revise';
 		analysis = '';
@@ -440,7 +512,7 @@
 			if (accountId) {
 				clearPending(accountId);
 			}
-			pendingId = null;
+			focusedId = null;
 			attempt = null;
 			phase = 'error';
 			message = '圖片上傳失敗，請稍後再試。';
@@ -448,12 +520,15 @@
 			if (accountId) {
 				clearPending(accountId);
 			}
-			pendingId = null;
+			focusedId = null;
 			attempt = null;
 			phase = 'input';
 		} else if (processing) {
-			phase = 'uncertain';
-			message = '結果待確認，請查詢結果。';
+			phase = seenPersisting || recovering ? 'uncertain' : 'error';
+			message =
+				seenPersisting || recovering
+					? '結果待確認，請查詢結果。'
+					: '解析服務無法完成，請稍後再試。';
 		}
 	}
 	async function accept(
@@ -490,7 +565,11 @@
 			return;
 		}
 		clearPending(owner);
-		pendingId = null;
+		if (focusedId) {
+			attempts.delete(focusedId);
+		}
+		failedAttempt = null;
+		focusedId = null;
 		message = refreshFailed
 			? '先前請求已完成，但清單更新失敗，請重新整理。'
 			: result.replayed
@@ -520,6 +599,7 @@
 			phase = 'input';
 		} else {
 			savedExpense = result.expenses[0];
+			attempt = null;
 			phase = 'created';
 		}
 	}
@@ -543,13 +623,22 @@
 		return '解析服務無法完成';
 	}
 	async function executeDraft(action: 'revise' | 'commit', retry = false) {
-		if (!$user || !session || processing || converting || (phase === 'uncertain' && !retry)) {
+		if (
+			!$user ||
+			(!session && !retry) ||
+			processing ||
+			converting ||
+			(phase === 'uncertain' && !retry)
+		) {
 			return;
 		}
 		if (!retry && action === 'commit' && (!drafts.length || !drafts.every(isComplete))) {
 			return;
 		}
 		if (action === 'revise' && (!text.trim() || count > 500)) {
+			return;
+		}
+		if (!retry && action === 'commit' && atLimit()) {
 			return;
 		}
 		const owner = $user.id;
@@ -568,16 +657,42 @@
 			} else {
 				request = parseRequestV3({
 					action,
-					requestId: crypto.randomUUID(),
-					referenceDate: draftContext.today,
+					requestId:
+						action === 'commit' &&
+						attempt?.action === 'commit' &&
+						JSON.stringify(drafts.map(toClientDraft).map(parseClientDraftV3)) ===
+							JSON.stringify(attempt.drafts)
+							? attempt.requestId
+							: freshRequestId(),
+					referenceDate:
+						action === 'commit' &&
+						attempt?.action === 'commit' &&
+						JSON.stringify(drafts.map(toClientDraft).map(parseClientDraftV3)) ===
+							JSON.stringify(attempt.drafts)
+							? attempt.referenceDate
+							: draftContext.today,
 					drafts: drafts.map(toClientDraft),
 					...(action === 'revise' ? { text } : {})
 				});
 			}
-			localStorage.setItem(
-				pendingKey(owner),
-				JSON.stringify({ requestId: request.requestId })
-			);
+			if (action === 'commit' && !retry) {
+				const items = pending.add(
+					owner,
+					{
+						requestId: request.requestId,
+						submittedAt: Date.now(),
+						kind: 'commit',
+						draftCount: request.drafts?.length ?? 0,
+						expiredAt: null
+					},
+					Date.now()
+				);
+				if (!items) {
+					return;
+				}
+				pendingItems = items;
+			}
+			limitHint = '';
 		} catch {
 			conversation.push({
 				role: 'assistant',
@@ -586,7 +701,7 @@
 			return;
 		}
 		attempt = { ...request, accountId: owner };
-		pendingId = request.requestId;
+		focusedId = action === 'commit' ? request.requestId : null;
 		if (action === 'revise') {
 			conversation.push({ role: 'user', text: text.trim() });
 			text = '';
@@ -595,6 +710,8 @@
 		const version = ++revision;
 		controller = new AbortController();
 		phase = 'processing';
+		seenPersisting = false;
+		recovering = retry;
 		analysis = '';
 		message = '';
 		draftWarning = '';
@@ -605,6 +722,7 @@
 				controller.signal,
 				() => {
 					if (stillCurrent(version, owner)) {
+						seenPersisting = true;
 						phase = 'persisting';
 					}
 				},
@@ -620,6 +738,23 @@
 			if (result.status === 'created') {
 				await accept(result, version, owner);
 				return;
+			}
+			if (retry) {
+				// A replayed non-created commit result is final: nothing was written for this id.
+				attempts.delete(request.requestId);
+				if (!session) {
+					clearPending(owner, request.requestId);
+					focusedId = null;
+					attempt = null;
+					draftWarning = '';
+					analysis = '';
+					phase = 'input';
+					conversation.push({
+						role: 'assistant',
+						text: `未記帳：${request.drafts?.length ?? 0} 筆都沒有寫入`
+					});
+					return;
+				}
 			}
 			if (result.status === 'drafts') {
 				const responseAnalysis = analysis;
@@ -666,7 +801,7 @@
 			}
 			analysis = '';
 			clearPending(owner);
-			pendingId = null;
+			focusedId = null;
 			attempt = null;
 		} catch (error) {
 			if (!stillCurrent(version, owner)) {
@@ -674,9 +809,12 @@
 			}
 			if (
 				action === 'commit' &&
-				(retry || !(error instanceof SemanticEntryError) || error.uncertain)
+				(retry ||
+					seenPersisting ||
+					(error instanceof SemanticEntryError && error.persisting))
 			) {
 				phase = 'uncertain';
+				retainAttempt();
 				draftWarning =
 					error instanceof SemanticEntryError && error.code === 'persist_uncertain'
 						? '伺服器無法確認寫入結果。重新確認不會重複記帳。'
@@ -690,25 +828,61 @@
 							: `未記帳：${draftError(error)}`
 				});
 				clearPending(owner);
-				pendingId = null;
-				attempt = null;
+				focusedId = null;
+				if (action === 'revise') {
+					attempt = null;
+				}
 				phase = 'drafts';
 				analysis = '';
 			}
 		}
 	}
-	async function execute(query = false) {
-		if (phase === 'drafts' && !query) {
+	async function queryPending(id: string | null) {
+		if (id) {
+			await execute(true, id);
+		}
+	}
+	async function retryPending(id: string | null) {
+		if (!id || !attempts.has(id)) {
+			return;
+		}
+		attempt = attempts.get(id) ?? null;
+		focusedId = id;
+		if (attempt?.action === 'commit') {
+			await executeDraft('commit', true);
+		} else {
+			await execute(false, id);
+		}
+	}
+	async function execute(query = false, retryId?: string) {
+		if (phase === 'drafts' && !query && !retryId) {
 			await executeDraft('revise');
 			return;
 		}
-		if (processing || converting || !$user || (phase === 'uncertain' && !query && !attempt)) {
+		if (processing || converting || !$user) {
 			return;
+		}
+		if (!query && !retryId && atLimit()) {
+			return;
+		}
+		if (phase === 'uncertain' && !query && !retryId) {
+			// New input starts a separate conversation, including when a commit is pending.
+			// Do not resurrect an unrelated failed clarification reply into this new request.
+			if (failedAttempt?.history?.length) {
+				failedAttempt = null;
+			}
+			const images = selectedImages;
+			selectedImages = [];
+			newOperation(false);
+			selectedImages = images;
+		}
+		if (retryId) {
+			focusedId = retryId;
 		}
 		imageError = '';
 		let uploadContext: { requestId: string; referenceDate: string; text?: string } | undefined;
 		const filesToUpload = selectedImages.map((image) => image.file);
-		const hadUncertainty = phase === 'uncertain';
+		const hadUncertainty = !!retryId;
 		const owner = $user.id;
 		const outgoingText = query
 			? '查詢結果'
@@ -721,10 +895,32 @@
 			try {
 				const nextHistory =
 					phase === 'needs_input' ? [...history, { question, answer: reply }] : history;
+				// Image retries after a pre-persisting failure require selecting files again and a new ID.
+				const reusable =
+					!filesToUpload.length &&
+					!nextHistory.length &&
+					failedAttempt?.action === 'analyze' &&
+					!failedAttempt.images &&
+					!failedAttempt.history?.length &&
+					failedAttempt.text === text.trim().normalize('NFC')
+						? failedAttempt
+						: null;
+				const previous = phase === 'needs_input' ? attempt : reusable;
 				const identity = {
-					requestId: attempt?.requestId ?? crypto.randomUUID(),
+					requestId:
+						previous &&
+						failedAttempt?.requestId === previous.requestId &&
+						failedAttempt.history?.length &&
+						JSON.stringify(
+							nextHistory.map((turn) => ({
+								question: turn.question.trim().normalize('NFC'),
+								answer: turn.answer.trim().normalize('NFC')
+							}))
+						) !== JSON.stringify(failedAttempt.history)
+							? freshRequestId()
+							: (previous?.requestId ?? freshRequestId()),
 					referenceDate:
-						attempt?.referenceDate ??
+						previous?.referenceDate ??
 						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000))
 				};
 				if (count > 500) {
@@ -738,10 +934,24 @@
 							text,
 							...(nextHistory.length ? { history: nextHistory } : {})
 						});
-				localStorage.setItem(
-					pendingKey(owner),
-					JSON.stringify({ requestId: identity.requestId })
+				const items = pending.add(
+					owner,
+					{
+						requestId: identity.requestId,
+						submittedAt: Date.now(),
+						kind: 'analyze',
+						...(pending.snippetOf(text) ? { snippet: pending.snippetOf(text) } : {}),
+						...(filesToUpload.length ? { imageCount: filesToUpload.length } : {}),
+						expiredAt: null
+					},
+					Date.now()
 				);
+				if (!items) {
+					return;
+				}
+				pendingItems = items;
+				limitHint = '';
+				failedAttempt = null;
 				if (request) {
 					attempt = { ...request, accountId: owner };
 					history = request.history ?? [];
@@ -751,7 +961,7 @@
 						...(text.trim() ? { text: text.trim().normalize('NFC') } : {})
 					};
 				}
-				pendingId = identity.requestId;
+				focusedId = identity.requestId;
 				reply = '';
 			} catch {
 				message = '目前無法保留請求，請允許此網站儲存資料後再試。';
@@ -759,7 +969,7 @@
 			}
 		}
 		let operation = attempt;
-		const id = operation?.requestId ?? pendingId;
+		const id = retryId ?? operation?.requestId ?? focusedId;
 		if (!id) {
 			return;
 		}
@@ -782,6 +992,8 @@
 		const version = ++revision;
 		controller = new AbortController();
 		phase = 'processing';
+		seenPersisting = false;
+		recovering = query || !!retryId;
 		analysis = '';
 		message = '';
 		issues = [];
@@ -792,10 +1004,21 @@
 					return;
 				}
 				if (completed) {
+					attempt = attempts.get(id) ?? null;
 					await accept(completed, version, owner);
 				} else {
-					phase = 'uncertain';
-					message = '尚未查到完成結果，仍待確認。';
+					const item = pendingItems.find((item) => item.requestId === id);
+					if (item && pending.isPastWindow(item, Date.now())) {
+						pendingItems = pending.markExpired(owner, id, Date.now());
+						attempts.delete(id);
+						attempt = null;
+						focusedId = null;
+						phase = 'input';
+						conversation.push({ role: 'assistant', text: '已過期' });
+					} else {
+						phase = 'uncertain';
+						message = '尚未查到完成結果，仍待確認。';
+					}
 				}
 			} else if (operation || uploadContext) {
 				if (uploadContext) {
@@ -842,6 +1065,7 @@
 					controller.signal,
 					() => {
 						if (stillCurrent(version, owner)) {
+							seenPersisting = true;
 							phase = 'persisting';
 						}
 					},
@@ -861,7 +1085,7 @@
 					message = '本次解析未完成寫入，但先前請求結果仍待確認。';
 				} else {
 					clearPending(owner);
-					pendingId = null;
+					focusedId = null;
 					if (result.status === 'needs_input') {
 						question = result.question;
 						phase = 'needs_input';
@@ -886,11 +1110,15 @@
 				!failedUpload &&
 				(hadUncertainty ||
 					query ||
-					!(error instanceof SemanticEntryError) ||
-					error.uncertain);
+					seenPersisting ||
+					(error instanceof SemanticEntryError && error.persisting));
+			if (uncertain && !query) {
+				retainAttempt();
+			}
 			if (!uncertain) {
+				failedAttempt = attempt;
 				clearPending(owner);
-				pendingId = null;
+				focusedId = null;
 			}
 			phase = uncertain ? 'uncertain' : 'error';
 			message =
@@ -961,7 +1189,7 @@
 							<p class="font-semibold">無法確認是否已記帳</p>
 							<p>{draftWarning}</p>
 							<div class="flex gap-2">
-								<Button size="sm" onclick={() => executeDraft('commit', true)}
+								<Button size="sm" onclick={() => retryPending(focusedId)}
 									>重新確認</Button
 								><Button size="sm" variant="outline" onclick={requestClose}
 									>稍後再看</Button
@@ -1063,10 +1291,14 @@
 					</div>
 					<div class="flex flex-wrap gap-2">
 						{#if phase === 'uncertain' && !session}
-							<Button size="sm" onclick={() => execute(true)}>查詢結果</Button>
-							{#if attempt}
-								<Button size="sm" variant="outline" onclick={() => execute()}
-									>重試同一請求</Button
+							<Button size="sm" onclick={() => queryPending(focusedId)}
+								>查詢結果</Button
+							>
+							{#if focusedId && attempts.has(focusedId)}
+								<Button
+									size="sm"
+									variant="outline"
+									onclick={() => retryPending(focusedId)}>重試同一請求</Button
 								>
 							{/if}
 						{:else if phase === 'created'}
@@ -1084,7 +1316,7 @@
 
 	<div class="shrink-0 space-y-2">
 		<div class="text-muted-foreground flex items-start justify-between gap-3 px-1 text-xs">
-			<p id="semantic-entry-hint">{imageError || composerHint}</p>
+			<p id="semantic-entry-hint">{limitHint || imageError || composerHint}</p>
 			{#if canCompose}<span class="shrink-0 tabular-nums">{composerCount}/500</span>{/if}
 		</div>
 		{#if selectedImages.length}<div class="flex gap-2 px-1">
@@ -1149,6 +1381,7 @@
 				bind:value={
 					() => (composingReply ? reply : text),
 					(value) => {
+						limitHint = '';
 						if (composingReply) {
 							reply = value;
 						} else {
