@@ -3473,3 +3473,60 @@ test('a device clock earlier than submit time never expires the item', async ({ 
 	expect((await pendingItems(page))[0].expiredAt).toBeNull();
 	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 });
+
+test('a late month refresh from a lookup does not drop an expense created meanwhile', async ({
+	page
+}) => {
+	const queried = { ...row, id: '33333333-3333-4333-8333-333333333333', note: '查詢午餐' };
+	const added = { ...row, id: '44444444-4444-4444-8444-444444444444', note: '新增早餐' };
+	const s = await setup(page, async (route, body) => {
+		if (!body) {
+			await statusJson(route, 'completed', [queried]);
+		} else if (s.posts.length === 1) {
+			await interrupted(route, body.requestId);
+		} else {
+			await route.fulfill({ json: { ...created(body.requestId), expenses: [added] } });
+		}
+	});
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	// Hold the lookup's month refresh with the snapshot taken before the new expense exists.
+	let held = 0;
+	let release!: () => void;
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route(`${env.PUBLIC_SUPABASE_URL}/rest/v1/expenses?**`, async (route) => {
+		// Only the month refresh pages with offset; other list reads pass through.
+		const refresh = new URL(route.request().url()).searchParams.has('offset');
+		if (route.request().method() === 'GET' && refresh && ++held === 1) {
+			await released;
+			await route.fulfill({ json: [queried] });
+		} else {
+			await route.fallback();
+		}
+	});
+	s.setRows([queried]);
+	await trayAction(page, '查詢結果');
+	await expect.poll(() => held).toBe(1);
+	s.setRows([added, queried]);
+	await page.getByLabel('記帳內容').fill('早餐50');
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await expect
+		.poll(async () => ((await cachedMonth(page, '2026-10')) as { id: string }[] | null) ?? [])
+		.toContainEqual(expect.objectContaining({ id: added.id }));
+	release();
+	await expect(pendingBadge(page)).toHaveCount(0);
+	expect(await pending(page)).toBeNull();
+	await page
+		.getByRole('dialog', { name: 'AI 記帳' })
+		.getByRole('button', { name: 'Close', exact: true })
+		.click();
+	const day = page.locator('section[data-date="2026-10-01"]');
+	await expect(day.getByText('新增早餐', { exact: true })).toBeVisible();
+	await expect(day.getByText('查詢午餐', { exact: true })).toBeVisible();
+	expect(((await cachedMonth(page, '2026-10')) as { id: string }[]).map((r) => r.id)).toEqual(
+		expect.arrayContaining([added.id, queried.id])
+	);
+});

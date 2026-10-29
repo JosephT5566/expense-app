@@ -1,7 +1,7 @@
 import { writable, get } from 'svelte/store';
 import { type ExpenseRow, type ExpenseQuery, type PageResult, NewExpense } from '$lib/types/expense';
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
-import { taiwanMonthBoundsISO } from '$lib/utils/dates';
+import { taiwanMonthBoundsISO, getTaiwanMonthKey } from '$lib/utils/dates';
 import { persistExpensePatch, persistExpenseDelete } from '$lib/cache/monthlyExpense';
 import Logger from '$lib/utils/logger';
 
@@ -11,6 +11,19 @@ export const loading = writable(false);
 export const error = writable<unknown>(null);
 export const _lastQuery = writable<ExpenseQuery | null>(null);
 export const monthlyItems = writable(new Map<string, ExpenseRow[]>());
+
+// Local mutation count per Taiwan month. A month refresh records it before fetching and
+// discards its snapshot when a local upsert or delete for that month happened meanwhile.
+const monthMutations = new Map<string, number>();
+function bumpMonth(row: ExpenseRow | null) {
+	if (row) {
+		const key = getTaiwanMonthKey(row.ts);
+		monthMutations.set(key, (monthMutations.get(key) ?? 0) + 1);
+	}
+}
+export function monthMutationVersion(monthKey: string) {
+	return monthMutations.get(monthKey) ?? 0;
+}
 
 export function setMoreItems(data: ExpenseRow[]) {
 	items.update((prev) => {
@@ -155,6 +168,8 @@ export function upsertOne(row: ExpenseRow) {
 		// });
 		return next;
 	});
+	bumpMonth(oldRow);
+	bumpMonth(row);
 	Logger.log('Upserted expense', row, oldRow);
 
 	persistExpensePatch(oldRow, row).catch((e) => {
@@ -176,6 +191,8 @@ export function upsertMany(rows: ExpenseRow[]) {
 		}
 		return Array.from(map.values());
 	});
+	oldRows.forEach(bumpMonth);
+	rows.forEach(bumpMonth);
 }
 
 export function deleteOne(id: string) {
@@ -192,6 +209,7 @@ export function deleteOne(id: string) {
 		return next;
 	});
 
+	bumpMonth(removed);
 	if (removed) {
 		persistExpenseDelete(removed).catch((e) => {
 			Logger.error('Failed to remove expense from cache', e);
