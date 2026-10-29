@@ -1687,7 +1687,6 @@ for (const action of ['retry', 'close'] as const) {
 			}
 		});
 		await startDrafts(page);
-		await shortenTimeout(page);
 		await commitDrafts(page).click();
 		// Q8: the drafts block is removed and the tray opens with the commit item expanded.
 		await expect(pendingTray(page)).toBeVisible();
@@ -1761,7 +1760,6 @@ test('commit retry after close that replays a rejection clears the pending item'
 		}
 	});
 	await startDrafts(page);
-	await shortenTimeout(page);
 	await commitDrafts(page).click();
 	await expect(pendingTray(page)).toBeVisible();
 	await page.keyboard.press('Escape');
