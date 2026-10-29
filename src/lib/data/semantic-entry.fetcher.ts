@@ -1,5 +1,13 @@
+// Method B treats a POST as uncertain only after receiving persisting. A lost event can
+// look unwritten: retrying the same requestId is protected by server idempotency,
+// but changing the content and requestId can create a duplicate.
 import { env } from '$env/dynamic/public';
 import { supabase } from '$lib/supabase/supabaseClient';
+import {
+	SEMANTIC_TIMEOUT_MS,
+	SEMANTIC_IMAGE_TIMEOUT_MS
+} from '$lib/components/semantic-entry/timeouts';
+export { SEMANTIC_TIMEOUT_MS, SEMANTIC_IMAGE_TIMEOUT_MS };
 import {
 	parseRequestV3,
 	parseResponseV3,
@@ -18,7 +26,8 @@ export type SemanticAnalysisDelta = { requestId: string; seq: number; text: stri
 export class SemanticEntryError extends Error {
 	constructor(
 		public code: string,
-		public uncertain: boolean
+		public uncertain: boolean,
+		public persisting: boolean = false
 	) {
 		super(code);
 	}
@@ -48,12 +57,13 @@ async function call(
 	if (error || !data.session?.access_token) {
 		throw new SemanticEntryError('unauthorized', false);
 	}
-	signal?.throwIfAborted();
 	let writing = false;
+	const isSubmission = method === 'POST' && path === '';
 	try {
+		signal?.throwIfAborted();
 		const payload = body ? JSON.stringify(body) : undefined;
 		if (payload && new TextEncoder().encode(payload).length > MAX_REQUEST_BYTES_V3) {
-			throw new SemanticEntryError('invalid_request', false);
+			throw new SemanticEntryError('invalid_request', false, writing);
 		}
 		const response = await fetch(url, {
 			method,
@@ -74,8 +84,8 @@ async function call(
 				signal ?? new AbortController().signal,
 				AbortSignal.timeout(
 					body && 'action' in body && body.action === 'analyze' && body.images
-						? 92000
-						: 32000
+						? SEMANTIC_IMAGE_TIMEOUT_MS
+						: SEMANTIC_TIMEOUT_MS
 				)
 			])
 		});
@@ -86,10 +96,17 @@ async function call(
 			response.headers.get('Content-Type')?.includes('text/event-stream')
 		) {
 			if (!response.body) {
-				throw new SemanticEntryError('invalid_response', true);
+				throw new SemanticEntryError('invalid_response', writing, writing);
 			}
 			const reader = response.body.getReader();
 			const decoder = new TextDecoder('utf-8', { fatal: true });
+			function decode(value?: Uint8Array, stream = false) {
+				try {
+					return decoder.decode(value, { stream });
+				} catch {
+					throw new SemanticEntryError('invalid_response', writing, writing);
+				}
+			}
 			let buffer = '';
 			let size = 0;
 			let nextSeq = 0;
@@ -99,17 +116,17 @@ async function call(
 				for (;;) {
 					const { value, done } = await reader.read();
 					if (done) {
-						buffer += decoder.decode();
+						buffer += decode();
 						if (terminalResult && !buffer.trim()) {
 							return terminalResult;
 						}
-						throw new SemanticEntryError('invalid_response', true);
+						throw new SemanticEntryError('invalid_response', writing, writing);
 					}
 					size += value.length;
 					if (size > 65536) {
-						throw new SemanticEntryError('invalid_response', true);
+						throw new SemanticEntryError('invalid_response', writing, writing);
 					}
-					buffer += decoder.decode(value, { stream: true });
+					buffer += decode(value, true);
 					// SSE accepts LF and CRLF; preserve CR at chunk boundaries.
 					let boundary: RegExpExecArray | null;
 					while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
@@ -128,26 +145,26 @@ async function call(
 							continue;
 						}
 						if (terminalResult) {
-							throw new SemanticEntryError('invalid_response', true);
+							throw new SemanticEntryError('invalid_response', writing, writing);
 						}
 						let event;
 						try {
 							event = parseStreamEventV3(name, JSON.parse(data.join('\n')));
 						} catch {
-							throw new SemanticEntryError('invalid_response', true);
+							throw new SemanticEntryError('invalid_response', writing, writing);
 						}
 						if (event.type === 'error') {
-							throw new SemanticEntryError(event.code, writing || event.uncertain);
+							throw new SemanticEntryError(event.code, writing, writing);
 						}
 						const id =
 							event.type === 'result' ? event.result.requestId : event.requestId;
 						if (id !== body.requestId) {
-							throw new SemanticEntryError('invalid_response', true);
+							throw new SemanticEntryError('invalid_response', writing, writing);
 						}
 						if (event.type === 'analysis_delta') {
 							analysisCodePoints += [...event.text].length;
 							if (writing || event.seq !== nextSeq || analysisCodePoints > 200) {
-								throw new SemanticEntryError('invalid_response', true);
+								throw new SemanticEntryError('invalid_response', writing, writing);
 							}
 							nextSeq++;
 							onAnalysis?.(event);
@@ -155,13 +172,13 @@ async function call(
 						}
 						if (event.type === 'persisting') {
 							if (writing) {
-								throw new SemanticEntryError('invalid_response', true);
+								throw new SemanticEntryError('invalid_response', writing, writing);
 							}
 							writing = true;
 							onPersisting?.();
 						} else {
 							if (writing && event.result.status !== 'created') {
-								throw new SemanticEntryError('invalid_response', true);
+								throw new SemanticEntryError('invalid_response', writing, writing);
 							}
 							terminalResult = event.result;
 						}
@@ -173,16 +190,23 @@ async function call(
 			}
 		}
 		const result = await response.json().catch(() => {
-			throw new SemanticEntryError('invalid_response', path !== '/uploads');
+			throw new SemanticEntryError(
+				'invalid_response',
+				isSubmission ? writing : path !== '/uploads',
+				writing
+			);
 		});
 		if (!response.ok && (path === '/uploads' || response.status !== 422)) {
 			throw new SemanticEntryError(
 				typeof result?.error?.code === 'string' ? result.error.code : 'service_error',
-				path === '/uploads'
-					? false
-					: typeof result?.error?.uncertain === 'boolean'
-						? result.error.uncertain
-						: response.status >= 500
+				isSubmission
+					? writing
+					: path === '/uploads'
+						? false
+						: typeof result?.error?.uncertain === 'boolean'
+							? result.error.uncertain
+							: response.status >= 500,
+				writing
 			);
 		}
 		return result;
@@ -190,7 +214,11 @@ async function call(
 		if (error instanceof SemanticEntryError) {
 			throw error;
 		}
-		throw new SemanticEntryError('connection', path !== '/uploads');
+		throw new SemanticEntryError(
+			'connection',
+			isSubmission ? writing : path !== '/uploads',
+			writing
+		);
 	}
 }
 export async function submitSemanticEntry(
@@ -205,7 +233,18 @@ export async function submitSemanticEntry(
 	} catch {
 		throw new SemanticEntryError('invalid_request', false);
 	}
-	const result = await call('', 'POST', parsed, signal, onPersisting, onAnalysis);
+	let persisting = false;
+	const result = await call(
+		'',
+		'POST',
+		parsed,
+		signal,
+		() => {
+			persisting = true;
+			onPersisting?.();
+		},
+		onAnalysis
+	);
 	try {
 		const response = parseResponseV3(result);
 		if (response.requestId !== parsed.requestId) {
@@ -213,7 +252,7 @@ export async function submitSemanticEntry(
 		}
 		return response;
 	} catch {
-		throw new SemanticEntryError('invalid_response', true);
+		throw new SemanticEntryError('invalid_response', persisting, persisting);
 	}
 }
 export async function getSemanticEntryStatus(

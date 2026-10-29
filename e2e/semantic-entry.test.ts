@@ -6,6 +6,14 @@ import {
 	isComplete,
 	toClientDraft
 } from '../src/lib/components/semantic-entry/drafts';
+import * as pendingStore from '../src/lib/components/semantic-entry/pending';
+import {
+	SERVICE_TEXT_DEADLINE_MS,
+	SERVICE_IMAGE_DEADLINE_MS,
+	CLOUD_RUN_TIMEOUT_MS,
+	SEMANTIC_TIMEOUT_MS,
+	SEMANTIC_IMAGE_TIMEOUT_MS
+} from '../src/lib/components/semantic-entry/timeouts';
 import type { Draft, SemanticRequestV3 } from '../packages/semantic-entry-contract/src/index';
 const env = {
 	PUBLIC_SUPABASE_URL: process.env.PUBLIC_SUPABASE_URL ?? 'https://synthetic.supabase.co'
@@ -167,6 +175,11 @@ async function setup(
 		session
 	};
 }
+const interrupted = (route: Route, requestId: string) =>
+	route.fulfill({
+		contentType: 'text/event-stream',
+		body: `event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\n\n`
+	});
 const submit = (page: Page) => page.getByRole('button', { name: '送出記帳', exact: true }).click();
 async function cachedMonth(page: Page, month: string) {
 	return page.evaluate(
@@ -250,14 +263,14 @@ test('uncertain retry keeps UUID and text; a new operation gets a new UUID', asy
 	let count = 0;
 	const s = await setup(page, async (route, body) => {
 		if (++count === 1) {
-			await route.abort();
+			await interrupted(route, body!.requestId);
 		} else {
 			await route.fulfill({ json: created(body!.requestId) });
 		}
 	});
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-	await expect(page.getByLabel('記帳內容')).toBeDisabled();
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
 	await page.getByRole('button', { name: '重試同一請求' }).click();
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
 	expect(s.posts[1]).toEqual(s.posts[0]);
@@ -271,7 +284,7 @@ test('not_found stays uncertain and a subsequent GET restores completion', async
 	let query = 0;
 	const s = await setup(page, async (route, body) => {
 		if (body) {
-			await route.abort();
+			await interrupted(route, body!.requestId);
 		} else {
 			const requestId = route.request().url().split('/').at(-1);
 			await route.fulfill({
@@ -483,7 +496,7 @@ for (const status of [422, 429, 502]) {
 						}
 					});
 				} else if (++post === 1) {
-					await route.abort();
+					await interrupted(route, body!.requestId);
 				} else {
 					await route.fulfill({
 						status,
@@ -520,12 +533,12 @@ for (const status of [422, 429, 502]) {
 	});
 }
 for (const lifecycle of ['reload', 'navigate']) {
-	test(`pending request survives ${lifecycle} with UUID only and status lookup`, async ({
+	test(`pending request survives ${lifecycle} with allowed metadata only and status lookup`, async ({
 		page
 	}) => {
 		const s = await setup(page, async (route, body) => {
 			if (body) {
-				await route.abort();
+				await interrupted(route, body!.requestId);
 			} else {
 				await route.fulfill({
 					json: {
@@ -551,7 +564,7 @@ for (const lifecycle of ['reload', 'navigate']) {
 			.click();
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 		await expect(page.getByLabel('記帳內容')).toHaveValue('');
-		await expect(page.getByLabel('記帳內容')).toBeDisabled();
+		await expect(page.getByLabel('記帳內容')).toBeEditable();
 		await expect(page.getByRole('button', { name: '重試同一請求' })).toHaveCount(0);
 		await page.getByRole('button', { name: '查詢結果' }).click();
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
@@ -580,9 +593,10 @@ test('unavailable pending-request storage prevents submitting a new operation', 
 test('pending recovery belongs to its account and returns when its owner signs back in', async ({
 	page
 }) => {
-	const s = await setup(page, async (route) => route.abort());
+	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	const originalItems = await pendingItems(page);
 	const switchAccount = async (other: boolean) =>
 		page.evaluate(
 			({ storageKey, session, other }) => {
@@ -609,6 +623,7 @@ test('pending recovery belongs to its account and returns when its owner signs b
 	await switchAccount(false);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+	expect(await pendingItems(page)).toEqual(originalItems);
 	expect(s.posts).toHaveLength(1);
 });
 
@@ -670,7 +685,7 @@ test('closing a clarification discards conversation and uses a new request ID', 
 	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
 	expect(s.posts[1].history).toBeUndefined();
 });
-test('interrupted stream retains only UUID and retry freezes the full answered payload', async ({
+test('interrupted stream retains only allowed metadata and retry freezes the full answered payload', async ({
 	page
 }) => {
 	let count = 0;
@@ -702,7 +717,18 @@ test('interrupted stream retains only UUID and retry freezes the full answered p
 		(id) => JSON.parse(localStorage.getItem(`jopie:semantic-pending:${id}`)!),
 		user.id
 	);
-	expect(stored).toEqual({ requestId: s.posts[1].requestId });
+	expect(stored).toEqual({
+		v: 2,
+		items: [
+			{
+				requestId: s.posts[1].requestId,
+				submittedAt: expect.any(Number),
+				kind: 'analyze',
+				snippet: '午餐100',
+				expiredAt: null
+			}
+		]
+	});
 	await page.getByRole('button', { name: '重試同一請求' }).click();
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
 	expect(s.posts[2]).toEqual(s.posts[1]);
@@ -806,7 +832,7 @@ test('live chunked SSE shows analysis then announces writing and locks the modal
 });
 
 for (const fault of ['wrong-id', 'unknown-event', 'question-after-writing', 'explicit-error']) {
-	test(`SSE ${fault} preserves uncertain recovery without applying expense data`, async ({
+	test(`SSE ${fault} classifies recovery by persisting without applying expense data`, async ({
 		page
 	}) => {
 		const s = await setup(page, async (route, body) => {
@@ -823,14 +849,21 @@ for (const fault of ['wrong-id', 'unknown-event', 'question-after-writing', 'exp
 			await route.fulfill({ contentType: 'text/event-stream', body: frames });
 		});
 		await submit(page);
-		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(
+				['question-after-writing', 'explicit-error'].includes(fault)
+					? '結果待確認'
+					: '未新增',
+				{ exact: true }
+			)
+		).toBeVisible();
 		await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
 		expect(s.writes()).toBe(0);
 	});
 }
 
 for (const fault of ['gap', 'duplicate', 'wrong-id', 'oversize', 'after-writing']) {
-	test(`analysis ${fault} keeps uncertain recovery`, async ({ page }) => {
+	test(`analysis ${fault} classifies recovery by persisting`, async ({ page }) => {
 		await setup(page, async (route) => {
 			const body = route.request().postDataJSON() as SemanticRequestV3;
 			const id = body.requestId;
@@ -854,7 +887,9 @@ for (const fault of ['gap', 'duplicate', 'wrong-id', 'oversize', 'after-writing'
 			});
 		});
 		await submit(page);
-		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(fault === 'after-writing' ? '結果待確認' : '未新增', { exact: true })
+		).toBeVisible();
 		await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
 		const stored = await page.evaluate(() => JSON.stringify(localStorage));
 		expect(stored).not.toContain('辨識中');
@@ -942,7 +977,9 @@ for (const action of ['account-switch', 'pagehide', 'status-query']) {
 			}
 			await route.fulfill({
 				contentType: 'text/event-stream',
-				body: `event: analysis_delta\ndata: ${JSON.stringify({ requestId: body.requestId, seq: 0, text: '本帳號的暫時摘要' })}\n\n`
+				body:
+					`event: analysis_delta\ndata: ${JSON.stringify({ requestId: body.requestId, seq: 0, text: '本帳號的暫時摘要' })}\n\n` +
+					`event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId: body.requestId })}\n\n`
 			});
 		});
 		await submit(page);
@@ -984,7 +1021,13 @@ for (const suffix of ['analysis', 'second-result']) {
 				suffix === 'analysis'
 					? `event: analysis_delta\ndata: ${JSON.stringify({ requestId, seq: 0, text: '遲到的摘要' })}\n\n`
 					: result;
-			await route.fulfill({ contentType: 'text/event-stream', body: result + trailing });
+			await route.fulfill({
+				contentType: 'text/event-stream',
+				body:
+					`event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\n\n` +
+					result +
+					trailing
+			});
 		});
 		await submit(page);
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
@@ -1047,7 +1090,7 @@ test.describe('Taiwan conversation date baseline', () => {
 		let count = 0;
 		const s = await setup(page, async (route, body) => {
 			if (++count === 1) {
-				await route.abort();
+				await interrupted(route, body!.requestId);
 			} else {
 				await route.fulfill({ json: created(body!.requestId) });
 			}
@@ -1144,6 +1187,8 @@ async function mockUploads(page: Page, errorCode?: string) {
 const attach = (page: Page) => page.locator('input[type=file][multiple]').setInputFiles(png);
 const pending = (page: Page) =>
 	page.evaluate((id) => localStorage.getItem(`jopie:semantic-pending:${id}`), user.id);
+const pendingItems = async (page: Page): Promise<pendingStore.PendingItem[]> =>
+	JSON.parse((await pending(page)) ?? '{"items":[]}').items;
 
 test('image and text upload once then create a summary and update home without client writes', async ({
 	page
@@ -1254,7 +1299,7 @@ test('uncertain image analyze retries the identical payload without uploading ag
 	let count = 0;
 	const s = await setup(page, async (route, body) => {
 		if (++count === 1) {
-			await route.abort();
+			await interrupted(route, body!.requestId);
 		} else {
 			await route.fulfill({ json: created(body!.requestId) });
 		}
@@ -1263,7 +1308,7 @@ test('uncertain image analyze retries the identical payload without uploading ag
 	await attach(page);
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-	await expect(page.getByRole('button', { name: '附加圖片', exact: true })).toBeDisabled();
+	await expect(page.getByRole('button', { name: '附加圖片', exact: true })).toBeEnabled();
 	await page.getByRole('button', { name: '重試同一請求' }).click();
 	await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText('已記帳 1 筆');
 	expect(s.posts[1]).toEqual(s.posts[0]);
@@ -1437,10 +1482,10 @@ test('revise updates the same block and appends the conversation without images 
 });
 
 async function shortenTimeout(page: Page) {
-	await page.evaluate(() => {
+	await page.evaluate((timeout) => {
 		const original = AbortSignal.timeout;
-		AbortSignal.timeout = (ms) => original(ms === 32000 ? 50 : ms);
-	});
+		AbortSignal.timeout = (ms) => original(ms === timeout ? 50 : ms);
+	}, SEMANTIC_TIMEOUT_MS);
 }
 
 test('revise timeout preserves drafts and clears pending without uncertainty', async ({ page }) => {
@@ -1559,7 +1604,7 @@ test('commit rejects the whole batch and marks the matching server draft issue',
 });
 
 for (const action of ['retry', 'close'] as const) {
-	test(`commit timeout ${action} preserves recovery and never writes expenses directly`, async ({
+	test(`commit interrupted after persisting ${action} preserves recovery and never writes expenses directly`, async ({
 		page
 	}) => {
 		let commits = 0;
@@ -1590,16 +1635,18 @@ for (const action of ['retry', 'close'] as const) {
 				await route.fulfill({
 					json: { ...created(body.requestId, true), expenses: batchRows }
 				});
+			} else {
+				await interrupted(route, body.requestId);
 			}
 		});
 		await startDrafts(page);
 		await shortenTimeout(page);
 		await commitDrafts(page).click();
 		await expect(page.getByText('無法確認是否已記帳', { exact: true })).toBeVisible();
-		await expect(page.getByRole('dialog').locator('textarea')).toBeDisabled();
+		await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
 		await expect(commitDrafts(page)).toBeDisabled();
 		await expect(page.getByRole('button', { name: '進入編輯', exact: true })).toBeDisabled();
-		expect(JSON.parse((await pending(page))!).requestId).toBe(s.posts[1].requestId);
+		expect((await pendingItems(page))[0].requestId).toBe(s.posts[1].requestId);
 		s.setRows(batchRows);
 		const before = expenseReads;
 		if (action === 'retry') {
@@ -1613,23 +1660,65 @@ for (const action of ['retry', 'close'] as const) {
 		} else {
 			await page.getByRole('button', { name: '稍後再看', exact: true }).click();
 			await expect(page.getByRole('dialog')).toHaveCount(0);
-			expect(JSON.parse((await pending(page))!).requestId).toBe(s.posts[1].requestId);
+			expect((await pendingItems(page))[0].requestId).toBe(s.posts[1].requestId);
 			await page
 				.locator('section[data-date="2026-10-01"]')
 				.getByRole('button', { name: 'AI 記帳', exact: true })
 				.click();
 			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 			await expect(draftBlock(page)).toHaveCount(0);
-			await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+			await page.getByRole('button', { name: '重試同一請求', exact: true }).click();
 			await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText(
 				'已記帳 3 筆'
 			);
+			expect(s.posts[2]).toEqual(s.posts[1]);
 			expect(expenseReads).toBeGreaterThan(before);
 			expect(await pending(page)).toBeNull();
 		}
 		expect(s.writes()).toBe(0);
 	});
 }
+
+test('commit retry after close that replays a rejection clears the pending item', async ({
+	page
+}) => {
+	let commits = 0;
+	const s = await setup(page, async (route, body) => {
+		if (body?.action === 'analyze') {
+			await route.fulfill({
+				json: draftResponse(body.requestId, [1, 2, 3].map(makeDraft))
+			});
+		} else if (body && ++commits > 1) {
+			await route.fulfill({
+				status: 422,
+				json: {
+					status: 'rejected',
+					requestId: body.requestId,
+					issues: [{ field: 'categoryId', code: 'invalid' }]
+				}
+			});
+		} else if (body) {
+			await interrupted(route, body.requestId);
+		}
+	});
+	await startDrafts(page);
+	await shortenTimeout(page);
+	await commitDrafts(page).click();
+	await expect(page.getByText('無法確認是否已記帳', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '稍後再看', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page
+		.locator('section[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
+	await page.getByRole('button', { name: '重試同一請求', exact: true }).click();
+	await expect(page.getByText('未記帳：3 筆都沒有寫入', { exact: true })).toBeVisible();
+	expect(s.posts[2]).toEqual(s.posts[1]);
+	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+	await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
+	expect(await pending(page)).toBeNull();
+	expect(s.writes()).toBe(0);
+});
 
 test('draft model preserves server issues and merges visible members in their original order', () => {
 	const first = makeDraft(1);
@@ -2096,4 +2185,764 @@ test('legacy create and edit dialogs retain amount, date, manual shares and dele
 	await expect(editPanel.getByRole('button', { name: '更新', exact: true })).toBeVisible();
 	await expect(editPanel.getByRole('button', { name: '刪除', exact: true })).toBeVisible();
 	await expect(editPanel.getByRole('button', { name: '套用到草稿', exact: true })).toHaveCount(0);
+});
+
+const pendingId = (index: number) => `ffffffff-ffff-4fff-8fff-${String(index).padStart(12, '0')}`;
+const pendingItem = (index: number, expiredAt: number | null = null): pendingStore.PendingItem => ({
+	requestId: pendingId(index),
+	submittedAt: Date.parse('2026-10-01T04:00:00Z'),
+	kind: 'analyze',
+	expiredAt
+});
+async function seedPending(page: Page, value: unknown) {
+	await page.addInitScript(({ key, value }) => localStorage.setItem(key, JSON.stringify(value)), {
+		key: pendingStore.pendingKey(user.id),
+		value
+	});
+}
+async function reopen(page: Page) {
+	await page
+		.locator('section[data-date="2026-10-01"]')
+		.getByRole('button', { name: 'AI 記帳', exact: true })
+		.click();
+}
+
+test('legacy pending migrates to expired metadata without querying and allows a fresh request', async ({
+	page
+}) => {
+	await seedPending(page, { requestId: pendingId(1) });
+	let queries = 0;
+	const s = await setup(page, async (route, body) => {
+		if (!body) {
+			queries++;
+			await route.abort();
+		} else {
+			await interrupted(route, body.requestId);
+		}
+	});
+	expect(queries).toBe(0);
+	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
+	expect(await pendingItems(page)).toEqual([
+		{
+			requestId: pendingId(1),
+			submittedAt: null,
+			kind: 'legacy',
+			expiredAt: expect.any(Number)
+		}
+	]);
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	expect(s.posts[0].requestId).not.toBe(pendingId(1));
+	expect(await pendingItems(page)).toHaveLength(2);
+	expect(queries).toBe(0);
+});
+
+test('pending analyze permits a new conversation with its own request id and retains the first item', async ({
+	page
+}) => {
+	let release!: () => void;
+	const waiting = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const s = await setup(page, async (route, body) => {
+		if (s.posts.length === 1) {
+			await interrupted(route, body!.requestId);
+		} else {
+			await waiting;
+			await route.fulfill({ json: created(body!.requestId) });
+		}
+	});
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await page.getByLabel('記帳內容').fill('另一筆早餐50');
+	await submit(page);
+	await expect.poll(async () => (await pendingItems(page)).length).toBe(2);
+	await expect.poll(() => s.posts.length).toBe(2);
+	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
+	release();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect((await pendingItems(page)).map((item) => item.requestId)).toEqual([
+		s.posts[0].requestId
+	]);
+});
+
+for (const full of [true, false]) {
+	test(`pending limit counts only active items: blocked=${full}`, async ({ page }) => {
+		const items = full
+			? [1, 2, 3].map((i) => pendingItem(i))
+			: [1, 2, 3].map((i) => pendingItem(i, 1)).concat([4, 5].map((i) => pendingItem(i)));
+		await seedPending(page, { v: 2, items });
+		const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
+		const before = await pending(page);
+		await page.getByLabel('記帳內容').fill('保留午餐100');
+		if (full) {
+			await attach(page);
+		}
+		await submit(page);
+		if (full) {
+			await expect(page.locator('#semantic-entry-hint')).toHaveText(
+				'已有3筆待確認，暫時無法建立新對話'
+			);
+			expect(s.posts).toHaveLength(0);
+			await expect(page.getByRole('img', { name: '第 1 張附圖' })).toBeVisible();
+			expect(await pending(page)).toBe(before);
+			await expect(page.getByLabel('記帳內容')).toHaveValue('保留午餐100');
+			await page.getByLabel('記帳內容').fill('修改內容');
+			await expect(page.locator('#semantic-entry-hint')).not.toHaveText(
+				'已有3筆待確認，暫時無法建立新對話'
+			);
+		} else {
+			await expect.poll(() => s.posts.length).toBe(1);
+			await expect.poll(async () => (await pendingItems(page)).length).toBe(6);
+		}
+	});
+}
+
+for (const outcome of ['not_found', 'failure', 'completed'] as const) {
+	test(`pending expiry requires a not_found query after ten minutes: ${outcome}`, async ({
+		page
+	}) => {
+		let fail = false;
+		await setup(page, async (route, body) => {
+			if (body) {
+				await interrupted(route, body.requestId);
+			} else if (fail && outcome === 'failure') {
+				await route.abort();
+			} else {
+				await route.fulfill({
+					json:
+						fail && outcome === 'completed'
+							? {
+									status: 'completed',
+									requestId: route.request().url().split('/').at(-1),
+									expenses: [row],
+									replayed: true
+								}
+							: {
+									status: 'not_found',
+									requestId: route.request().url().split('/').at(-1)
+								}
+				});
+			}
+		});
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await page.clock.setFixedTime(new Date('2026-10-01T12:09:00+08:00'));
+		await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+		await expect(page.getByText('尚未查到完成結果，仍待確認。')).toBeVisible();
+		fail = true;
+		await page.clock.setFixedTime(new Date('2026-10-01T12:10:00+08:00'));
+		await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+		if (outcome === 'not_found') {
+			await expect(page.getByLabel('助手訊息').last()).toHaveText('已過期');
+			expect((await pendingItems(page))[0].expiredAt).toEqual(expect.any(Number));
+			await expect(page.getByRole('button', { name: '重試同一請求' })).toHaveCount(0);
+			await expect(page.getByLabel('記帳內容')).toBeEditable();
+		} else if (outcome === 'completed') {
+			await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+			expect(await pending(page)).toBeNull();
+		} else {
+			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+			expect((await pendingItems(page))[0].expiredAt).toBeNull();
+		}
+	});
+}
+
+test('same page close preserves the full pending analyze retry; reload keeps query only', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await reopen(page);
+	await page.getByRole('button', { name: '重試同一請求', exact: true }).click();
+	await expect.poll(() => s.posts.length).toBe(2);
+	expect(s.posts[1]).toEqual(s.posts[0]);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await page.reload();
+	await reopen(page);
+	await expect(page.getByRole('button', { name: '重試同一請求', exact: true })).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeVisible();
+});
+
+for (const changed of [false, true]) {
+	test(`analyze connection failure before persisting retries same content id only: changed=${changed}`, async ({
+		page
+	}) => {
+		const s = await setup(page, async (route, body) =>
+			s.posts.length === 1 ? route.abort() : route.fulfill({ json: created(body!.requestId) })
+		);
+		await submit(page);
+		await expect(page.getByText('未新增', { exact: true })).toBeVisible();
+		expect(await pending(page)).toBeNull();
+		await page.getByRole('button', { name: '修改後重新送出' }).click();
+		if (changed) {
+			await page.getByLabel('記帳內容').fill('早餐50');
+		}
+		await submit(page);
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		if (changed) {
+			expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
+		} else {
+			expect(s.posts[1]).toEqual(s.posts[0]);
+		}
+	});
+}
+for (const format of ['json', 'sse', 'timeout'] as const) {
+	test(`analyze ${format} failure without persisting cannot create uncertainty`, async ({
+		page
+	}) => {
+		await setup(page, async (route) => {
+			if (format === 'timeout') {
+				return;
+			}
+			if (format === 'json') {
+				await route.fulfill({
+					status: 503,
+					json: { error: { code: 'persist_uncertain', uncertain: true } }
+				});
+			} else {
+				await route.fulfill({
+					contentType: 'text/event-stream',
+					body: 'event: error\ndata: {"error":{"code":"persist_uncertain","uncertain":true}}\n\n'
+				});
+			}
+		});
+		if (format === 'timeout') {
+			await shortenTimeout(page);
+		}
+		await submit(page);
+		await expect(page.getByText('未新增', { exact: true })).toBeVisible();
+		await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+		expect(await pending(page)).toBeNull();
+	});
+}
+
+test('commit timeout before persisting preserves unchanged payload id for retry', async ({
+	page
+}) => {
+	let commits = 0;
+	const s = await setup(page, async (route, body) => {
+		if (body!.action === 'analyze') {
+			await route.fulfill({ json: draftResponse(body!.requestId, [1, 2, 3].map(makeDraft)) });
+		} else if (++commits > 1) {
+			await route.fulfill({ json: { ...created(body!.requestId), expenses: batchRows } });
+		}
+	});
+	await startDrafts(page);
+	await shortenTimeout(page);
+	await commitDrafts(page).click();
+	await expect(page.getByText(/未記帳：/)).toBeVisible();
+	await expect(page.getByText('無法確認是否已記帳', { exact: true })).toHaveCount(0);
+	expect(await pending(page)).toBeNull();
+	await commitDrafts(page).click();
+	await expect(page.getByRole('group', { name: '已記帳摘要' })).toBeVisible();
+	expect(s.posts[2]).toEqual(s.posts[1]);
+});
+
+for (const kind of ['text', 'image', 'commit'] as const) {
+	test(`pending ${kind} metadata stores only permitted fields and no private outputs`, async ({
+		page
+	}) => {
+		const longText = '🍜一二三四五六七八九十甲乙丙完整內容';
+		const s = await setup(page, async (route, body) => {
+			if (kind === 'commit' && body!.action === 'analyze') {
+				await route.fulfill({
+					json: draftResponse(body!.requestId, [1, 2, 3].map(makeDraft))
+				});
+			} else {
+				await interrupted(route, body!.requestId);
+			}
+		});
+		if (kind === 'commit') {
+			await startDrafts(page);
+			await commitDrafts(page).click();
+		} else {
+			await page.getByLabel('記帳內容').fill(kind === 'text' ? longText : '');
+			if (kind === 'image') {
+				await mockUploads(page);
+				await attach(page);
+			}
+			await submit(page);
+		}
+		await expect.poll(async () => (await pendingItems(page)).length).toBe(1);
+		const item = (await pendingItems(page))[0];
+		expect(
+			Object.keys(item).every((key) =>
+				[
+					'requestId',
+					'submittedAt',
+					'kind',
+					'snippet',
+					'imageCount',
+					'draftCount',
+					'expiredAt'
+				].includes(key)
+			)
+		).toBe(true);
+		const raw = (await pending(page))!;
+		expect(raw).not.toContain(longText);
+		expect(raw).not.toContain(imagePath);
+		expect(raw).not.toContain('合成帳目');
+		expect(raw).not.toContain('Gemini');
+		if (kind === 'text') {
+			expect(item.snippet).toBe([...longText].slice(0, 12).join(''));
+		} else {
+			expect(item.snippet).toBeUndefined();
+		}
+		if (kind === 'image') {
+			expect(item.imageCount).toBe(1);
+		}
+		if (kind === 'commit') {
+			expect(item.draftCount).toBe(3);
+			expect(item.imageCount).toBeUndefined();
+		}
+		await expect.poll(() => s.posts.length).toBeGreaterThan(kind === 'commit' ? 1 : 0);
+		expect(item.requestId).toBe(s.posts.at(-1)!.requestId);
+	});
+}
+
+test('revise with another pending item uses a fresh id and leaves the pending list unchanged', async ({
+	page
+}) => {
+	await seedPending(page, { v: 2, items: [pendingItem(1)] });
+	const drafts = [1, 2, 3].map(makeDraft);
+	const s = await setup(page, async (route, body) => {
+		if (body!.action === 'revise') {
+			drafts[2] = { ...drafts[2], note: { ...drafts[2].note, value: '午餐' }, updated: true };
+		}
+		await route.fulfill({ json: draftResponse(body!.requestId, drafts) });
+	});
+	await submit(page);
+	await expect(draftBlock(page)).toBeVisible();
+	const before = await pending(page);
+	await page.getByLabel('補充草稿').fill('第三筆是午餐');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(draftBlock(page)).toContainText('剛更新');
+	expect(s.posts[1].action).toBe('revise');
+	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
+	expect(s.posts[1].requestId).not.toBe(pendingId(1));
+	expect(await pending(page)).toBe(before);
+});
+
+function fakeStorage(raw?: string) {
+	const values = new Map<string, string>();
+	if (raw !== undefined) {
+		values.set(pendingStore.pendingKey('owner'), raw);
+	}
+	return {
+		getItem: (key: string) => values.get(key) ?? null,
+		setItem: (key: string, value: string) => {
+			values.set(key, value);
+		},
+		removeItem: (key: string) => {
+			values.delete(key);
+		}
+	};
+}
+
+test('pending parser migrates legacy and strips invalid, duplicate and extra data', () => {
+	const legacy = { requestId: pendingId(1) };
+	expect(pendingStore.parsePending(legacy, 100)).toEqual({
+		items: [{ ...legacy, kind: 'legacy', submittedAt: null, expiredAt: 100 }],
+		migrated: true
+	});
+	for (const raw of [null, [], { v: 3, items: [] }, { requestId: 'bad' }]) {
+		expect(pendingStore.parsePending(raw, 100).items).toEqual([]);
+	}
+	const good = pendingItem(1);
+	const invalid = [
+		{ ...good, requestId: 'bad' },
+		{ ...good, kind: 'other' },
+		{ ...good, submittedAt: Infinity },
+		{ ...good, snippet: 12 },
+		{ ...good, snippet: '字'.repeat(13) },
+		{ ...good, imageCount: -1 },
+		{ ...good, draftCount: 0.5 },
+		{ ...good, kind: 'legacy', submittedAt: null, expiredAt: null }
+	];
+	expect(
+		pendingStore.parsePending(
+			{ v: 2, items: [...invalid, { ...good, fullText: 'private' }, good] },
+			100
+		).items
+	).toEqual([good]);
+	const storage = fakeStorage('{bad');
+	expect(pendingStore.load('owner', 100, storage)).toEqual([]);
+	expect(storage.getItem(pendingStore.pendingKey('owner'))).toBeNull();
+	storage.setItem(
+		pendingStore.pendingKey('owner'),
+		JSON.stringify({ v: 2, items: [{ ...good, fullText: 'private' }, good] })
+	);
+	expect(pendingStore.load('owner', 100, storage)).toEqual([good]);
+	expect(JSON.parse(storage.getItem(pendingStore.pendingKey('owner'))!)).toEqual({
+		v: 2,
+		items: [good]
+	});
+	const throwing = {
+		...storage,
+		getItem: () => {
+			throw new Error('read failed');
+		}
+	};
+	expect(() => pendingStore.load('owner', 100, throwing)).toThrow('read failed');
+});
+
+test('pending mutations reject duplicate ids and remove only seen expired items', () => {
+	const storage = fakeStorage();
+	const item = pendingItem(1);
+	expect(pendingStore.add('owner', item, 100, storage)).not.toBe(false);
+	expect(pendingStore.add('owner', { ...item, snippet: 'changed' }, 100, storage)).toBe(false);
+	expect(pendingStore.load('owner', 100, storage)).toEqual([item]);
+	pendingStore.add('owner', pendingItem(2), 100, storage);
+	pendingStore.add('owner', pendingItem(3, 20), 100, storage);
+	pendingStore.markExpired('owner', item.requestId, 100, storage);
+	pendingStore.markExpired('owner', item.requestId, 200, storage);
+	expect(pendingStore.load('owner', 200, storage)[0].expiredAt).toBe(100);
+	pendingStore.removeSeenExpired('owner', [pendingId(1), pendingId(2)], storage);
+	expect(pendingStore.load('owner', 200, storage).map((item) => item.requestId)).toEqual([
+		pendingId(2),
+		pendingId(3)
+	]);
+	pendingStore.remove('owner', pendingId(2), storage);
+	pendingStore.remove('owner', pendingId(3), storage);
+	expect(storage.getItem(pendingStore.pendingKey('owner'))).toBeNull();
+	pendingStore.save('owner', [item], storage);
+	pendingStore.save('owner', [], storage);
+	expect(storage.getItem(pendingStore.pendingKey('owner'))).toBeNull();
+});
+
+test('pending time window, active count and Unicode snippet use exact boundaries', () => {
+	const item = { ...pendingItem(1), submittedAt: 1000 };
+	expect(pendingStore.activeCount([item, pendingItem(2, 10)])).toBe(1);
+	expect(pendingStore.isPastWindow(item, 600999)).toBe(false);
+	expect(pendingStore.isPastWindow(item, 601000)).toBe(true);
+	expect(pendingStore.isPastWindow(item, 999)).toBe(false);
+	expect(
+		pendingStore.isPastWindow(
+			{ ...item, kind: 'legacy', submittedAt: null, expiredAt: 1 },
+			1000000
+		)
+	).toBe(false);
+	const text = ' 🍜e\u0301一二三四五六七八九十 ';
+	expect(pendingStore.snippetOf(text)).toBe([...text.trim()].slice(0, 12).join(''));
+	expect(pendingStore.snippetOf('  \n ')).toBeUndefined();
+});
+
+test('semantic timeout constants follow service deadlines and Cloud Run cap', () => {
+	expect(SEMANTIC_TIMEOUT_MS).toBe(45000);
+	expect(SEMANTIC_IMAGE_TIMEOUT_MS).toBe(95000);
+	expect(SEMANTIC_TIMEOUT_MS).toBeGreaterThanOrEqual(SERVICE_TEXT_DEADLINE_MS + 15000);
+	expect(
+		SEMANTIC_IMAGE_TIMEOUT_MS >= SERVICE_IMAGE_DEADLINE_MS + 15000 ||
+			SEMANTIC_IMAGE_TIMEOUT_MS === CLOUD_RUN_TIMEOUT_MS + 5000
+	).toBe(true);
+	expect(SEMANTIC_TIMEOUT_MS).toBeLessThanOrEqual(CLOUD_RUN_TIMEOUT_MS + 5000);
+	expect(SEMANTIC_IMAGE_TIMEOUT_MS).toBeLessThanOrEqual(CLOUD_RUN_TIMEOUT_MS + 5000);
+});
+
+for (const image of [false, true]) {
+	test(`semantic fetch uses the configured ${image ? 'image' : 'text'} AbortSignal timeout`, async ({
+		page
+	}) => {
+		await setup(page, async (route, body) => route.fulfill({ json: created(body!.requestId) }));
+		await page.evaluate(() => {
+			const original = AbortSignal.timeout;
+			const calls: number[] = [];
+			Object.defineProperty(window, 'semanticTimeoutCalls', { value: calls });
+			AbortSignal.timeout = (ms) => {
+				calls.push(ms);
+				return original(ms);
+			};
+		});
+		if (image) {
+			await mockUploads(page);
+			await attach(page);
+		}
+		await submit(page);
+		await expect(
+			image
+				? page.getByRole('group', { name: '已記帳摘要' })
+				: page.getByText('已新增', { exact: true })
+		).toBeVisible();
+		const calls = await page.evaluate(() => Reflect.get(window, 'semanticTimeoutCalls'));
+		expect(calls).toContain(image ? SEMANTIC_IMAGE_TIMEOUT_MS : SEMANTIC_TIMEOUT_MS);
+	});
+}
+
+test('editing drafts after a pre-persist commit failure creates a fresh commit id', async ({
+	page
+}) => {
+	let commits = 0;
+	const s = await setup(page, async (route, body) => {
+		if (body!.action === 'analyze') {
+			await route.fulfill({ json: draftResponse(body!.requestId, [1, 2, 3].map(makeDraft)) });
+		} else if (++commits === 1) {
+			await route.abort();
+		} else {
+			await route.fulfill({
+				json: { ...created(body!.requestId), expenses: batchRows.slice(1) }
+			});
+		}
+	});
+	await startDrafts(page);
+	await commitDrafts(page).click();
+	await expect(page.getByText(/未記帳：/)).toBeVisible();
+	await openDraftEditor(page);
+	await draftCards(page).nth(0).getByRole('button', { name: '排除', exact: true }).click();
+	await editDialog(page)
+		.getByRole('button', { name: '完成，回到對話（2 筆）', exact: true })
+		.click();
+	await commitDrafts(page, 2).click();
+	await expect(page.getByRole('group', { name: '已記帳摘要' })).toBeVisible();
+	expect(s.posts[2].requestId).not.toBe(s.posts[1].requestId);
+	expect(s.posts[2].drafts).toHaveLength(2);
+	expect(await pending(page)).toBeNull();
+});
+
+for (const revise of ['failed', 'changed'] as const) {
+	test(`commit after a pre-persist commit failure and a ${revise} revise ${revise === 'failed' ? 'reuses' : 'replaces'} the commit id`, async ({
+		page
+	}) => {
+		const drafts = [1, 2, 3].map(makeDraft);
+		let commits = 0;
+		const s = await setup(page, async (route, body) => {
+			if (body!.action === 'analyze') {
+				await route.fulfill({ json: draftResponse(body!.requestId, drafts) });
+			} else if (body!.action === 'revise') {
+				if (revise === 'failed') {
+					await route.abort();
+				} else {
+					const next = drafts.map((draft, index) =>
+						index === 2 ? { ...draft, note: { ...draft.note, value: '午餐' } } : draft
+					);
+					await route.fulfill({ json: draftResponse(body!.requestId, next) });
+				}
+			} else if (++commits === 1) {
+				await route.abort();
+			} else {
+				await route.fulfill({ json: { ...created(body!.requestId), expenses: batchRows } });
+			}
+		});
+		await startDrafts(page);
+		await commitDrafts(page).click();
+		await expect(page.getByText(/未記帳：/)).toBeVisible();
+		await page.getByLabel('補充草稿').fill('第三筆是午餐');
+		await page.getByRole('button', { name: '送出補充', exact: true }).click();
+		if (revise === 'failed') {
+			await expect(page.getByText(/沒有更新草稿：/)).toBeVisible();
+		} else {
+			await expect(page.getByText('已更新草稿。', { exact: true })).toBeVisible();
+		}
+		await commitDrafts(page).click();
+		await expect(page.getByRole('group', { name: '已記帳摘要' })).toBeVisible();
+		expect(s.posts.map((post) => post.action)).toEqual([
+			'analyze',
+			'commit',
+			'revise',
+			'commit'
+		]);
+		const [, first, , second] = s.posts;
+		if (revise === 'failed') {
+			expect(second.requestId).toBe(first.requestId);
+			expect(second.referenceDate).toBe(first.referenceDate);
+			expect(second.drafts).toEqual(first.drafts);
+			expect(second).toEqual(first);
+		} else {
+			expect(second.requestId).not.toBe(first.requestId);
+			expect(second.drafts).not.toEqual(first.drafts);
+		}
+		expect(await pending(page)).toBeNull();
+	});
+}
+
+test('account switch while the dialog is closed leaves only lookup for the pending item', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	const original = await pending(page);
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	// The header avatar initial shows which account the store holds while the dialog is closed.
+	const avatar = page.locator('header .rounded-full').last();
+	await expect(avatar).toHaveText('S');
+	const switchAccount = (other: boolean) =>
+		page.evaluate(
+			({ storageKey, session, other }) => {
+				const next = other
+					? {
+							...session,
+							user: {
+								...session.user,
+								id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+								email: 'b@example.test',
+								user_metadata: { name: 'Other' }
+							}
+						}
+					: session;
+				localStorage.setItem(storageKey, JSON.stringify(next));
+				const channel = new BroadcastChannel(storageKey);
+				channel.postMessage({ event: 'SIGNED_IN', session: next });
+				channel.close();
+			},
+			{ storageKey: s.storageKey, session: s.session, other }
+		);
+	await switchAccount(true);
+	await expect(avatar).toHaveText('O');
+	await switchAccount(false);
+	await expect(avatar).toHaveText('S');
+	await reopen(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '重試同一請求', exact: true })).toHaveCount(0);
+	expect(await pending(page)).toBe(original);
+	expect(s.posts).toHaveLength(1);
+});
+
+test('clarification failure before persisting retains the same answered request id and history', async ({
+	page
+}) => {
+	let round = 0;
+	const question = '金額是多少？';
+	const s = await setup(page, async (route, body) => {
+		if (++round === 1) {
+			await route.fulfill({
+				json: {
+					status: 'needs_input',
+					requestId: body!.requestId,
+					question,
+					issues: [{ field: 'amount', code: 'missing' }]
+				}
+			});
+		} else if (round === 2) {
+			await route.abort();
+		} else {
+			await route.fulfill({ json: created(body!.requestId) });
+		}
+	});
+	await submit(page);
+	await page.getByLabel('補充資訊').fill('100');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('未新增', { exact: true })).toBeVisible();
+	expect(await pending(page)).toBeNull();
+	await page.getByRole('button', { name: '修改後重新送出' }).click();
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(s.posts[2]).toEqual(s.posts[1]);
+	expect(s.posts[2].requestId).toBe(s.posts[0].requestId);
+	expect(s.posts[2].history).toEqual([{ question, answer: '100' }]);
+});
+
+for (const lifecycle of ['pagehide', 'account-switch'] as const) {
+	for (const recovery of ['query', 'retry'] as const) {
+		test(`original uncertainty survives ${lifecycle} during an in-flight ${recovery} before new persisting`, async ({
+			page
+		}) => {
+			let started = false;
+			let posts = 0;
+			const s = await setup(page, async (route, body) => {
+				if (body && ++posts === 1) {
+					await interrupted(route, body.requestId);
+				} else {
+					// Leave this recovery request in flight without any new persisting event.
+					started = true;
+				}
+			});
+			await submit(page);
+			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+			const original = await pending(page);
+			await page
+				.getByRole('button', {
+					name: recovery === 'query' ? '查詢結果' : '重試同一請求',
+					exact: true
+				})
+				.click();
+			await expect.poll(() => started).toBe(true);
+			await expect(page.getByRole('dialog').locator('textarea')).toBeDisabled();
+			if (lifecycle === 'pagehide') {
+				await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+				await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+				expect(await pending(page)).toBe(original);
+			} else {
+				const switchAccount = (other: boolean) =>
+					page.evaluate(
+						({ storageKey, session, other }) => {
+							const next = other
+								? {
+										...session,
+										user: {
+											...session.user,
+											id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+											email: 'b@example.test'
+										}
+									}
+								: session;
+							localStorage.setItem(storageKey, JSON.stringify(next));
+							const channel = new BroadcastChannel(storageKey);
+							channel.postMessage({ event: 'SIGNED_IN', session: next });
+							channel.close();
+						},
+						{ storageKey: s.storageKey, session: s.session, other }
+					);
+				await switchAccount(true);
+				await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+				await expect(page.getByLabel('記帳內容')).toBeEditable();
+				expect(await pending(page)).toBe(original);
+				await switchAccount(false);
+				await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+				await expect(
+					page.getByRole('button', { name: '查詢結果', exact: true })
+				).toBeVisible();
+				await expect(
+					page.getByRole('button', { name: '重試同一請求', exact: true })
+				).toHaveCount(0);
+				expect(await pending(page)).toBe(original);
+			}
+			expect(s.posts).toHaveLength(recovery === 'retry' ? 2 : 1);
+		});
+	}
+}
+
+test('changed clarification answer after pre-persist failure gets a new id and original Taiwan date', async ({
+	page
+}) => {
+	let round = 0;
+	const question = '金額是多少？';
+	const s = await setup(page, async (route, body) => {
+		if (++round === 1) {
+			await route.fulfill({
+				json: {
+					status: 'needs_input',
+					requestId: body!.requestId,
+					question,
+					issues: [{ field: 'amount', code: 'missing' }]
+				}
+			});
+		} else if (round === 2) {
+			await route.abort();
+		} else {
+			await route.fulfill({ json: created(body!.requestId) });
+		}
+	});
+	await page.clock.setFixedTime(new Date('2026-10-01T23:59:00+08:00'));
+	await submit(page);
+	await page.getByLabel('補充資訊').fill('100');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('未新增', { exact: true })).toBeVisible();
+	expect(await pending(page)).toBeNull();
+	await page.clock.setFixedTime(new Date('2026-10-02T00:01:00+08:00'));
+	await page.getByRole('button', { name: '修改後重新送出', exact: true }).click();
+	await page.getByLabel('補充資訊').fill('120');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(s.posts[2].requestId).not.toBe(s.posts[1].requestId);
+	expect(s.posts[2].referenceDate).toBe(s.posts[1].referenceDate);
+	expect(s.posts[2].referenceDate).toBe('2026-10-01');
+	expect(s.posts[2].history).toEqual([{ question, answer: '120' }]);
+	expect(s.posts[2].text).toBe(s.posts[1].text);
+	expect(await pending(page)).toBeNull();
 });
