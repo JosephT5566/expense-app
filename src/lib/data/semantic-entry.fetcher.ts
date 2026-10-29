@@ -1,13 +1,18 @@
 import { env } from '$env/dynamic/public';
 import { supabase } from '$lib/supabase/supabaseClient';
 import {
-	parseRequest,
-	parseResponse,
-	parseStatusResponse,
-	parseStreamEvent,
-	type CompletedResult,
-	type SemanticRequest,
-	type SemanticResponse
+	parseRequestV3,
+	parseResponseV3,
+	parseStatusResponseV3,
+	parseStreamEventV3,
+	MAX_REQUEST_BYTES_V3,
+	parseUploadRequest,
+	parseUploadResponse,
+	type UploadRequest,
+	type UploadTarget,
+	type ExpenseRow,
+	type SemanticRequestV3,
+	type SemanticResponseV3
 } from '@jopie/semantic-entry-contract';
 export type SemanticAnalysisDelta = { requestId: string; seq: number; text: string };
 export class SemanticEntryError extends Error {
@@ -21,7 +26,7 @@ export class SemanticEntryError extends Error {
 async function call(
 	path: string,
 	method: 'GET' | 'POST',
-	body?: SemanticRequest,
+	body?: SemanticRequestV3 | UploadRequest,
 	signal?: AbortSignal,
 	onPersisting?: () => void,
 	onAnalysis?: (delta: SemanticAnalysisDelta) => void
@@ -47,7 +52,7 @@ async function call(
 	let writing = false;
 	try {
 		const payload = body ? JSON.stringify(body) : undefined;
-		if (payload && new TextEncoder().encode(payload).length > 8192) {
+		if (payload && new TextEncoder().encode(payload).length > MAX_REQUEST_BYTES_V3) {
 			throw new SemanticEntryError('invalid_request', false);
 		}
 		const response = await fetch(url, {
@@ -57,18 +62,26 @@ async function call(
 				...(body
 					? {
 							'Content-Type': 'application/json',
-							Accept: 'text/event-stream; semantic-version=2'
+							Accept:
+								path === '/uploads'
+									? 'application/json'
+									: 'text/event-stream; semantic-version=3'
 						}
-					: {})
+					: { Accept: 'application/json; semantic-version=3' })
 			},
 			...(payload ? { body: payload } : {}),
 			signal: AbortSignal.any([
 				signal ?? new AbortController().signal,
-				AbortSignal.timeout(32000)
+				AbortSignal.timeout(
+					body && 'action' in body && body.action === 'analyze' && body.images
+						? 92000
+						: 32000
+				)
 			])
 		});
 		if (
 			body &&
+			'requestId' in body &&
 			response.ok &&
 			response.headers.get('Content-Type')?.includes('text/event-stream')
 		) {
@@ -81,7 +94,7 @@ async function call(
 			let size = 0;
 			let nextSeq = 0;
 			let analysisCodePoints = 0;
-			let terminalResult: SemanticResponse | undefined;
+			let terminalResult: SemanticResponseV3 | undefined;
 			try {
 				for (;;) {
 					const { value, done } = await reader.read();
@@ -119,7 +132,7 @@ async function call(
 						}
 						let event;
 						try {
-							event = parseStreamEvent(name, JSON.parse(data.join('\n')));
+							event = parseStreamEventV3(name, JSON.parse(data.join('\n')));
 						} catch {
 							throw new SemanticEntryError('invalid_response', true);
 						}
@@ -159,13 +172,17 @@ async function call(
 				reader.releaseLock();
 			}
 		}
-		const result = await response.json();
-		if (!response.ok && response.status !== 422) {
+		const result = await response.json().catch(() => {
+			throw new SemanticEntryError('invalid_response', path !== '/uploads');
+		});
+		if (!response.ok && (path === '/uploads' || response.status !== 422)) {
 			throw new SemanticEntryError(
 				typeof result?.error?.code === 'string' ? result.error.code : 'service_error',
-				typeof result?.error?.uncertain === 'boolean'
-					? result.error.uncertain
-					: response.status >= 500
+				path === '/uploads'
+					? false
+					: typeof result?.error?.uncertain === 'boolean'
+						? result.error.uncertain
+						: response.status >= 500
 			);
 		}
 		return result;
@@ -173,24 +190,24 @@ async function call(
 		if (error instanceof SemanticEntryError) {
 			throw error;
 		}
-		throw new SemanticEntryError('connection', true);
+		throw new SemanticEntryError('connection', path !== '/uploads');
 	}
 }
 export async function submitSemanticEntry(
-	request: SemanticRequest,
+	request: SemanticRequestV3,
 	signal?: AbortSignal,
 	onPersisting?: () => void,
 	onAnalysis?: (delta: SemanticAnalysisDelta) => void
-): Promise<SemanticResponse> {
-	let parsed: SemanticRequest;
+): Promise<SemanticResponseV3> {
+	let parsed: SemanticRequestV3;
 	try {
-		parsed = parseRequest(request);
+		parsed = parseRequestV3(request);
 	} catch {
 		throw new SemanticEntryError('invalid_request', false);
 	}
 	const result = await call('', 'POST', parsed, signal, onPersisting, onAnalysis);
 	try {
-		const response = parseResponse(result);
+		const response = parseResponseV3(result);
 		if (response.requestId !== parsed.requestId) {
 			throw new Error('Request mismatch');
 		}
@@ -202,17 +219,57 @@ export async function submitSemanticEntry(
 export async function getSemanticEntryStatus(
 	requestId: string,
 	signal?: AbortSignal
-): Promise<CompletedResult | null> {
+): Promise<{ expenses: ExpenseRow[]; replayed: true } | null> {
 	const result = await call(`/${encodeURIComponent(requestId)}`, 'GET', undefined, signal);
 	try {
-		const response = parseStatusResponse(result);
+		const response = parseStatusResponseV3(result);
 		if (response.requestId !== requestId) {
 			throw new Error('Request mismatch');
 		}
 		return response.status === 'not_found'
 			? null
-			: { expense: response.expense, replayed: true };
+			: { expenses: response.expenses, replayed: true };
 	} catch {
 		throw new SemanticEntryError('invalid_response', true);
+	}
+}
+
+export async function requestImageUploads(
+	files: UploadRequest['files'],
+	signal?: AbortSignal
+): Promise<UploadTarget[]> {
+	let request: UploadRequest;
+	try {
+		request = parseUploadRequest({ files });
+	} catch {
+		throw new SemanticEntryError('invalid_request', false);
+	}
+	const result = await call('/uploads', 'POST', request, signal);
+	try {
+		return parseUploadResponse(result, files.length).uploads;
+	} catch {
+		throw new SemanticEntryError('invalid_response', false);
+	}
+}
+export async function uploadImage(
+	target: UploadTarget,
+	file: Blob,
+	signal?: AbortSignal
+): Promise<void> {
+	try {
+		const response = await fetch(target.url, {
+			method: 'PUT',
+			headers: target.requiredHeaders,
+			body: file,
+			signal: AbortSignal.any([
+				signal ?? new AbortController().signal,
+				AbortSignal.timeout(60000)
+			])
+		});
+		if (!response.ok) {
+			throw new Error('Upload failed');
+		}
+	} catch {
+		throw new SemanticEntryError('image_upload', false);
 	}
 }

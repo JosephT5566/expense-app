@@ -131,11 +131,6 @@
 
 	let aiDialogOpen = $state(false);
 
-	function handleImport(expenses: ExpenseRow[]) {
-		Logger.log('Importing expenses:', expenses);
-		expensesStore.setMoreItems(expenses);
-	}
-
 	let approvingScheduledId = $state<string | null>(null);
 	let cancellingScheduledId = $state<string | null>(null);
 
@@ -379,4 +374,4 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<AIEntryDialog bind:open={aiDialogOpen} onImport={handleImport} />
+<AIEntryDialog bind:open={aiDialogOpen} />

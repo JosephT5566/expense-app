@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
+	parseUploadRequest,
 	parseDraftV3,
 	parseRequestV3,
 	parseResponseV3,
@@ -157,3 +158,12 @@ for (const number of [NaN, Infinity, -Infinity]) {
 console.log(
 	`V3 Python/browser contract parity: ${cases.v3.length} acceptance/rejection vectors and v4 hashes passed`
 );
+
+for (const item of cases.uploads) {
+	if (item.invalid) {
+		assert.throws(() => parseUploadRequest(item.raw));
+	} else {
+		assert.deepEqual(parseUploadRequest(item.raw), item.parsed);
+	}
+}
+console.log(`Upload request parity: ${cases.uploads.length} cases passed`);

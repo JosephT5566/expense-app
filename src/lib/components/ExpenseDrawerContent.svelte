@@ -1,4 +1,7 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
+	import type { Draft, DraftField } from '@jopie/semantic-entry-contract';
+	import DraftFieldChip from './semantic-entry/DraftFieldChip.svelte';
 	export type CategoryOption = { value: string; label: string };
 	import { type ExpenseRow, NewExpense } from '$lib/types/expense';
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
@@ -14,7 +17,7 @@
 	import Calculator from '$lib/components/ui/Calculator.svelte';
 	import Carousel from '$lib/components/ui/Carousel.svelte';
 	import { derived } from 'svelte/store';
-	import { toTaiwanDateString } from '$lib/utils/dates';
+	import { toTaiwanDateString, toISODateOnly } from '$lib/utils/dates';
 	import { useAsyncAction } from '$lib/utils/loading';
 	import Logger from '$lib/utils/logger';
 	import { Label } from '$lib/components/shadcn/label';
@@ -41,8 +44,12 @@
 		disableSubmitUntilChanged = true,
 		showDelete,
 		onSubmitExpense,
-		onSubmitFinish
+		onSubmitFinish,
+		aiDraft,
+		onApplyDraft
 	}: {
+		aiDraft?: Draft;
+		onApplyDraft?: (draft: Draft) => void;
 		expenseId?: string;
 		editMode?: boolean;
 		selectedDate?: string;
@@ -57,15 +64,101 @@
 		onSubmitFinish?: () => void;
 	} = $props();
 
+	const initialDraft = untrack(() => aiDraft);
 	let expenseData = $state(
-		expenseId ? getExpenseById(expenseId) : Object.assign({}, new NewExpense(), initialExpense) // transfer a Class to an Object.
+		initialDraft
+			? Object.assign({}, new NewExpense(), {
+					note: initialDraft.note.value ?? '',
+					amount:
+						initialDraft.currency.value === 'TWD'
+							? (initialDraft.amount.value ?? 0)
+							: 0,
+					category_id: initialDraft.categoryId.value ?? '',
+					scope: initialDraft.scope.value ?? 'personal',
+					payer_email:
+						initialDraft.scope.value === 'personal'
+							? ($currentUser?.email ?? '')
+							: (initialDraft.payerEmail.value ?? ''),
+					ts: initialDraft.date.value ? `${initialDraft.date.value}T00:00:00+08:00` : ''
+				})
+			: expenseId
+				? getExpenseById(expenseId)
+				: Object.assign({}, new NewExpense(), initialExpense) // transfer a Class to an Object.
 	);
 
 	let selectedDate = $state(
-		selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : '')
+		initialDraft
+			? (initialDraft.date.value ?? '')
+			: selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : '')
 	);
-	const effectiveDateDisabled = $derived(dateDisabled ?? !editMode);
-	const effectiveShowDelete = $derived(showDelete ?? (editMode && !onSubmitExpense));
+	const effectiveDateDisabled = $derived(aiDraft ? false : (dateDisabled ?? !editMode));
+	const effectiveShowDelete = $derived(
+		!aiDraft && (showDelete ?? (editMode && !onSubmitExpense))
+	);
+
+	const foreignCurrency = $derived(!!aiDraft && aiDraft.currency.value !== 'TWD');
+	const draftMembers = $derived.by(() => {
+		const members = [...new Set(aiDraft?.splitMemberEmails.value ?? [])];
+		return members.length >= 2 && members.every((email) => $allowedUsers.includes(email))
+			? members
+			: [...new Set($allowedUsers)];
+	});
+	const draftShares = $derived.by(() => {
+		const amount = Number(expenseData.amount) || 0;
+		const count = draftMembers.length;
+		return Object.fromEntries(
+			[...draftMembers]
+				.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+				.map((email, index) => [
+					email,
+					Math.floor(amount / count) + (index < amount % count ? 1 : 0)
+				])
+		);
+	});
+	let draftError = $state('');
+	function applyDraft() {
+		if (!aiDraft) {
+			return;
+		}
+		draftError = validateForm();
+		if (
+			!draftError &&
+			(!selectedDate ||
+				selectedDate > toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)))
+		) {
+			draftError = '請輸入有效日期';
+		}
+		if (draftError) {
+			return;
+		}
+		function field<T>(original: DraftField<T>, value: T): DraftField<T> {
+			return JSON.stringify(original.value) === JSON.stringify(value)
+				? original
+				: { value, state: 'recognized', confidence: null, source: 'user' };
+		}
+		const email = $currentUser?.email ?? '';
+		const amount = Number(expenseData.amount);
+		const date = field(aiDraft.date, selectedDate);
+		onApplyDraft?.({
+			...aiDraft,
+			note: field(aiDraft.note, expenseData.note),
+			amount: foreignCurrency
+				? { value: amount, state: 'recognized', confidence: null, source: 'user' }
+				: field(aiDraft.amount, amount),
+			currency: field(aiDraft.currency, 'TWD'),
+			date: date === aiDraft.date ? aiDraft.date : { ...date, defaulted: null },
+			categoryId: field(aiDraft.categoryId, expenseData.category_id ?? ''),
+			scope: field(aiDraft.scope, expenseData.scope),
+			payerEmail: field(
+				aiDraft.payerEmail,
+				expenseData.scope === 'personal' ? email : (expenseData.payer_email ?? '')
+			),
+			splitMemberEmails: field(
+				aiDraft.splitMemberEmails,
+				expenseData.scope === 'personal' ? [email] : draftMembers
+			)
+		});
+	}
 
 	// const LOADING_MIN_DURATION_MS = 400;
 	// const FINISHED_DURATION_MS = 1500;
@@ -186,6 +279,9 @@
 			return '請輸入帳目內容';
 		}
 		if (expenseData?.scope === 'household') {
+			if (aiDraft) {
+				return draftMembers.length >= 2 ? '' : '請至少分配兩位成員';
+			}
 			if (!sharesValid) {
 				return '分帳總和需等於金額';
 			}
@@ -199,6 +295,10 @@
 
 	async function handleSubmit(e: Event) {
 		e.preventDefault(); // prevent page reload
+		if (aiDraft) {
+			applyDraft();
+			return;
+		}
 
 		const err = validateForm();
 		if (err) {
@@ -296,22 +396,30 @@
 </Dialog.Root>
 
 <form class="flex flex-col gap-4" onsubmit={handleSubmit}>
-	{#if showDate}
+	{#if aiDraft || showDate}
 		<div class="grid gap-2">
-			<Label for="date-input">日期</Label>
+			<Label for="date-input"
+				>日期 {#if aiDraft}<DraftFieldChip field={aiDraft.date} />{/if}</Label
+			>
 			<Input
 				id="date-input"
 				type="date"
 				class="w-auto"
 				bind:value={selectedDate}
 				disabled={effectiveDateDisabled}
-				max={dateMax}
+				max={aiDraft ? toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)) : dateMax}
 			/>
 		</div>
 	{/if}
 
 	<div class="grid gap-2">
-		<Label for="amount-input">金額</Label>
+		<Label for="amount-input"
+			>{aiDraft ? '金額（TWD）' : '金額'}
+			{#if aiDraft}{#if foreignCurrency}<span class="rounded border px-1.5 py-0.5 text-xs"
+						>原幣 {aiDraft.currency.value}
+						{aiDraft.originalAmount?.text ?? aiDraft.amount.value}</span
+					>{:else}<DraftFieldChip field={aiDraft.amount} />{/if}{/if}
+		</Label>
 		<div class="relative">
 			<ButtonGroup class="w-full">
 				<Input
@@ -339,8 +447,13 @@
 		</div>
 	</div>
 
+	{#if foreignCurrency}<p class="text-xs text-muted-foreground">
+			請輸入換算後的台幣金額，儲存時幣別為 TWD。
+		</p>{/if}
 	<fieldset>
-		<legend class="text-sm font-semibold mb-2">類別</legend>
+		<legend class="text-sm font-semibold mb-2"
+			>類別 {#if aiDraft}<DraftFieldChip field={aiDraft.categoryId} />{/if}</legend
+		>
 		{#if $expenseOptions.length > 0}
 			{#snippet children(page: unknown, i: number)}
 				<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
@@ -360,6 +473,9 @@
 								<Icon icon={cat.icon} class="size-8" width={32} height={32} />
 							</div>
 							<div class="text-xs truncate max-w-16">{cat.name}</div>
+							{#if aiDraft?.categoryId.value === cat.id && aiDraft.categoryId.state === 'recognized' && ['image', 'text'].includes(aiDraft.categoryId.source)}<span
+									class="text-xs">建議</span
+								>{/if}
 						</Button>
 					{/each}
 				</div>
@@ -429,64 +545,82 @@
 					</Select.Root>
 				</div>
 
-				<fieldset
-					class="fieldset bg-base-200 border-base-300 relative rounded-lg w-full border px-4 pt-0 pb-2"
-				>
-					<legend class="text-sm font-semibold mb-2">分帳</legend>
-					{#if $allowedUsers.length === 0}
-						<p class="opacity-60 text-sm">尚未設定家庭成員</p>
-					{:else}
-						<div class="flex flex-col gap-2">
-							{#each $allowedUsers as email (email)}
-								<div class="flex items-center gap-2">
-									<Label class="flex-1 truncate"
-										>{$allowedUserInfo[email].name ?? email}</Label
-									>
-									<Input
-										class="w-32 text-right"
-										name={email}
-										type="number"
-										inputmode="decimal"
-										placeholder="0"
-										value={shares[email] == 0 ? '' : shares[email]}
-										oninput={(e) => {
-											const target = e.target as HTMLInputElement;
-											shares[email] = Number(target.value);
-										}}
-									/>
-								</div>
-							{/each}
-						</div>
-						<div class="mt-2 text-xs text-right">
-							合計：{sharesTotal} / 金額：{expenseData.amount}
-							{#if expenseData.amount && !sharesValid}
-								<span class="text-destructive ml-2">不相符</span>
-							{/if}
-						</div>
-					{/if}
-					<div class="flex w-full justify-end mt-2">
-						<Button
-							type="button"
-							variant="outline"
-							size="xs"
-							onclick={splitSharesEqually}
-							disabled={$allowedUsers.length === 0 ||
-								!Number.isFinite(Number(expenseData.amount)) ||
-								Number(expenseData.amount) <= 0}
+				{#if aiDraft}
+					<fieldset class="rounded-lg border px-4 pb-2" aria-label="草稿分帳">
+						<legend class="text-sm font-semibold"
+							>分帳 <span class="text-xs font-normal">AI 草稿只支援平分</span></legend
 						>
-							平分
-						</Button>
-					</div>
-				</fieldset>
+						{#each draftMembers as email (email)}
+							<div class="flex justify-between gap-2 py-1" data-member-email={email}>
+								<span>{getUserDisplayName(email)}</span><span
+									>{draftShares[email]}</span
+								>
+							</div>
+						{/each}
+						<p class="text-xs text-muted-foreground">
+							金額或成員變更時自動重新平分，無法手動輸入。
+						</p>
+					</fieldset>
+				{:else}
+					<fieldset
+						class="fieldset bg-base-200 border-base-300 relative rounded-lg w-full border px-4 pt-0 pb-2"
+					>
+						<legend class="text-sm font-semibold mb-2">分帳</legend>
+						{#if $allowedUsers.length === 0}
+							<p class="opacity-60 text-sm">尚未設定家庭成員</p>
+						{:else}
+							<div class="flex flex-col gap-2">
+								{#each $allowedUsers as email (email)}
+									<div class="flex items-center gap-2">
+										<Label class="flex-1 truncate"
+											>{$allowedUserInfo[email].name ?? email}</Label
+										>
+										<Input
+											class="w-32 text-right"
+											name={email}
+											type="number"
+											inputmode="decimal"
+											placeholder="0"
+											value={shares[email] == 0 ? '' : shares[email]}
+											oninput={(e) => {
+												const target = e.target as HTMLInputElement;
+												shares[email] = Number(target.value);
+											}}
+										/>
+									</div>
+								{/each}
+							</div>
+							<div class="mt-2 text-xs text-right">
+								合計：{sharesTotal} / 金額：{expenseData.amount}
+								{#if expenseData.amount && !sharesValid}
+									<span class="text-destructive ml-2">不相符</span>
+								{/if}
+							</div>
+						{/if}
+						<div class="flex w-full justify-end mt-2">
+							<Button
+								type="button"
+								variant="outline"
+								size="xs"
+								onclick={splitSharesEqually}
+								disabled={$allowedUsers.length === 0 ||
+									!Number.isFinite(Number(expenseData.amount)) ||
+									Number(expenseData.amount) <= 0}
+							>
+								平分
+							</Button>
+						</div>
+					</fieldset>
 
-				<div class="flex items-center gap-2 mt-2">
-					<Checkbox
-						id="settled-input"
-						bind:checked={expenseData.is_settled}
-						disabled={expenseData?.scope !== 'household'}
-					/>
-					<Label for="settled-input" class="text-sm">已結清</Label>
-				</div>
+					<div class="flex items-center gap-2 mt-2">
+						<Checkbox
+							id="settled-input"
+							bind:checked={expenseData.is_settled}
+							disabled={expenseData?.scope !== 'household'}
+						/>
+						<Label for="settled-input" class="text-sm">已結清</Label>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</fieldset>
@@ -496,17 +630,20 @@
 		<Input id="content-input" bind:value={expenseData.note} placeholder="例如：午餐便當" />
 	</div>
 
+	{#if aiDraft && draftError}<p role="alert" class="text-destructive">{draftError}</p>{/if}
 	<Button
 		type="submit"
 		class="w-full"
-		disabled={(disableSubmitUntilChanged && !isUpdated) || $submitIsLoading || $submitIsDone}
+		disabled={(!aiDraft && disableSubmitUntilChanged && !isUpdated) ||
+			$submitIsLoading ||
+			$submitIsDone}
 	>
 		{#if $submitIsLoading}
 			<Icon icon="svg-spinners:90-ring-with-bg" width="20" height="20" />
 		{:else if $submitIsDone}
 			完成
 		{:else}
-			{submitLabel ?? (editMode ? '更新' : '新增')}
+			{aiDraft ? '套用到草稿' : (submitLabel ?? (editMode ? '更新' : '新增'))}
 		{/if}
 	</Button>
 </form>

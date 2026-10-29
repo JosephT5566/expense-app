@@ -1,35 +1,35 @@
 # App architecture
 
-JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Python 3.12/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, captured public baseline, semantic migrations, and disposable fixtures; it contains no SvelteKit server routes or receipt-analysis backend. Live public-schema metadata and the trigger fix were verified on 2026-10-13; hosted service behavior and the remaining response/type alignment are unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
+JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. A separate Python 3.12/LangGraph service handles semantic entry through caller-scoped HTTPS Supabase RPC. The repository includes its container, captured public baseline, semantic migrations, and disposable fixtures; it contains no SvelteKit server routes. Receipt image analysis is implemented in the semantic-entry service. Live public-schema metadata and the trigger fix were verified on 2026-10-13; hosted service behavior and the remaining response/type alignment are unverified. See [README.md](../README.md) for setup and [Database and service contracts](database.md) for external contracts.
 
 ## Source map
 
-| Location                            | Responsibility                                                                                        |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `src/routes/`                       | File-based pages and shared layout                                                                    |
-| `src/lib/components/`               | Expense list, editor, scheduled cards, and shared AI entry dialog                                     |
-| `src/lib/components/ai-receipt/`    | Upload, analysis, preview editing, grouping, and confirmation                                         |
-| `src/lib/components/ui/`            | Navigation, auth modal, date picker, calculator, and chart                                            |
-| `src/lib/components/shadcn/`        | UI primitives built around Bits UI                                                                    |
-| `src/lib/data/`                     | Supabase fetchers, receipt API client, cache-first retrieval                                          |
-| `src/lib/stores/`                   | Session, expenses, schedules, categories, filters, settings, theme                                    |
-| `src/lib/cache/`                    | Memory and IndexedDB persistence for monthly and pending scheduled expenses                           |
-| `src/lib/types/`                    | Expense, schedule, receipt API, user, category, settings contracts                                    |
-| `src/lib/supabase/`                 | Supabase client and Google OAuth/session helpers                                                      |
-| `src/lib/utils/`                    | Taiwan dates/months, cache keys, loading, logging, icons, device detection                            |
-| `src/app.css`, `src/lib/theme.css`  | Global styles and themes                                                                              |
-| `static/`                           | Icons, favicon, robots file                                                                           |
-| `services/semantic-entry/`          | Python ASGI/LangGraph service, HTTPX Gemini provider/RPC, normalizer, tests, and synthetic evaluation |
-| `packages/semantic-entry-contract/` | Portable request/response runtime validation and DTOs                                                 |
-| `supabase/`                         | Captured public baseline, semantic migrations, and explicitly disposable fixtures                     |
-| `.github/workflows/`                | Build/Pages, semantic verification, and manual Cloud Run release                                      |
-| `e2e/`                              | Playwright tests                                                                                      |
+| Location                             | Responsibility                                                                                        |
+| ------------------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `src/routes/`                        | File-based pages and shared layout                                                                    |
+| `src/lib/components/`                | Expense list, editor, scheduled cards, and shared AI entry dialog                                     |
+| `src/lib/components/semantic-entry/` | Text/image conversation, draft editing, grouping, and confirmation                                    |
+| `src/lib/components/ui/`             | Navigation, auth modal, date picker, calculator, and chart                                            |
+| `src/lib/components/shadcn/`         | UI primitives built around Bits UI                                                                    |
+| `src/lib/data/`                      | Supabase fetchers, semantic API/upload client, cache-first retrieval                                  |
+| `src/lib/stores/`                    | Session, expenses, schedules, categories, filters, settings, theme                                    |
+| `src/lib/cache/`                     | Memory and IndexedDB persistence for monthly and pending scheduled expenses                           |
+| `src/lib/types/`                     | Expense, schedule, user, category, settings contracts                                                 |
+| `src/lib/supabase/`                  | Supabase client and Google OAuth/session helpers                                                      |
+| `src/lib/utils/`                     | Taiwan dates/months, cache keys, loading, logging, icons, device detection                            |
+| `src/app.css`, `src/lib/theme.css`   | Global styles and themes                                                                              |
+| `static/`                            | Icons, favicon, robots file                                                                           |
+| `services/semantic-entry/`           | Python ASGI/LangGraph service, HTTPX Gemini provider/RPC, normalizer, tests, and synthetic evaluation |
+| `packages/semantic-entry-contract/`  | Portable request/response runtime validation and DTOs                                                 |
+| `supabase/`                          | Captured public baseline, semantic migrations, and explicitly disposable fixtures                     |
+| `.github/workflows/`                 | Build/Pages, semantic verification, and manual Cloud Run release                                      |
+| `e2e/`                               | Playwright tests                                                                                      |
 
 ## Routes
 
 | Route                  | Purpose                                                                                              |
 | ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| `/`                    | Daily expenses, editor, due scheduled items, receipt import                                          |
+| `/`                    | Daily expenses, editor, due scheduled items, AI entry                                                |
 | `/summary`             | Monthly category totals, chart, expense drill-down                                                   |
 | `/settle`              | Query unsettled household expenses by date, calculate transfers for selected rows, mark them settled |
 | `/scheduled`           | Manage one-time and recurring expenses; approve or skip due occurrences                              |
@@ -59,25 +59,21 @@ The summary groups loaded rows by category: personal rows contribute their full 
 
 ## Semantic entry
 
-`AIEntryDialog.svelte` owns the shared modal and its text/image mode switch. It opens in text mode, keeps both panels mounted to preserve progress across switches, and disables mode switching and closing during active requests. `semantic-entry/SemanticEntryContent.svelte` submits through `semantic-entry.fetcher.ts` with the current session JWT and one UUID for the logical expense. The optional bounded question/answer history and the fixed Taiwan `referenceDate` live only in modal memory. The browser captures the baseline on first submission and preserves it through clarification and uncertain retries; a new entry gets a new baseline. The service retains the actual server Taiwan date separately to reject future dates. Missing or repairable fields produce a focused question; answers supplement the same expense, which the service writes automatically once valid. The UI locks closing, Escape, and outside interaction throughout submission, and shows the SSE `persisting` event before the RPC. No draft confirmation is involved. Closing a clarification discards the conversation and starts the next operation with a new UUID; account/revision guards discard stale results.
+`AIEntryDialog.svelte` hosts one `semantic-entry/SemanticEntryContent.svelte` conversation with text and receipt image attachments, without a mode switch. The component validates images, converts HEIC/HEIF with `heic2any`, obtains signed URLs through `semantic-entry.fetcher.ts`, uploads bytes without the session JWT, and submits paths in v3 `analyze`. A single complete result writes directly; image analysis with multiple or incomplete results returns editable drafts. Pure text analysis retains the existing bounded clarification flow and automatic single-expense creation. The UI blocks closing, Escape, and outside interaction during requests; account/revision guards discard stale results.
 
-Before each submission, account-scoped localStorage retains only `{requestId}`, without text, history, or JWT. Definitive results clear it. An uncertain retry freezes the exact in-memory text/history/UUID; later errors or questions cannot erase earlier uncertainty. Closing, account changes, navigation, or reload discard that payload and leave only status lookup available for the owning account. Legacy pending records are reduced to UUID-only storage. New submissions require working recovery storage.
+`DraftBlock.svelte` displays the current drafts inline. Users can continue with text (`revise`), or enter `DraftEditDialog.svelte` to edit through the shared `ExpenseDrawerContent.svelte` draft mode, merge, ungroup, hide, or restore entries. Draft editing stays local. Only visible entries are submitted by 「全部記帳」 (`commit`), enabled when all are complete; the service independently validates values before batch persistence. `revise` never writes expenses. Drafts, conversation history, and attachment previews stay in modal memory.
+
+Before each submission, account-scoped localStorage retains only `{requestId}`, without text, history, or JWT. Definitive results clear it. An uncertain retry freezes the exact in-memory request, including its UUID and any draft payload; later errors or questions cannot erase earlier uncertainty. Closing, account changes, navigation, or reload discard that payload and leave only status lookup available for the owning account. Legacy pending records are reduced to UUID-only storage. New submissions require working recovery storage.
 
 The separate service authenticates through Supabase `HTTPS `/auth/v1/user``, loads trusted settings/categories/member context and the Taiwan date, checks for a completed request, consumes quota only for new attempts, calls the provider once, normalizes, and persists via one SQL RPC. Completed replays skip the model and quota. Raw text and JWTs are not stored in the request ledger or persisted graph state; external payload tracing is disabled. See [semantic service contracts](database.md#semantic-entry-service).
 
-First creation patches the existing expense store/cache. Replay/status recovery refreshes the snapshot month and any currently known row month instead of applying the old snapshot. The browser does not directly write expenses in this flow. Receipt import still requires its existing review/confirmation.
+First creation patches the existing expense store/cache. Replay/status recovery refreshes the snapshot month and any currently known row month instead of applying the old snapshot. The browser does not directly write expenses in this flow. Draft commit results use the same store/cache integration.
 
 ## Scheduled expenses
 
 The scheduled store retrieves pending rows through `scheduled-cache-first.ts`, using memory/IndexedDB caching and a 24-hour stale threshold. Due items are derived from pending rows and a clock updated every minute.
 
 Mutations use `scheduled-expenses.fetcher.ts`. Approval creates a regular expense, then deletes a one-time schedule or advances a recurring schedule. The store updates regular expenses and the pending schedule cache. Recurrence supports daily, weekly, and monthly rules in `Asia/Taipei`. See [lifecycle details](database.md#scheduled-expenses).
-
-## Receipt import
-
-`AIEntryDialog.svelte` hosts the two feature components: `semantic-entry/SemanticEntryContent.svelte` for text entry and `ai-receipt/ReceiptImportContent.svelte` for receipt import. The receipt component owns upload, analysis, preview state, confirmation, and cancellation; it exposes its busy state and close request to the shared dialog. Receipt progress is preserved when switching modes; closing discards progress, with cancellation confirmation after the upload step. `UploadStep.svelte` validates images, converts HEIC/HEIF when needed, obtains signed upload URLs from the external service, uploads images, and requests analysis by file path.
-
-`ai-receipt.fetcher.ts` attaches the Supabase session access token and adapts normalized responses into the extraction shape used by the review UI. Preview components support correction, grouping, and exclusion. `ConfirmStep.svelte` validates visible entries and bulk-upserts final expenses. See [service details](database.md#receipt-analysis-service).
 
 ## Styling, static build, and PWA
 
@@ -89,6 +85,6 @@ The app uses Tailwind CSS, DaisyUI, Bits UI, and shadcn-svelte primitives. Svelt
 
 The Python backend lives in `services/semantic-entry/semantic_entry/`, uses FastAPI/Uvicorn for HTTP and HTTPX for caller-scoped Supabase and provider requests, and locks dependencies in `uv.lock`. Its strict Python validators mirror the browser TypeScript contract; `packages/semantic-entry-contract/tests/python-parity.mjs` compares normalized requests/hashes and validates real synthetic JSON/SSE HTTP outputs. FastAPI registers explicit health, creation, and status routes, followed by a fallback route that preserves the existing CORS preflight and JSON errors for unknown paths or methods. Request bodies are read directly and validated by the portable validators; automatic OpenAPI, Swagger UI, and ReDoc endpoints are disabled. The lifespan owns the shared HTTPX client and closes it on shutdown. No Node runtime or frontend source is included in the Python container.
 
-Gemini analysis uses an optional provider streaming method and `on_analysis` callback through the existing LangGraph `extract` node and handler Queue. The graph retains `ainvoke`, normalization, fixed clarification questions, and persistence branches. The provider envelope contains only `analysis` and `extraction`; analysis stays outside graph state and persisted data.
+Gemini analysis uses an optional provider streaming method and `on_analysis` callback through the existing LangGraph `extract` node and handler Queue. The graph retains `ainvoke`, normalization, fixed clarification questions, and persistence branches. The pure text provider envelope contains only `analysis` and `extraction`; analysis stays outside graph state and persisted data. Image/revise extraction uses `draft_provider.py` and `graph_v3.py`, without analysis callbacks; commit validates values without a model call.
 
-The semantic fetcher requests version 2 SSE and validates analysis request IDs, sequential sequence numbers, event order, and a 200-code-point cumulative cap before updating the dialog. Old backends without analysis events remain compatible. The dialog displays user messages on the right and assistant analysis, clarification questions, and results on the left, with one persistent textarea and an icon send button below a scrollable conversation. The same composer accepts the initial description and clarification replies, with accessible labels for each; phase-specific hints and the active character count sit immediately above it. Processing and terminal phases disable the composer. Recovery, retry, edit, and new-operation actions appear in the assistant result bubble. There is no separate form heading or permanent footer disclaimer. It follows streaming updates while the reader is near the bottom. Analysis stays outside the live status region; each clarification round preserves the previous summary in the in-memory conversation while resetting the active summary. Display messages are separate from the bounded request history and are never sent to the service. New operations, closing, account changes, and page lifecycle events discard the display conversation. Status queries clear the active summary.
+The semantic fetcher requests version 3 SSE and validates analysis request IDs, sequential sequence numbers, event order, and a 200-code-point cumulative cap before updating the dialog. Deploy the v3 service before releasing this frontend. The dialog displays user messages on the right and assistant analysis, clarification questions, and results on the left, with one persistent textarea and an icon send button below a scrollable conversation. The same composer accepts the initial description and clarification replies, with accessible labels for each; phase-specific hints and the active character count sit immediately above it. Processing and terminal phases disable the composer. Recovery, retry, edit, and new-operation actions appear in the assistant result bubble. There is no separate form heading or permanent footer disclaimer. It follows streaming updates while the reader is near the bottom. Analysis stays outside the live status region; each clarification round preserves the previous summary in the in-memory conversation while resetting the active summary. Display messages are separate from the bounded request history and are never sent to the service. New operations, closing, account changes, and page lifecycle events discard the display conversation. Status queries clear the active summary.
