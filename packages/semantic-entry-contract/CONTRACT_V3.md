@@ -98,7 +98,8 @@ Cloud Run 設定 90s／1Gi；圖片 analyze 的服務 deadline 目前是 85s（�
 
 - 純文字 `analyze` 沿用既有單筆支出／補問流程；不是多筆純文字擷取。
   `needs_input` 的 `question` 為 1–300 字元，`issues` 為欄位原因，補答放入 bounded history。
-- 圖片 `analyze` 只有一筆且完整時直接寫入，回 `created`；多筆或不完整時回 `drafts`。
+- 圖片 `analyze` 的「一筆」是收據上的一個消費品項（多品項收據會拆成多筆草稿）。
+  只有一筆且完整時直接寫入，回 `created`；多筆或任一不完整時回 `drafts`。
   所有圖片均非收據且沒有草稿時回 `rejected`／`not_a_receipt`；超過 20 筆回 `too_many_drafts`。
 - `revise` 依 text 與目前 drafts 重新擷取，不寫入支出；即使只剩一筆完整草稿也回 `drafts`。
   既有草稿變更或新增時可帶 `updated:true`，合併來源可保留 `mergedFrom`。
