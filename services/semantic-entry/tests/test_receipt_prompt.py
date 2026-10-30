@@ -63,7 +63,8 @@ ITEM_SPLIT_PHRASES = (
     "0 元品項與贈品不輸出",
     "不得輸出負數或 0 元的 draft",
     "「合成一筆」或「不要拆」時，該收據只輸出一筆總額",
-    "單張收據超過 20 個品項時，該收據改輸出一筆總額",
+    "單張收據拆出的 drafts（含服務費）會超過 20 筆時，該收據改輸出一筆總額",
+    "輸出一筆總額時 note 填收據店名，看不出店名時填「收據總額」；amount 為收據總額",
 )
 
 
@@ -76,10 +77,15 @@ def test_item_split_rule_is_image_only():
     assert "【逐品項拆分】" not in revise
     assert image.index("【image】") < image.index("【逐品項拆分】")
     assert image.index("【逐品項拆分】") < image.index("【context JSON】")
+    assert "超過 20 個品項" not in image
     # D2: no receipt-total reconciliation or single-total fallback on mismatch.
+    # 「收據總額」 now appears only in the merged-total note/amount rule.
+    assert image.count("收據總額") == 2
     for prompt in (image, revise):
-        assert "收據總額" not in prompt
         assert "總和" not in prompt
+        assert "不符" not in prompt
+        assert "核對" not in prompt
+    assert "收據總額" not in revise
 
 
 def test_receipt_schema_exact_required_keys_and_enums():
