@@ -67,7 +67,8 @@ async function setup(
 	page: Page,
 	handler: (route: Route, body: SemanticRequestV3 | null) => Promise<void>,
 	initialRows: (typeof row)[] = [],
-	allowedEmails = [user.email, 'b@example.test']
+	allowedEmails = [user.email, 'b@example.test'],
+	clock: 'fixed' | 'install' = 'fixed'
 ) {
 	await page.route('**/*', async (route) => {
 		const url = new URL(route.request().url());
@@ -77,7 +78,12 @@ async function setup(
 			await route.abort();
 		}
 	});
-	await page.clock.setFixedTime(new Date('2026-10-01T12:00:00+08:00'));
+	if (clock === 'install') {
+		// Fake timers from page load so runFor drives the 60-second expiry check and toasts.
+		await page.clock.install({ time: new Date('2026-10-01T12:00:00+08:00') });
+	} else {
+		await page.clock.setFixedTime(new Date('2026-10-01T12:00:00+08:00'));
+	}
 	const storageKey = `sb-${new URL(env.PUBLIC_SUPABASE_URL).hostname.split('.')[0]}-auth-token`;
 	const session = {
 		access_token: 'synthetic-jwt',
@@ -181,6 +187,35 @@ const interrupted = (route: Route, requestId: string) =>
 		body: `event: persisting\ndata: ${JSON.stringify({ status: 'persisting', requestId })}\n\n`
 	});
 const submit = (page: Page) => page.getByRole('button', { name: '送出記帳', exact: true }).click();
+// Pending tray (variant A): the title badge opens a popover; rows expand in place.
+const pendingBadge = (page: Page) => page.getByRole('button', { name: /^待確認( \d+ 筆)?$/ });
+const pendingTray = (page: Page) => page.locator('#semantic-pending-tray');
+const trayRows = (page: Page) => pendingTray(page).getByRole('listitem');
+async function openPendingTray(page: Page) {
+	if (!(await pendingTray(page).isVisible())) {
+		await pendingBadge(page).click();
+	}
+	await expect(pendingTray(page)).toBeVisible();
+}
+async function expandPending(page: Page, index = 0) {
+	await openPendingTray(page);
+	const toggle = trayRows(page).nth(index).locator('button[aria-expanded]');
+	if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+		await toggle.click();
+	}
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+}
+async function trayAction(
+	page: Page,
+	name: '查詢結果' | '重試同一請求' | '刪除這筆待確認',
+	index = 0
+) {
+	await expandPending(page, index);
+	await trayRows(page).nth(index).getByRole('button', { name, exact: true }).click();
+}
+const createdSummary = (page: Page) => page.getByRole('group', { name: '已記帳摘要' });
+const limitToast = (page: Page) =>
+	page.getByRole('status').filter({ hasText: '已有3筆待確認，暫時無法建立新對話' });
 async function cachedMonth(page: Page, month: string) {
 	return page.evaluate(
 		(key) =>
@@ -271,8 +306,11 @@ test('uncertain retry keeps UUID and text; a new operation gets a new UUID', asy
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await expect(page.getByLabel('記帳內容')).toBeEditable();
-	await page.getByRole('button', { name: '重試同一請求' }).click();
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	await trayAction(page, '重試同一請求');
+	await expect(pendingTray(page)).toHaveCount(0);
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await expect(pendingBadge(page)).toHaveCount(0);
 	expect(s.posts[1]).toEqual(s.posts[0]);
 	await page.getByRole('button', { name: '新增另一筆' }).click();
 	await page.getByLabel('記帳內容').fill('午餐100');
@@ -297,10 +335,14 @@ test('not_found stays uncertain and a subsequent GET restores completion', async
 	});
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-	await page.getByRole('button', { name: '查詢結果' }).click();
-	await expect(page.getByText('尚未查到完成結果，仍待確認。')).toBeVisible();
-	await page.getByRole('button', { name: '查詢結果' }).click();
-	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await trayAction(page, '查詢結果');
+	await expect.poll(() => query).toBe(1);
+	await expect(trayRows(page).first()).toContainText('尚未查到完成結果。');
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	await trayAction(page, '查詢結果');
+	await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+	await expect(pendingBadge(page)).toHaveCount(0);
+	expect(await pending(page)).toBeNull();
 	expect(s.posts).toHaveLength(1);
 	expect(s.writes()).toBe(0);
 });
@@ -523,13 +565,15 @@ for (const status of [422, 429, 502]) {
 		);
 		await submit(page);
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-		await page.getByRole('button', { name: '重試同一請求' }).click();
+		await trayAction(page, '重試同一請求');
 		await expect.poll(() => s.posts.length).toBe(2);
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 		await expect(page.getByRole('button', { name: '修改後重新送出' })).toHaveCount(0);
+		await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 		expect(s.posts[1]).toEqual(s.posts[0]);
-		await page.getByRole('button', { name: '查詢結果' }).click();
-		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		await trayAction(page, '查詢結果');
+		await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+		await expect(pendingBadge(page)).toHaveCount(0);
 	});
 }
 for (const lifecycle of ['reload', 'navigate']) {
@@ -562,12 +606,14 @@ for (const lifecycle of ['reload', 'navigate']) {
 			.locator('[data-date="2026-10-01"]')
 			.getByRole('button', { name: 'AI 記帳', exact: true })
 			.click();
-		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 		await expect(page.getByLabel('記帳內容')).toHaveValue('');
 		await expect(page.getByLabel('記帳內容')).toBeEditable();
+		await expandPending(page);
 		await expect(page.getByRole('button', { name: '重試同一請求' })).toHaveCount(0);
-		await page.getByRole('button', { name: '查詢結果' }).click();
-		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		await trayAction(page, '查詢結果');
+		await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+		expect(await pending(page)).toBeNull();
 		expect(s.posts).toHaveLength(1);
 	});
 }
@@ -620,8 +666,9 @@ test('pending recovery belongs to its account and returns when its owner signs b
 	await switchAccount(true);
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+	await expect(pendingBadge(page)).toHaveCount(0);
 	await switchAccount(false);
-	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	expect(await pendingItems(page)).toEqual(originalItems);
 	expect(s.posts).toHaveLength(1);
@@ -729,7 +776,7 @@ test('interrupted stream retains only allowed metadata and retry freezes the ful
 			}
 		]
 	});
-	await page.getByRole('button', { name: '重試同一請求' }).click();
+	await trayAction(page, '重試同一請求');
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
 	expect(s.posts[2]).toEqual(s.posts[1]);
 });
@@ -1006,7 +1053,7 @@ for (const action of ['account-switch', 'pagehide', 'status-query']) {
 		} else if (action === 'pagehide') {
 			await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
 		} else {
-			await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+			await trayAction(page, '查詢結果');
 		}
 		await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
 	});
@@ -1099,7 +1146,7 @@ test.describe('Taiwan conversation date baseline', () => {
 		await submit(page);
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 		await page.clock.setFixedTime(new Date('2026-10-02T00:01:00+08:00'));
-		await page.getByRole('button', { name: '重試同一請求' }).click();
+		await trayAction(page, '重試同一請求');
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
 		expect(s.posts[0].referenceDate).toBe('2026-10-01');
 		expect(s.posts[1]).toEqual(s.posts[0]);
@@ -1309,7 +1356,7 @@ test('uncertain image analyze retries the identical payload without uploading ag
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await expect(page.getByRole('button', { name: '附加圖片', exact: true })).toBeEnabled();
-	await page.getByRole('button', { name: '重試同一請求' }).click();
+	await trayAction(page, '重試同一請求');
 	await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText('已記帳 1 筆');
 	expect(s.posts[1]).toEqual(s.posts[0]);
 	expect(s.posts[1].images).toEqual([imagePath]);
@@ -1640,34 +1687,45 @@ for (const action of ['retry', 'close'] as const) {
 			}
 		});
 		await startDrafts(page);
-		await shortenTimeout(page);
 		await commitDrafts(page).click();
-		await expect(page.getByText('無法確認是否已記帳', { exact: true })).toBeVisible();
-		await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
-		await expect(commitDrafts(page)).toBeDisabled();
-		await expect(page.getByRole('button', { name: '進入編輯', exact: true })).toBeDisabled();
+		// Q8: the drafts block is removed and the tray opens with the commit item expanded.
+		await expect(pendingTray(page)).toBeVisible();
+		await expect(trayRows(page)).toHaveCount(1);
+		await expect(trayRows(page).first()).toContainText('（草稿，未存內容）');
+		await expect(trayRows(page).first()).toContainText('確認 3 筆草稿');
+		await expect(trayRows(page).first().locator('button[aria-expanded]')).toHaveAttribute(
+			'aria-expanded',
+			'true'
+		);
+		await expect(draftBlock(page)).toHaveCount(0);
+		await expect(page.getByRole('button', { name: /^全部記帳/ })).toHaveCount(0);
+		await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
+		await expect(page.getByLabel('記帳內容')).toBeEditable();
 		expect((await pendingItems(page))[0].requestId).toBe(s.posts[1].requestId);
 		s.setRows(batchRows);
 		const before = expenseReads;
 		if (action === 'retry') {
-			await page.getByRole('button', { name: '重新確認', exact: true }).click();
-			await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText(
-				'已記帳 3 筆'
-			);
+			await trayAction(page, '重試同一請求');
+			await expect(createdSummary(page)).toContainText('已記帳 3 筆');
 			expect(s.posts[2]).toEqual(s.posts[1]);
 			expect(expenseReads).toBeGreaterThan(before);
 			expect(await pending(page)).toBeNull();
 		} else {
-			await page.getByRole('button', { name: '稍後再看', exact: true }).click();
+			await page.keyboard.press('Escape');
+			await expect(pendingTray(page)).toHaveCount(0);
+			await page
+				.getByRole('dialog')
+				.getByRole('button', { name: 'Close', exact: true })
+				.click();
 			await expect(page.getByRole('dialog')).toHaveCount(0);
 			expect((await pendingItems(page))[0].requestId).toBe(s.posts[1].requestId);
 			await page
 				.locator('section[data-date="2026-10-01"]')
 				.getByRole('button', { name: 'AI 記帳', exact: true })
 				.click();
-			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+			await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 			await expect(draftBlock(page)).toHaveCount(0);
-			await page.getByRole('button', { name: '重試同一請求', exact: true }).click();
+			await trayAction(page, '重試同一請求');
 			await expect(page.getByRole('group', { name: '已記帳摘要' })).toContainText(
 				'已記帳 3 筆'
 			);
@@ -1702,20 +1760,22 @@ test('commit retry after close that replays a rejection clears the pending item'
 		}
 	});
 	await startDrafts(page);
-	await shortenTimeout(page);
 	await commitDrafts(page).click();
-	await expect(page.getByText('無法確認是否已記帳', { exact: true })).toBeVisible();
-	await page.getByRole('button', { name: '稍後再看', exact: true }).click();
+	await expect(pendingTray(page)).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(pendingTray(page)).toHaveCount(0);
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 	await page
 		.locator('section[data-date="2026-10-01"]')
 		.getByRole('button', { name: 'AI 記帳', exact: true })
 		.click();
-	await page.getByRole('button', { name: '重試同一請求', exact: true }).click();
+	await trayAction(page, '重試同一請求');
 	await expect(page.getByText('未記帳：3 筆都沒有寫入', { exact: true })).toBeVisible();
 	expect(s.posts[2]).toEqual(s.posts[1]);
 	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
 	await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
+	await expect(pendingBadge(page)).toHaveCount(0);
 	expect(await pending(page)).toBeNull();
 	expect(s.writes()).toBe(0);
 });
@@ -2281,18 +2341,14 @@ for (const full of [true, false]) {
 		}
 		await submit(page);
 		if (full) {
-			await expect(page.locator('#semantic-entry-hint')).toHaveText(
-				'已有3筆待確認，暫時無法建立新對話'
-			);
+			await expect(limitToast(page)).toHaveText('已有3筆待確認，暫時無法建立新對話');
 			expect(s.posts).toHaveLength(0);
 			await expect(page.getByRole('img', { name: '第 1 張附圖' })).toBeVisible();
 			expect(await pending(page)).toBe(before);
 			await expect(page.getByLabel('記帳內容')).toHaveValue('保留午餐100');
-			await page.getByLabel('記帳內容').fill('修改內容');
-			await expect(page.locator('#semantic-entry-hint')).not.toHaveText(
-				'已有3筆待確認，暫時無法建立新對話'
-			);
+			await expect(page.getByLabel('記帳內容')).toBeEditable();
 		} else {
+			await expect(limitToast(page)).toHaveCount(0);
 			await expect.poll(() => s.posts.length).toBe(1);
 			await expect.poll(async () => (await pendingItems(page)).length).toBe(6);
 		}
@@ -2329,21 +2385,33 @@ for (const outcome of ['not_found', 'failure', 'completed'] as const) {
 		await submit(page);
 		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 		await page.clock.setFixedTime(new Date('2026-10-01T12:09:00+08:00'));
-		await page.getByRole('button', { name: '查詢結果', exact: true }).click();
-		await expect(page.getByText('尚未查到完成結果，仍待確認。')).toBeVisible();
+		await trayAction(page, '查詢結果');
+		await expect(
+			trayRows(page).first().getByRole('button', { name: '查詢結果', exact: true })
+		).toBeEnabled();
+		await expect(trayRows(page).first()).toContainText('尚未查到完成結果。');
 		fail = true;
 		await page.clock.setFixedTime(new Date('2026-10-01T12:10:00+08:00'));
-		await page.getByRole('button', { name: '查詢結果', exact: true }).click();
+		await trayAction(page, '查詢結果');
 		if (outcome === 'not_found') {
-			await expect(page.getByLabel('助手訊息').last()).toHaveText('已過期');
+			await expect(trayRows(page).first()).toHaveText(/^\s*已過期\s*$/);
+			await expect(
+				trayRows(page).first().getByRole('button', { name: '關閉已過期項目', exact: true })
+			).toBeVisible();
 			expect((await pendingItems(page))[0].expiredAt).toEqual(expect.any(Number));
 			await expect(page.getByRole('button', { name: '重試同一請求' })).toHaveCount(0);
+			await expect(page.getByRole('button', { name: '待確認', exact: true })).toBeVisible();
+			await expect(page.getByLabel('助手訊息').filter({ hasText: '已過期' })).toHaveCount(0);
 			await expect(page.getByLabel('記帳內容')).toBeEditable();
 		} else if (outcome === 'completed') {
-			await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+			await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+			await expect(pendingBadge(page)).toHaveCount(0);
 			expect(await pending(page)).toBeNull();
 		} else {
-			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+			await expect(trayRows(page).first()).toContainText(
+				'連線中斷或逾時，請查詢結果或重試同一請求。'
+			);
+			await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 			expect((await pendingItems(page))[0].expiredAt).toBeNull();
 		}
 	});
@@ -2357,12 +2425,13 @@ test('same page close preserves the full pending analyze retry; reload keeps que
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
 	await reopen(page);
-	await page.getByRole('button', { name: '重試同一請求', exact: true }).click();
+	await trayAction(page, '重試同一請求');
 	await expect.poll(() => s.posts.length).toBe(2);
 	expect(s.posts[1]).toEqual(s.posts[0]);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await page.reload();
 	await reopen(page);
+	await expandPending(page);
 	await expect(page.getByRole('button', { name: '重試同一請求', exact: true })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeVisible();
 });
@@ -2796,7 +2865,8 @@ test('account switch while the dialog is closed leaves only lookup for the pendi
 	await switchAccount(false);
 	await expect(avatar).toHaveText('S');
 	await reopen(page);
-	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	await expandPending(page);
 	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeVisible();
 	await expect(page.getByRole('button', { name: '重試同一請求', exact: true })).toHaveCount(0);
 	expect(await pending(page)).toBe(original);
@@ -2855,14 +2925,17 @@ for (const lifecycle of ['pagehide', 'account-switch'] as const) {
 			await submit(page);
 			await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 			const original = await pending(page);
-			await page
-				.getByRole('button', {
-					name: recovery === 'query' ? '查詢結果' : '重試同一請求',
-					exact: true
-				})
-				.click();
+			await trayAction(page, recovery === 'query' ? '查詢結果' : '重試同一請求');
 			await expect.poll(() => started).toBe(true);
-			await expect(page.getByRole('dialog').locator('textarea')).toBeDisabled();
+			if (recovery === 'retry') {
+				await expect(page.getByRole('dialog').locator('textarea')).toBeDisabled();
+			} else {
+				// A tray lookup runs beside the conversation and does not lock the composer.
+				await expect(
+					trayRows(page).first().getByRole('button', { name: '查詢結果', exact: true })
+				).toHaveAttribute('aria-busy', 'true');
+				await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
+			}
 			if (lifecycle === 'pagehide') {
 				await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
 				await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
@@ -2893,7 +2966,8 @@ for (const lifecycle of ['pagehide', 'account-switch'] as const) {
 				await expect(page.getByLabel('記帳內容')).toBeEditable();
 				expect(await pending(page)).toBe(original);
 				await switchAccount(false);
-				await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+				await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+				await expandPending(page);
 				await expect(
 					page.getByRole('button', { name: '查詢結果', exact: true })
 				).toBeVisible();
@@ -2945,4 +3019,512 @@ test('changed clarification answer after pre-persist failure gets a new id and o
 	expect(s.posts[2].history).toEqual([{ question, answer: '120' }]);
 	expect(s.posts[2].text).toBe(s.posts[1].text);
 	expect(await pending(page)).toBeNull();
+});
+
+// Issue #52 PR2: variant A badge, popover tray, delete confirmation, expiry and toast.
+const taipei = (time: string) => Date.parse(`2026-10-01T${time}+08:00`);
+const statusJson = (route: Route, status: 'not_found' | 'completed', expenses = [row]) =>
+	route.fulfill({
+		json:
+			status === 'completed'
+				? {
+						status,
+						requestId: route.request().url().split('/').at(-1),
+						expenses,
+						replayed: true
+					}
+				: { status, requestId: route.request().url().split('/').at(-1) }
+	});
+const switchTo = (page: Page, s: { storageKey: string; session: unknown }, other: boolean) =>
+	page.evaluate(
+		({ storageKey, session, other }) => {
+			const base = session as { user: Record<string, unknown> };
+			const next = other
+				? {
+						...base,
+						user: {
+							...base.user,
+							id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+							email: 'b@example.test'
+						}
+					}
+				: base;
+			localStorage.setItem(storageKey, JSON.stringify(next));
+			const channel = new BroadcastChannel(storageKey);
+			channel.postMessage({ event: 'SIGNED_IN', session: next });
+			channel.close();
+		},
+		{ storageKey: s.storageKey, session: s.session, other }
+	);
+
+for (const close of ['escape', 'dismiss'] as const) {
+	test(`tray legacy item shows only expired and is cleared by ${close}`, async ({ page }) => {
+		await seedPending(page, { requestId: pendingId(1) });
+		let queries = 0;
+		await setup(page, async (route) => {
+			queries++;
+			await route.abort();
+		});
+		const badge = page.getByRole('button', { name: '待確認', exact: true });
+		await expect(badge).toBeVisible();
+		await expect(badge).toHaveText('待確認');
+		await expect(badge).toHaveClass(/bg-\[#fef3c7\]/);
+		await badge.click();
+		await expect(pendingTray(page)).toContainText('待確認');
+		await expect(pendingTray(page)).not.toContainText(/待確認 \d/);
+		await expect(trayRows(page)).toHaveCount(1);
+		await expect(trayRows(page).first()).toHaveText('已過期');
+		await expect(trayRows(page).first().getByRole('button')).toHaveAccessibleName(
+			'關閉已過期項目'
+		);
+		if (close === 'escape') {
+			await page.keyboard.press('Escape');
+			await expect(pendingTray(page)).toHaveCount(0);
+			await expect(page.getByRole('dialog')).toBeVisible();
+		} else {
+			await page.getByRole('button', { name: '關閉已過期項目', exact: true }).click();
+			await expect(pendingTray(page)).toHaveCount(0);
+		}
+		expect(await pendingItems(page)).toEqual([]);
+		await expect(badge).toHaveCount(0);
+		await expect(page.getByLabel('記帳內容')).toBeEditable();
+		expect(queries).toBe(0);
+	});
+}
+
+test('tray rows show Taipei time, kind, snippet and close only the popover', async ({ page }) => {
+	await seedPending(page, {
+		v: 2,
+		items: [
+			{
+				requestId: pendingId(1),
+				submittedAt: taipei('11:58:00'),
+				kind: 'analyze',
+				snippet: '🍜一二三四五六七八九十甲',
+				expiredAt: null
+			},
+			{
+				requestId: pendingId(2),
+				submittedAt: taipei('11:59:00'),
+				kind: 'analyze',
+				imageCount: 2,
+				expiredAt: null
+			},
+			{
+				requestId: pendingId(3),
+				submittedAt: taipei('11:57:00'),
+				kind: 'commit',
+				draftCount: 3,
+				expiredAt: null
+			},
+			{
+				requestId: pendingId(4),
+				submittedAt: taipei('11:40:00'),
+				kind: 'analyze',
+				snippet: '早餐',
+				expiredAt: taipei('11:55:00')
+			}
+		]
+	});
+	const s = await setup(page, async (route) => statusJson(route, 'not_found'));
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 3 筆');
+	await expect(pendingBadge(page)).toHaveText('待確認3');
+	await pendingBadge(page).click();
+	await expect(pendingBadge(page)).toHaveAttribute('aria-expanded', 'true');
+	await expect(pendingTray(page)).toContainText('待確認 3 筆');
+	await expect(pendingTray(page)).toContainText('點一筆展開');
+	await expect(trayRows(page)).toHaveText([
+		/^（圖片，未存文字）\s*10\/01 11:59 送出\s*圖片 2 張\s*待確認\s*$/,
+		/^🍜一二三四五六七八九十甲…\s*10\/01 11:58 送出\s*文字\s*待確認\s*$/,
+		/^（草稿，未存內容）\s*10\/01 11:57 送出\s*確認 3 筆草稿\s*待確認\s*$/,
+		/^\s*已過期\s*$/
+	]);
+	await expect(page.getByRole('button', { name: '查詢結果' })).toHaveCount(0);
+	await expandPending(page, 1);
+	await expect(trayRows(page).nth(1)).toContainText('尚未查到完成結果。');
+	for (const name of ['查詢結果', '刪除這筆待確認']) {
+		const button = trayRows(page).nth(1).getByRole('button', { name, exact: true });
+		await expect(button).toHaveAttribute('title', name);
+		const box = (await button.boundingBox())!;
+		expect(box.width).toBeGreaterThanOrEqual(36);
+		expect(box.height).toBeGreaterThanOrEqual(36);
+	}
+	const dismiss = trayRows(page).nth(3).getByRole('button', { name: '關閉已過期項目' });
+	await expect(dismiss).toHaveAttribute('title', '關閉已過期項目');
+	expect((await dismiss.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+	// Outside click inside the AI dialog closes only the popover and clears seen expired items.
+	await page.getByLabel('記帳內容').click();
+	await expect(pendingTray(page)).toHaveCount(0);
+	await expect(page.getByRole('dialog')).toBeVisible();
+	expect((await pendingItems(page)).map((item) => item.requestId)).toEqual([
+		pendingId(1),
+		pendingId(2),
+		pendingId(3)
+	]);
+	// Outside click on the scrim also closes only the popover.
+	await pendingBadge(page).click();
+	await expect(pendingTray(page)).toBeVisible();
+	await page.mouse.click(2, 2);
+	await expect(pendingTray(page)).toHaveCount(0);
+	await expect(page.getByRole('dialog')).toBeVisible();
+	// The badge toggles the popover and Escape closes it before the AI dialog.
+	await pendingBadge(page).click();
+	await pendingBadge(page).click();
+	await expect(pendingTray(page)).toHaveCount(0);
+	await pendingBadge(page).click();
+	await page.keyboard.press('Escape');
+	await expect(pendingTray(page)).toHaveCount(0);
+	await expect(page.getByRole('dialog')).toBeVisible();
+	await page.keyboard.press('Escape');
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	expect(s.posts).toHaveLength(0);
+});
+
+test('a new entry while pending adds a badge item with its own request id', async ({ page }) => {
+	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
+	await expect(pendingBadge(page)).toHaveCount(0);
+	await submit(page);
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	await page.getByLabel('記帳內容').fill('另一筆早餐50');
+	await submit(page);
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 2 筆');
+	await expect.poll(() => s.posts.length).toBe(2);
+	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
+	expect((await pendingItems(page)).map((item) => item.requestId)).toEqual([
+		s.posts[0].requestId,
+		s.posts[1].requestId
+	]);
+	await openPendingTray(page);
+	await expect(trayRows(page).nth(0)).toContainText('另一筆早餐50');
+	await expect(trayRows(page).nth(1)).toContainText('午餐100');
+	await expect(trayRows(page).nth(0)).toContainText('10/01 12:00 送出');
+});
+
+test('limit toast stays in the dialog, restarts without stacking and closes', async ({ page }) => {
+	await seedPending(page, { v: 2, items: [1, 2, 3].map((i) => pendingItem(i)) });
+	const s = await setup(
+		page,
+		async (route, body) => interrupted(route, body!.requestId),
+		[],
+		undefined,
+		'install'
+	);
+	const before = await pending(page);
+	await submit(page);
+	const toast = limitToast(page);
+	await expect(toast).toHaveText('已有3筆待確認，暫時無法建立新對話');
+	await expect(toast).toHaveAttribute('aria-live', 'polite');
+	await expect(toast.getByRole('button')).toHaveCount(1);
+	await expect(toast.getByRole('button')).toHaveAccessibleName('關閉通知');
+	await expect(toast.getByRole('button')).toHaveAttribute('title', '關閉通知');
+	await expect(
+		page.getByRole('dialog').getByRole('status').filter({ hasText: '已有3筆' })
+	).toHaveCount(1);
+	await page.clock.runFor(3_000);
+	await submit(page);
+	await expect(toast).toHaveCount(1);
+	await page.clock.runFor(3_000);
+	await expect(toast).toBeVisible();
+	await page.clock.runFor(1_100);
+	await expect(toast).toHaveCount(0);
+	await submit(page);
+	await expect(toast).toBeVisible();
+	await toast.getByRole('button', { name: '關閉通知' }).click();
+	await expect(toast).toHaveCount(0);
+	expect(s.posts).toHaveLength(0);
+	expect(await pending(page)).toBe(before);
+	await expect(page.getByLabel('記帳內容')).toHaveValue('午餐100');
+	await expect(pendingTray(page)).toHaveCount(0);
+});
+
+test('ten minutes plus a not_found check expires an item; the badge drops it and x removes it', async ({
+	page
+}) => {
+	let queries = 0;
+	await setup(
+		page,
+		async (route, body) => {
+			if (body) {
+				await interrupted(route, body.requestId);
+			} else {
+				queries++;
+				await statusJson(route, 'not_found');
+			}
+		},
+		[],
+		undefined,
+		'install'
+	);
+	await submit(page);
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	// The badge appears before the POST; wait until the interrupted stream has settled into
+	// the uncertain state so the fast-forward cannot fire the request timeout first.
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	await expect(page.getByLabel('記帳內容')).toBeEditable();
+	await page.clock.runFor(9 * 60_000);
+	await trayAction(page, '查詢結果');
+	await expect.poll(() => queries).toBeGreaterThan(0);
+	await expect(trayRows(page).first()).toContainText('尚未查到完成結果。');
+	expect((await pendingItems(page))[0].expiredAt).toBeNull();
+	// The 60-second check runs the not_found lookup once the window has passed; the
+	// submit happened a moment after the interval started, so allow one more tick.
+	await page.clock.runFor(2 * 60_000);
+	// §5: the expired row keeps only 已過期 and ×, without the snippet, time or kind.
+	await expect(trayRows(page).first()).toHaveText(/^\s*已過期\s*$/);
+	await expect(page.getByRole('button', { name: '待確認', exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '查詢結果' })).toHaveCount(0);
+	expect((await pendingItems(page))[0].expiredAt).toEqual(expect.any(Number));
+	await page.getByRole('button', { name: '關閉已過期項目', exact: true }).click();
+	await expect(pendingBadge(page)).toHaveCount(0);
+	expect(await pendingItems(page)).toEqual([]);
+});
+
+test('seen expired items clear only when the tray closes', async ({ page }) => {
+	await seedPending(page, {
+		v: 2,
+		items: [
+			{ ...pendingItem(1), submittedAt: taipei('12:00:00') },
+			{ ...pendingItem(2), submittedAt: taipei('12:05:00') }
+		]
+	});
+	await setup(page, async (route) => statusJson(route, 'not_found'), [], undefined, 'install');
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 2 筆');
+	// (a) Expired while the tray is closed: kept until the tray is opened and closed.
+	await page.clock.runFor(10 * 60_000);
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	expect((await pendingItems(page)).map((item) => item.expiredAt !== null)).toEqual([
+		true,
+		false
+	]);
+	await openPendingTray(page);
+	await expect(trayRows(page).nth(1)).toHaveText(/^\s*已過期\s*$/);
+	// (c) A reload while the tray is open is not a close.
+	await page.reload();
+	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0, {
+		timeout: 30000
+	});
+	expect(await pendingItems(page)).toHaveLength(2);
+	await reopen(page);
+	await openPendingTray(page);
+	await page.keyboard.press('Escape');
+	await expect(pendingTray(page)).toHaveCount(0);
+	expect((await pendingItems(page)).map((item) => item.requestId)).toEqual([pendingId(2)]);
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	// (b) Expired while the tray is open: shown at once, removed on close.
+	await expandPending(page);
+	// The 60-second check looks the item up once its window passes.
+	await page.clock.runFor(5 * 60_000);
+	await expect(trayRows(page).first()).toHaveText(/^\s*已過期\s*$/);
+	await expect(page.getByRole('button', { name: '待確認', exact: true })).toBeVisible();
+	await pendingBadge(page).click();
+	await expect(pendingTray(page)).toHaveCount(0);
+	// (d) An empty list hides the badge.
+	expect(await pendingItems(page)).toEqual([]);
+	await expect(pendingBadge(page)).toHaveCount(0);
+});
+
+for (const outcome of ['completed', 'not_found', 'failure'] as const) {
+	test(`delete re-queries first: ${outcome}`, async ({ page }) => {
+		await seedPending(page, { v: 2, items: [pendingItem(1)] });
+		let queries = 0;
+		await setup(page, async (route) => {
+			queries++;
+			if (outcome === 'failure') {
+				await route.abort();
+			} else {
+				await statusJson(route, outcome);
+			}
+		});
+		await trayAction(page, '刪除這筆待確認');
+		await expect.poll(() => queries).toBe(1);
+		const alert = page.getByRole('alertdialog');
+		if (outcome === 'completed') {
+			await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+			await expect(alert).toHaveCount(0);
+			await expect(pendingBadge(page)).toHaveCount(0);
+			expect(await pending(page)).toBeNull();
+		} else if (outcome === 'failure') {
+			await expect(trayRows(page).first()).toContainText(
+				'連線中斷或逾時，請查詢結果或重試同一請求。'
+			);
+			await expect(alert).toHaveCount(0);
+			expect(await pendingItems(page)).toHaveLength(1);
+		} else {
+			await expect(alert).toBeVisible();
+			await expect(alert.getByRole('heading')).toHaveText('確定刪除這筆待確認？');
+			await expect(alert).toContainText(
+				'已重新查詢：仍未查到這筆記帳。它可能還在處理中，刪除後如果你重新記帳，可能會重複。'
+			);
+			await expect(alert.getByRole('button')).toHaveText(['取消', '仍要刪除']);
+			await expect(alert.getByRole('button', { name: '取消' })).toBeFocused();
+			await alert.getByRole('button', { name: '取消' }).click();
+			await expect(alert).toHaveCount(0);
+			await expect(pendingTray(page)).toBeVisible();
+			expect(await pendingItems(page)).toHaveLength(1);
+			// Escape closes only the confirmation.
+			await trayAction(page, '刪除這筆待確認');
+			await expect(alert).toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(alert).toHaveCount(0);
+			await expect(pendingTray(page)).toBeVisible();
+			expect(await pendingItems(page)).toHaveLength(1);
+			await trayAction(page, '刪除這筆待確認');
+			await alert.getByRole('button', { name: '仍要刪除' }).click();
+			await expect(alert).toHaveCount(0);
+			await expect(pendingBadge(page)).toHaveCount(0);
+			expect(await pendingItems(page)).toEqual([]);
+			await expect(page.getByLabel('記帳內容')).toBeEditable();
+		}
+		await expect(page.getByRole('dialog', { name: 'AI 記帳' })).toBeVisible();
+	});
+}
+
+test('streaming keeps the tray viewable but disables its actions', async ({ page }) => {
+	await seedPending(page, { v: 2, items: [pendingItem(1)] });
+	let release!: () => void;
+	const wait = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const s = await setup(page, async (route, body) => {
+		await wait;
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	await submit(page);
+	await expect.poll(() => s.posts.length).toBe(1);
+	// The in-flight request is listed first (same submit time, stored later); expand the seeded one.
+	await expandPending(page, 1);
+	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeDisabled();
+	await expect(page.getByRole('button', { name: '刪除這筆待確認', exact: true })).toBeDisabled();
+	release();
+	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeEnabled();
+});
+
+test('Q8 commit query completes from the auto-opened tray and removes the stored item', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) => {
+		if (!body) {
+			await statusJson(route, 'completed', batchRows);
+		} else if (body.action === 'analyze') {
+			await route.fulfill({ json: draftResponse(body.requestId, [1, 2, 3].map(makeDraft)) });
+		} else {
+			await interrupted(route, body.requestId);
+		}
+	});
+	await startDrafts(page);
+	await commitDrafts(page).click();
+	await expect(pendingTray(page)).toBeVisible();
+	await expect(draftBlock(page)).toHaveCount(0);
+	await expect(page.getByRole('button', { name: /^全部記帳/ })).toHaveCount(0);
+	s.setRows(batchRows);
+	await trayAction(page, '查詢結果');
+	await expect(createdSummary(page)).toContainText('已記帳 3 筆');
+	await expect(pendingTray(page)).toHaveCount(0);
+	await expect(pendingBadge(page)).toHaveCount(0);
+	expect(await pending(page)).toBeNull();
+	expect(s.posts.filter((post) => post.action === 'commit')).toHaveLength(1);
+});
+
+test('account switch hides pending items and expiry uses the original submit time', async ({
+	page
+}) => {
+	await seedPending(page, { v: 2, items: [pendingItem(1)] });
+	const s = await setup(
+		page,
+		async (route) => statusJson(route, 'not_found'),
+		[],
+		undefined,
+		'install'
+	);
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+	await switchTo(page, s, true);
+	await expect(pendingBadge(page)).toHaveCount(0);
+	await page.clock.runFor(10 * 60_000);
+	await switchTo(page, s, false);
+	await expect(page.getByRole('button', { name: '待確認', exact: true })).toBeVisible();
+	const [item] = await pendingItems(page);
+	expect(item.submittedAt).toBe(taipei('12:00:00'));
+	expect(item.expiredAt).toEqual(expect.any(Number));
+});
+
+test('a device clock earlier than submit time never expires the item', async ({ page }) => {
+	await seedPending(page, {
+		v: 2,
+		items: [{ ...pendingItem(1), submittedAt: taipei('12:30:00') }]
+	});
+	let queries = 0;
+	await setup(
+		page,
+		async (route) => {
+			queries++;
+			await statusJson(route, 'not_found');
+		},
+		[],
+		undefined,
+		'install'
+	);
+	await page.clock.runFor(2 * 60_000);
+	expect(queries).toBe(0);
+	await trayAction(page, '查詢結果');
+	await expect.poll(() => queries).toBe(1);
+	await expect(trayRows(page).first()).toContainText('尚未查到完成結果。');
+	expect((await pendingItems(page))[0].expiredAt).toBeNull();
+	await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
+});
+
+test('a late month refresh from a lookup does not drop an expense created meanwhile', async ({
+	page
+}) => {
+	const queried = { ...row, id: '33333333-3333-4333-8333-333333333333', note: '查詢午餐' };
+	const added = { ...row, id: '44444444-4444-4444-8444-444444444444', note: '新增早餐' };
+	const s = await setup(page, async (route, body) => {
+		if (!body) {
+			await statusJson(route, 'completed', [queried]);
+		} else if (s.posts.length === 1) {
+			await interrupted(route, body.requestId);
+		} else {
+			await route.fulfill({ json: { ...created(body.requestId), expenses: [added] } });
+		}
+	});
+	await submit(page);
+	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+	// Hold the lookup's month refresh with the snapshot taken before the new expense exists.
+	let held = 0;
+	let release!: () => void;
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route(`${env.PUBLIC_SUPABASE_URL}/rest/v1/expenses?**`, async (route) => {
+		// Only the month refresh pages with offset; other list reads pass through.
+		const refresh = new URL(route.request().url()).searchParams.has('offset');
+		if (route.request().method() === 'GET' && refresh && ++held === 1) {
+			await released;
+			await route.fulfill({ json: [queried] });
+		} else {
+			await route.fallback();
+		}
+	});
+	s.setRows([queried]);
+	await trayAction(page, '查詢結果');
+	await expect.poll(() => held).toBe(1);
+	s.setRows([added, queried]);
+	await page.getByLabel('記帳內容').fill('早餐50');
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await expect
+		.poll(async () => ((await cachedMonth(page, '2026-10')) as { id: string }[] | null) ?? [])
+		.toContainEqual(expect.objectContaining({ id: added.id }));
+	release();
+	await expect(pendingBadge(page)).toHaveCount(0);
+	expect(await pending(page)).toBeNull();
+	await page
+		.getByRole('dialog', { name: 'AI 記帳' })
+		.getByRole('button', { name: 'Close', exact: true })
+		.click();
+	const day = page.locator('section[data-date="2026-10-01"]');
+	await expect(day.getByText('新增早餐', { exact: true })).toBeVisible();
+	await expect(day.getByText('查詢午餐', { exact: true })).toBeVisible();
+	expect(((await cachedMonth(page, '2026-10')) as { id: string }[]).map((r) => r.id)).toEqual(
+		expect.arrayContaining([added.id, queried.id])
+	);
 });

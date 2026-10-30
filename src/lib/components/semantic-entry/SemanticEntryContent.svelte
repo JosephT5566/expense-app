@@ -26,13 +26,16 @@
 </script>
 
 <script lang="ts">
-	import { onDestroy, tick, untrack } from 'svelte';
+	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Button } from '$lib/components/shadcn/button';
 	import Paperclip from 'lucide-svelte/icons/paperclip';
 	import Camera from 'lucide-svelte/icons/camera';
 	import X from 'lucide-svelte/icons/x';
+	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
+	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
 	import * as pending from './pending';
+	import PendingTray from './PendingTray.svelte';
 	import type { PendingItem } from './pending';
 	import CreatedSummary from './CreatedSummary.svelte';
 	import DraftBlock from './DraftBlock.svelte';
@@ -72,14 +75,17 @@
 		type SemanticRequestV3,
 		type ClarificationTurn
 	} from '@jopie/semantic-entry-contract';
-	let { busy = $bindable(false), onClose }: { busy?: boolean; onClose: () => void } = $props();
+	let {
+		busy = $bindable(false),
+		header = $bindable(),
+		onClose
+	}: { busy?: boolean; header?: Snippet; onClose: () => void } = $props();
 	let text = $state('');
 	let session = $state<DraftSession | null>(null);
 	let revised = $state(false);
 	let draftHeading = $state('');
 	let draftAnalysis = $state('');
 	let draftRejected = $state(false);
-	let draftWarning = $state('');
 	let serverDraftIssues = $state<Record<string, DraftIssue[]>>({});
 	const draftContext = $derived({
 		today: toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)),
@@ -131,7 +137,6 @@
 			draftAnalysis = '';
 		}
 		draftRejected = false;
-		draftWarning = '';
 		draftHeading = `找到 ${drafts.length} 筆，${result.reason === 'multiple' ? '因為有多筆' : '有資料需要補齊'}，還沒記帳。`;
 		if (!conversation.some((entry) => entry.drafts)) {
 			draftAnalysis = analysis;
@@ -165,11 +170,29 @@
 	let retainedCommit: (SemanticRequestV3 & { accountId: string }) | null = null;
 	let seenPersisting = false;
 	let recovering = false;
-	let limitHint = $state('');
+	// Pending tray (variant A): a popover under the title badge, scoped to this dialog.
+	let trayOpen = $state(false);
+	let expandedId = $state<string | null>(null);
+	let badgeElement = $state<HTMLButtonElement>();
+	let trayElement = $state<HTMLDivElement>();
+	// Expired items shown during the current tray opening; removed when the tray closes (§5).
+	// Plain bookkeeping (not rendered), so it stays non-reactive.
+	let seenExpired: string[] = [];
+	const lookingUp = new SvelteMap<string, 'query' | 'delete' | 'auto'>();
+	const lookupErrors = new SvelteMap<string, string>();
+	let lookupControllers: AbortController[] = [];
+	let lookupEpoch = 0;
+	let confirmId = $state<string | null>(null);
+	let cancelButton = $state<HTMLButtonElement | null>(null);
+	let toast = $state(false);
+	let toastTimer: ReturnType<typeof setTimeout> | undefined;
 	let savedExpense = $state<ExpenseRow | null>(null);
 	const processing = $derived(phase === 'processing' || phase === 'persisting');
 	$effect(() => {
 		busy = processing || converting;
+	});
+	$effect(() => {
+		header = pendingHeader;
 	});
 	let issues = $state<IssueV3[]>([]);
 	let message = $state('');
@@ -223,7 +246,6 @@
 		serverDraftIssues = {};
 		draftHeading = '';
 		draftAnalysis = '';
-		draftWarning = '';
 		draftRejected = false;
 	}
 	function removeImage(index: number) {
@@ -317,13 +339,6 @@
 			/* A stale item remains recoverable by lookup. */
 		}
 	}
-	function focusLatest() {
-		focusedId =
-			pendingItems
-				.filter((item) => item.expiredAt == null)
-				.sort((a, b) => (b.submittedAt ?? 0) - (a.submittedAt ?? 0))[0]?.requestId ?? null;
-		phase = focusedId ? 'uncertain' : 'input';
-	}
 	function restorePending(owner: string) {
 		try {
 			pendingItems = pending.load(owner, Date.now());
@@ -334,7 +349,7 @@
 					attempts.delete(id);
 				}
 			}
-			focusLatest();
+			checkExpiry();
 		} catch {
 			phase = 'error';
 			message = '無法讀取先前請求，請先檢查此網站的儲存設定。';
@@ -351,8 +366,275 @@
 		if (pending.activeCount(pendingItems) < pending.PENDING_LIMIT) {
 			return false;
 		}
-		limitHint = '已有3筆待確認，暫時無法建立新對話';
+		showToast();
 		return true;
+	}
+	function showToast() {
+		// One toast at a time: a repeated attempt restarts the timer instead of stacking.
+		toast = true;
+		clearTimeout(toastTimer);
+		toastTimer = setTimeout(() => (toast = false), 4000);
+	}
+	function closeToast() {
+		clearTimeout(toastTimer);
+		toast = false;
+	}
+	function resetLookups() {
+		lookupEpoch++;
+		lookupControllers.forEach((lookupController) => lookupController.abort());
+		lookupControllers = [];
+		lookingUp.clear();
+		lookupErrors.clear();
+	}
+	function openTray(expand: string | null = null) {
+		trayOpen = true;
+		expandedId = expand;
+		checkExpiry();
+		void tick().then(() => trayElement?.focus());
+	}
+	function closeTray(restoreFocus = false) {
+		if (!trayOpen) {
+			return;
+		}
+		trayOpen = false;
+		expandedId = null;
+		if (accountId && seenExpired.length) {
+			try {
+				pendingItems = pending.removeSeenExpired(accountId, seenExpired);
+			} catch {
+				/* Storage is unavailable; the expired marks stay until the next close. */
+			}
+		}
+		seenExpired = [];
+		if (restoreFocus) {
+			void tick().then(() => focusAfterTray());
+		}
+	}
+	function focusAfterTray() {
+		if (trayOpen && trayElement) {
+			trayElement.focus();
+		} else if (badgeElement?.isConnected) {
+			badgeElement.focus();
+		} else {
+			document.getElementById('semantic-entry-text')?.focus();
+		}
+	}
+	function toggleTray() {
+		if (trayOpen) {
+			closeTray();
+		} else {
+			openTray();
+		}
+	}
+	function toggleExpand(id: string) {
+		expandedId = expandedId === id ? null : id;
+		if (expandedId) {
+			checkExpiry();
+		}
+	}
+	$effect(() => {
+		// Record every expired row displayed while the tray is open, including rows that
+		// expire during this opening (§5 seen-once clearing).
+		if (trayOpen) {
+			for (const item of pendingItems) {
+				if (item.expiredAt !== null && !seenExpired.includes(item.requestId)) {
+					seenExpired.push(item.requestId);
+				}
+			}
+		}
+	});
+	$effect(() => {
+		if (!trayOpen) {
+			return;
+		}
+		// Outside clicks inside the AI dialog close only the tray; clicks outside the dialog
+		// reach requestClose, which also closes only the tray.
+		const listener = (event: PointerEvent) => {
+			const target = event.target as Element | null;
+			if (
+				!target ||
+				confirmId ||
+				trayElement?.contains(target) ||
+				badgeElement?.contains(target) ||
+				!target.closest('[data-slot="dialog-content"]')
+			) {
+				return;
+			}
+			closeTray();
+		};
+		document.addEventListener('pointerdown', listener, true);
+		return () => document.removeEventListener('pointerdown', listener, true);
+	});
+	$effect(() => {
+		// While the dialog is open, re-check items past the window once a minute (§5).
+		const timer = setInterval(() => checkExpiry(), 60_000);
+		return () => clearInterval(timer);
+	});
+	function checkExpiry() {
+		if (!accountId || processing || converting) {
+			return;
+		}
+		const now = Date.now();
+		for (const item of pendingItems) {
+			if (
+				item.expiredAt === null &&
+				pending.isPastWindow(item, now) &&
+				!lookingUp.has(item.requestId)
+			) {
+				void lookup(item.requestId, 'auto');
+			}
+		}
+	}
+	function lookupMessage(error: unknown) {
+		return error instanceof SemanticEntryError && error.code === 'configuration'
+			? '文字記帳服務尚未設定。'
+			: error instanceof SemanticEntryError && error.code === 'unauthorized'
+				? '請重新登入。'
+				: '連線中斷或逾時，請查詢結果或重試同一請求。';
+	}
+	function forgetPending(owner: string, id: string) {
+		attempts.delete(id);
+		if (retainedCommit?.requestId === id) {
+			retainedCommit = null;
+		}
+		lookupErrors.delete(id);
+		if (expandedId === id) {
+			expandedId = null;
+		}
+		if (phase === 'uncertain' && focusedId === id) {
+			// The current conversation was waiting on this item; it is resolved now.
+			focusedId = null;
+			attempt = null;
+			history = [];
+			question = '';
+			reply = '';
+			message = '';
+			analysis = '';
+			phase = 'input';
+		}
+		if (owner === accountId && !pendingItems.length) {
+			closeTray(true);
+		}
+	}
+	// Status lookup for one tray item. It does not take over the conversation: a completed
+	// result is applied to the store and appended to the chat as a created summary.
+	async function lookup(
+		id: string,
+		source: 'query' | 'delete' | 'auto'
+	): Promise<'completed' | 'not_found' | 'expired' | 'failed' | null> {
+		const owner = accountId;
+		if (!owner || lookingUp.has(id)) {
+			return null;
+		}
+		const epoch = lookupEpoch;
+		const current = () => !destroyed && epoch === lookupEpoch && get(user)?.id === owner;
+		const lookupController = new AbortController();
+		lookupControllers.push(lookupController);
+		lookingUp.set(id, source);
+		lookupErrors.delete(id);
+		if (phase === 'uncertain' && focusedId === id) {
+			analysis = '';
+		}
+		try {
+			const completed = await getSemanticEntryStatus(id, lookupController.signal);
+			if (!current()) {
+				return null;
+			}
+			if (completed) {
+				const note = await applyCreated(completed, current);
+				if (note === null) {
+					return null;
+				}
+				clearPending(owner, id);
+				forgetPending(owner, id);
+				followLatest = true;
+				conversation.push({ role: 'assistant', text: note, expenses: completed.expenses });
+				return 'completed';
+			}
+			const item = pendingItems.find((value) => value.requestId === id);
+			if (item && item.expiredAt === null && pending.isPastWindow(item, Date.now())) {
+				try {
+					pendingItems = pending.markExpired(owner, id, Date.now());
+				} catch {
+					/* Storage is unavailable; keep the item pending so it can be queried again. */
+					return 'not_found';
+				}
+				forgetPending(owner, id);
+				return 'expired';
+			}
+			return 'not_found';
+		} catch (error) {
+			if (!current()) {
+				return null;
+			}
+			if (source !== 'auto') {
+				lookupErrors.set(id, lookupMessage(error));
+			}
+			return 'failed';
+		} finally {
+			lookupControllers = lookupControllers.filter((entry) => entry !== lookupController);
+			if (epoch === lookupEpoch) {
+				lookingUp.delete(id);
+			}
+		}
+	}
+	async function deletePending(id: string) {
+		if (processing || converting) {
+			return;
+		}
+		// Re-query first: a completed item is applied instead of deleted (§6).
+		if ((await lookup(id, 'delete')) === 'not_found' && trayOpen) {
+			confirmId = id;
+		}
+	}
+	function guardParentClose() {
+		// Block the same click from dismissing the AI dialog after the alert closes.
+		closeGuard = true;
+		setTimeout(() => (closeGuard = false), 400);
+	}
+	function cancelDelete() {
+		if (confirmId) {
+			guardParentClose();
+			confirmId = null;
+		}
+	}
+	function confirmDelete() {
+		const id = confirmId;
+		guardParentClose();
+		confirmId = null;
+		if (!id || !accountId) {
+			return;
+		}
+		clearPending(accountId, id);
+		forgetPending(accountId, id);
+	}
+	function dismissExpired(id: string) {
+		if (!accountId) {
+			return;
+		}
+		seenExpired = seenExpired.filter((entry) => entry !== id);
+		clearPending(accountId, id);
+		if (!pendingItems.length) {
+			closeTray(true);
+		}
+	}
+	async function retryFromTray(id: string) {
+		if (processing || converting || lookingUp.has(id) || !attempts.has(id)) {
+			return;
+		}
+		// The retry streams in the chat, so the tray closes to show it.
+		closeTray();
+		if (!(phase === 'uncertain' && focusedId === id)) {
+			// Retrying another item starts a separate conversation, like new input does.
+			if (failedAttempt?.history?.length) {
+				failedAttempt = null;
+			}
+			const images = selectedImages;
+			selectedImages = [];
+			newOperation(false);
+			selectedImages = images;
+		}
+		await retryPending(id);
 	}
 	function retainAttempt() {
 		if (attempt && focusedId) {
@@ -438,6 +720,12 @@
 				}
 				failedAttempt = null;
 				retainedCommit = null;
+				trayOpen = false;
+				expandedId = null;
+				seenExpired = [];
+				confirmId = null;
+				resetLookups();
+				closeToast();
 				pendingItems = [];
 				accountId = next;
 				revision++;
@@ -462,6 +750,10 @@
 		});
 	});
 	onDestroy(() => {
+		// Closing the dialog with the tray open counts as closing the tray (§5).
+		closeTray();
+		resetLookups();
+		closeToast();
 		interruptPending();
 		failedAttempt = null;
 		analysis = '';
@@ -472,7 +764,12 @@
 		controller?.abort();
 	});
 	export function requestClose() {
-		if (editingDrafts || closeGuard) {
+		if (editingDrafts || closeGuard || confirmId) {
+			return;
+		}
+		if (trayOpen) {
+			// Escape and outside clicks close the tray first, not the AI dialog.
+			closeTray(true);
 			return;
 		}
 		changeOpen(false);
@@ -483,8 +780,8 @@
 			return;
 		}
 		if (!next) {
+			closeTray();
 			newOperation();
-			focusLatest();
 		}
 		onClose();
 	}
@@ -494,7 +791,6 @@
 				? failedAttempt
 				: null;
 		focusedId = null;
-		limitHint = '';
 		analysis = '';
 		clearConversation();
 		clearImages();
@@ -563,29 +859,8 @@
 		if (!stillCurrent(version, owner)) {
 			return;
 		}
-		let refreshFailed = false;
-		if (result.replayed) {
-			const existing = get(expensesStore.items).filter((row) =>
-				result.expenses.some((saved) => saved.id === row.id)
-			);
-			const months = new Set(
-				[...result.expenses, ...existing].map((row) => getTaiwanMonthKey(row.ts))
-			);
-			for (const month of months) {
-				const refreshed = await forceRefetchMonthlyExpenses(month, undefined, () =>
-					stillCurrent(version, owner)
-				);
-				if (!stillCurrent(version, owner)) {
-					return;
-				}
-				if (!refreshed) {
-					refreshFailed = true;
-				}
-			}
-		} else {
-			result.expenses.forEach((row) => expensesStore.upsertOne(row));
-		}
-		if (!stillCurrent(version, owner)) {
+		const note = await applyCreated(result, () => stillCurrent(version, owner));
+		if (note === null) {
 			return;
 		}
 		clearPending(owner);
@@ -595,18 +870,13 @@
 		failedAttempt = null;
 		retainedCommit = null;
 		focusedId = null;
-		message = refreshFailed
-			? '先前請求已完成，但清單更新失敗，請重新整理。'
-			: result.replayed
-				? '這是先前請求的完成結果，清單已重新整理。'
-				: '';
+		message = note;
 		if (attempt?.images || attempt?.action === 'commit' || result.expenses.length > 1) {
 			conversation = conversation.filter((entry) => !entry.drafts);
 			session = null;
 			editingDrafts = false;
 			revised = false;
 			serverDraftIssues = {};
-			draftWarning = '';
 			conversation.push({
 				role: 'assistant',
 				text: message,
@@ -627,6 +897,41 @@
 			attempt = null;
 			phase = 'created';
 		}
+	}
+	// Apply a created result to the store (replays refresh the affected months). Returns the
+	// note to show, or null when the caller is no longer current.
+	async function applyCreated(
+		result: { expenses: ExpenseRow[]; replayed: boolean },
+		isCurrent: () => boolean
+	): Promise<string | null> {
+		let refreshFailed = false;
+		if (result.replayed) {
+			const existing = get(expensesStore.items).filter((row) =>
+				result.expenses.some((saved) => saved.id === row.id)
+			);
+			const months = new Set(
+				[...result.expenses, ...existing].map((row) => getTaiwanMonthKey(row.ts))
+			);
+			for (const month of months) {
+				const refreshed = await forceRefetchMonthlyExpenses(month, undefined, isCurrent);
+				if (!isCurrent()) {
+					return null;
+				}
+				if (!refreshed) {
+					refreshFailed = true;
+				}
+			}
+		} else {
+			result.expenses.forEach((row) => expensesStore.upsertOne(row));
+		}
+		if (!isCurrent()) {
+			return null;
+		}
+		return refreshFailed
+			? '先前請求已完成，但清單更新失敗，請重新整理。'
+			: result.replayed
+				? '這是先前請求的完成結果，清單已重新整理。'
+				: '';
 	}
 	const generalIssueText = (issue: IssueV3) =>
 		`${fields[issue.field] ?? '內容'}：${codes[issue.code] ?? '資訊無效'}`;
@@ -713,7 +1018,6 @@
 				}
 				pendingItems = items;
 			}
-			limitHint = '';
 		} catch {
 			conversation.push({
 				role: 'assistant',
@@ -738,7 +1042,6 @@
 		recovering = retry;
 		analysis = '';
 		message = '';
-		draftWarning = '';
 		followLatest = true;
 		try {
 			const result = await submitSemanticEntry(
@@ -774,7 +1077,6 @@
 					clearPending(owner, request.requestId);
 					focusedId = null;
 					attempt = null;
-					draftWarning = '';
 					analysis = '';
 					phase = 'input';
 					conversation.push({
@@ -841,12 +1143,25 @@
 					seenPersisting ||
 					(error instanceof SemanticEntryError && error.persisting))
 			) {
-				phase = 'uncertain';
+				// Q8: drop the drafts block so the same batch cannot be resent under a new id;
+				// the drafts stay only in the in-memory attempt for retry, and the tray opens.
+				// No chat status is added: the item is handled from the tray, and the composer
+				// is free for a new entry.
 				retainAttempt();
-				draftWarning =
-					error instanceof SemanticEntryError && error.code === 'persist_uncertain'
-						? '伺服器無法確認寫入結果。重新確認不會重複記帳。'
-						: '連線逾時。重新確認不會重複記帳。';
+				attempt = null;
+				focusedId = null;
+				phase = 'input';
+				conversation = conversation.filter((entry) => !entry.drafts);
+				session = null;
+				editingDrafts = false;
+				revised = false;
+				serverDraftIssues = {};
+				draftHeading = '';
+				draftAnalysis = '';
+				draftRejected = false;
+				retainedCommit = null;
+				analysis = '';
+				openTray(request.requestId);
 			} else {
 				conversation.push({
 					role: 'assistant',
@@ -865,11 +1180,6 @@
 			}
 		}
 	}
-	async function queryPending(id: string | null) {
-		if (id) {
-			await execute(true, id);
-		}
-	}
 	async function retryPending(id: string | null) {
 		if (!id || !attempts.has(id)) {
 			return;
@@ -879,21 +1189,21 @@
 		if (attempt?.action === 'commit') {
 			await executeDraft('commit', true);
 		} else {
-			await execute(false, id);
+			await execute(id);
 		}
 	}
-	async function execute(query = false, retryId?: string) {
-		if (phase === 'drafts' && !query && !retryId) {
+	async function execute(retryId?: string) {
+		if (phase === 'drafts' && !retryId) {
 			await executeDraft('revise');
 			return;
 		}
 		if (processing || converting || !$user) {
 			return;
 		}
-		if (!query && !retryId && atLimit()) {
+		if (!retryId && atLimit()) {
 			return;
 		}
-		if (phase === 'uncertain' && !query && !retryId) {
+		if (phase === 'uncertain' && !retryId) {
 			// New input starts a separate conversation, including when a commit is pending.
 			// Do not resurrect an unrelated failed clarification reply into this new request.
 			if (failedAttempt?.history?.length) {
@@ -912,14 +1222,12 @@
 		const filesToUpload = selectedImages.map((image) => image.file);
 		const hadUncertainty = !!retryId;
 		const owner = $user.id;
-		const outgoingText = query
-			? '查詢結果'
-			: hadUncertainty
-				? '重試同一請求'
-				: phase === 'needs_input'
-					? reply.trim()
-					: text.trim();
-		if (!query && !hadUncertainty) {
+		const outgoingText = hadUncertainty
+			? '重試同一請求'
+			: phase === 'needs_input'
+				? reply.trim()
+				: text.trim();
+		if (!hadUncertainty) {
 			try {
 				const nextHistory =
 					phase === 'needs_input' ? [...history, { question, answer: reply }] : history;
@@ -978,7 +1286,6 @@
 					return;
 				}
 				pendingItems = items;
-				limitHint = '';
 				failedAttempt = null;
 				if (request) {
 					attempt = { ...request, accountId: owner };
@@ -1005,13 +1312,13 @@
 			conversation.push({
 				role: 'assistant',
 				text: phase === 'needs_input' ? question : message || '先前請求結果待確認。',
-				analysis: query ? undefined : analysis
+				analysis
 			});
 		}
 		conversation.push({
 			role: 'user',
 			text: outgoingText,
-			...(!query && !hadUncertainty && selectedImages.length
+			...(!hadUncertainty && selectedImages.length
 				? { images: selectedImages.map((image) => image.url) }
 				: {})
 		});
@@ -1021,37 +1328,12 @@
 		controller = new AbortController();
 		phase = 'processing';
 		seenPersisting = false;
-		recovering = query || !!retryId;
+		recovering = !!retryId;
 		analysis = '';
 		message = '';
 		issues = [];
 		try {
-			if (query) {
-				const completed = await getSemanticEntryStatus(id, controller.signal);
-				if (!stillCurrent(version, owner)) {
-					return;
-				}
-				if (completed) {
-					attempt = attempts.get(id) ?? null;
-					await accept(completed, version, owner);
-				} else {
-					const item = pendingItems.find((item) => item.requestId === id);
-					if (item && pending.isPastWindow(item, Date.now())) {
-						pendingItems = pending.markExpired(owner, id, Date.now());
-						attempts.delete(id);
-						if (retainedCommit?.requestId === id) {
-							retainedCommit = null;
-						}
-						attempt = null;
-						focusedId = null;
-						phase = 'input';
-						conversation.push({ role: 'assistant', text: '已過期' });
-					} else {
-						phase = 'uncertain';
-						message = '尚未查到完成結果，仍待確認。';
-					}
-				}
-			} else if (operation || uploadContext) {
+			if (operation || uploadContext) {
 				if (uploadContext) {
 					uploading = true;
 					const targets = await requestImageUploads(
@@ -1140,10 +1422,9 @@
 			const uncertain =
 				!failedUpload &&
 				(hadUncertainty ||
-					query ||
 					seenPersisting ||
 					(error instanceof SemanticEntryError && error.persisting));
-			if (uncertain && !query) {
+			if (uncertain) {
 				retainAttempt();
 			}
 			if (!uncertain) {
@@ -1176,7 +1457,7 @@
 
 <svelte:window onpagehide={leavePage} />
 
-<div class="flex h-[60vh] min-h-0 flex-col gap-3">
+<div class="relative flex h-[60vh] min-h-0 flex-col gap-3">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable conversation needs keyboard access.) -->
 	<div
 		bind:this={conversationElement}
@@ -1213,20 +1494,6 @@
 						{onEditDrafts}
 						onCommit={() => executeDraft('commit')}
 					/>
-					{#if draftWarning}<div
-							role="alert"
-							class="space-y-2 rounded-xl border border-amber-500 bg-amber-500/10 p-3"
-						>
-							<p class="font-semibold">無法確認是否已記帳</p>
-							<p>{draftWarning}</p>
-							<div class="flex gap-2">
-								<Button size="sm" onclick={() => retryPending(focusedId)}
-									>重新確認</Button
-								><Button size="sm" variant="outline" onclick={requestClose}
-									>稍後再看</Button
-								>
-							</div>
-						</div>{/if}
 				</div>
 			{:else}
 				<div class={entry.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
@@ -1321,18 +1588,7 @@
 						{#if message}<p class="text-sm">{message}</p>{/if}
 					</div>
 					<div class="flex flex-wrap gap-2">
-						{#if phase === 'uncertain' && !session}
-							<Button size="sm" onclick={() => queryPending(focusedId)}
-								>查詢結果</Button
-							>
-							{#if focusedId && attempts.has(focusedId)}
-								<Button
-									size="sm"
-									variant="outline"
-									onclick={() => retryPending(focusedId)}>重試同一請求</Button
-								>
-							{/if}
-						{:else if phase === 'created'}
+						{#if phase === 'created'}
 							<Button size="sm" onclick={() => newOperation()}>新增另一筆</Button>
 						{:else if phase === 'rejected' || phase === 'error'}
 							<Button size="sm" onclick={() => newOperation(false)}
@@ -1347,7 +1603,7 @@
 
 	<div class="shrink-0 space-y-2">
 		<div class="text-muted-foreground flex items-start justify-between gap-3 px-1 text-xs">
-			<p id="semantic-entry-hint">{limitHint || imageError || composerHint}</p>
+			<p id="semantic-entry-hint">{imageError || composerHint}</p>
 			{#if canCompose}<span class="shrink-0 tabular-nums">{composerCount}/500</span>{/if}
 		</div>
 		{#if selectedImages.length}<div class="flex gap-2 px-1">
@@ -1412,7 +1668,6 @@
 				bind:value={
 					() => (composingReply ? reply : text),
 					(value) => {
-						limitHint = '';
 						if (composingReply) {
 							reply = value;
 						} else {
@@ -1445,7 +1700,83 @@
 			</Button>
 		</div>
 	</div>
+	<div
+		role="status"
+		aria-live="polite"
+		class="pointer-events-none absolute inset-x-1 bottom-24 z-20 flex justify-center"
+	>
+		{#if toast}
+			<div
+				class="pointer-events-auto flex w-full items-center gap-2 rounded-[10px] bg-[#1f2937] py-1 pr-1 pl-3 text-[12.5px] text-white shadow-[0_8px_24px_rgba(0,0,0,0.3)]"
+			>
+				<TriangleAlert class="size-3.5 shrink-0" aria-hidden="true" />
+				<span class="flex-1">已有3筆待確認，暫時無法建立新對話</span>
+				<Button
+					variant="ghost"
+					size="icon-lg"
+					class="shrink-0 text-white hover:bg-white/10 hover:text-white"
+					aria-label="關閉通知"
+					title="關閉通知"
+					onclick={closeToast}><X aria-hidden="true" /></Button
+				>
+			</div>
+		{/if}
+	</div>
 </div>
+
+{#snippet pendingHeader()}
+	<PendingTray
+		items={pendingItems}
+		open={trayOpen}
+		{expandedId}
+		{lookingUp}
+		errors={lookupErrors}
+		disabled={processing || converting}
+		canRetry={(id) => attempts.has(id)}
+		bind:badge={badgeElement}
+		bind:tray={trayElement}
+		onToggle={toggleTray}
+		onExpand={toggleExpand}
+		onQuery={(id) => void lookup(id, 'query')}
+		onRetry={(id) => void retryFromTray(id)}
+		onDelete={(id) => void deletePending(id)}
+		onDismiss={dismissExpired}
+	/>
+{/snippet}
+
+<AlertDialog.Root
+	open={confirmId !== null}
+	onOpenChange={(next) => {
+		if (!next) {
+			cancelDelete();
+		}
+	}}
+>
+	<AlertDialog.Content
+		onOpenAutoFocus={(event) => {
+			event.preventDefault();
+			cancelButton?.focus();
+		}}
+		onCloseAutoFocus={(event) => {
+			event.preventDefault();
+			focusAfterTray();
+		}}
+	>
+		<AlertDialog.Header>
+			<AlertDialog.Title>確定刪除這筆待確認？</AlertDialog.Title>
+			<AlertDialog.Description
+				>已重新查詢：仍未查到這筆記帳。它可能還在處理中，刪除後如果你重新記帳，可能會重複。</AlertDialog.Description
+			>
+		</AlertDialog.Header>
+		<AlertDialog.Footer>
+			<AlertDialog.Cancel bind:ref={cancelButton}>取消</AlertDialog.Cancel>
+			<AlertDialog.Action
+				class="bg-destructive text-white hover:bg-destructive/90"
+				onclick={confirmDelete}>仍要刪除</AlertDialog.Action
+			>
+		</AlertDialog.Footer>
+	</AlertDialog.Content>
+</AlertDialog.Root>
 
 {#if editingDrafts && session}
 	<DraftEditDialog

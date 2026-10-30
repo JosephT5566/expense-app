@@ -301,51 +301,77 @@ export async function forceRefetchMonthlyExpenses(
 	try {
 		const { year, month } = decodeMonthKey(monthKey);
 		const { from, to } = taiwanMonthBoundsISO(year, month);
-		const rows: ExpenseRow[] = [];
-		// Read fresh pages directly; cache hits and merge-only updates retain deleted rows.
-		for (let offset = 0; ; offset += 500) {
+		// A local upsert or delete in this month after the fetch started makes the snapshot
+		// older than the store; discard it and fetch again instead of overwriting newer rows.
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const version = expensesStore.monthMutationVersion(monthKey);
+			const rows = await fetchMonthRows(owner!.email, from, to, valid);
+			if (!rows) {
+				return false;
+			}
+			if (minTimerMs && Date.now() - startTime < minTimerMs) {
+				await new Promise((resolve) =>
+					setTimeout(resolve, minTimerMs - (Date.now() - startTime))
+				);
+			}
 			if (!valid()) {
 				return false;
 			}
-			const page = await supabase
-				.from(TABLE)
-				.select('*')
-				.or(`and(scope.eq.personal,payer_email.eq.${owner!.email}),scope.neq.personal`)
-				.gte('ts', from)
-				.lte('ts', to)
-				.order('ts', { ascending: false })
-				.order('id', { ascending: false })
-				.range(offset, offset + 499);
-			if (page.error) {
-				throw page.error;
+			if (expensesStore.monthMutationVersion(monthKey) !== version) {
+				continue;
 			}
-			const batch = (page.data ?? []) as ExpenseRow[];
-			rows.push(...batch);
-			if (batch.length < 500) {
-				break;
+			await setExpenseCache(monthKey, rows);
+			if (!valid()) {
+				return false;
 			}
+			if (expensesStore.monthMutationVersion(monthKey) !== version) {
+				// A local write landed while the cache was saved; fetch again so the cache and
+				// the store both end with a snapshot that includes it.
+				continue;
+			}
+			const ids = new Set(rows.map((row) => row.id));
+			expensesStore.items.update((prev) => [
+				...prev.filter((row) => getTaiwanMonthKey(row.ts) !== monthKey && !ids.has(row.id)),
+				...rows
+			]);
+			return true;
 		}
-		if (minTimerMs && Date.now() - startTime < minTimerMs) {
-			await new Promise((resolve) =>
-				setTimeout(resolve, minTimerMs - (Date.now() - startTime))
-			);
-		}
-		if (!valid()) {
-			return false;
-		}
-		await setExpenseCache(monthKey, rows);
-		if (!valid()) {
-			return false;
-		}
-		const ids = new Set(rows.map((row) => row.id));
-		expensesStore.items.update((prev) => [
-			...prev.filter((row) => getTaiwanMonthKey(row.ts) !== monthKey && !ids.has(row.id)),
-			...rows
-		]);
-		return true;
+		return false;
 	} catch (error) {
 		Logger.error('Refetch monthly expenses failed:', monthKey, error);
 		return false;
+	}
+}
+
+async function fetchMonthRows(
+	email: string,
+	from: string,
+	to: string,
+	valid: () => boolean
+): Promise<ExpenseRow[] | null> {
+	const rows: ExpenseRow[] = [];
+	// Read fresh pages directly; cache hits and merge-only updates retain deleted rows.
+	for (let offset = 0; ; offset += 500) {
+		if (!valid()) {
+			return null;
+		}
+		const page = await supabase
+			.from(TABLE)
+			.select('*')
+			.or(`and(scope.eq.personal,payer_email.eq.${email}),scope.neq.personal`)
+			.gte('ts', from)
+			.lte('ts', to)
+			.order('ts', { ascending: false })
+			.order('id', { ascending: false })
+			.range(offset, offset + 499);
+		if (page.error) {
+			throw page.error;
+		}
+		const batch = (page.data ?? []) as ExpenseRow[];
+		rows.push(...batch);
+		if (batch.length < 500) {
+			return rows;
+		}
 	}
 }
 
