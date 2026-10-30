@@ -1,4 +1,6 @@
+import json
 from copy import deepcopy
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, call
 
 import pytest
@@ -87,6 +89,37 @@ async def test_multiple_or_incomplete_never_persists(count, incomplete):
     result = await run(IMAGE_REQUEST, deps, on_persisting=persisting)
     assert result["status"] == "drafts"
     assert result["reason"] == ("multiple" if count > 1 else "incomplete")
+    adapter.persist_expense.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+    persisting.assert_not_awaited()
+
+
+MULTI_ITEM_RAW = next(
+    c
+    for c in json.loads(
+        (Path(__file__).parents[1] / "evals/receipt-cases.json").read_text()
+    )
+    if c["id"] == "multi-item-receipt"
+)["raw"]
+
+
+@pytest.mark.parametrize("count", [3, 1])
+async def test_multi_item_receipt_routes_to_multiple_drafts(count):
+    deps, adapter, _ = make_setup()
+    deps.extract_drafts.return_value["raw"] = {
+        "drafts": deepcopy(MULTI_ITEM_RAW["drafts"][:count]),
+        "nonReceiptImages": [],
+    }
+    persisting = AsyncMock()
+    result = await run(IMAGE_REQUEST, deps, on_persisting=persisting)
+    if count == 1:
+        # A single complete item is still written directly.
+        assert len(result["expenses"]) == 1
+        adapter.persist_expense.assert_awaited_once()
+        return
+    assert result["status"] == "drafts" and result["reason"] == "multiple"
+    assert [d["amount"]["value"] for d in result["drafts"]] == [150, 330, 380]
+    assert [d["status"] for d in result["drafts"]] == ["complete"] * 3
     adapter.persist_expense.assert_not_awaited()
     adapter.persist_expenses.assert_not_awaited()
     persisting.assert_not_awaited()
