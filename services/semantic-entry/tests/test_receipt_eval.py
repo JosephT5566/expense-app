@@ -23,6 +23,31 @@ def test_all_receipt_fixtures():
     assert all(o["passed"] for o in result["observations"])
 
 
+def test_multi_item_receipt_becomes_three_drafts_not_direct_commit():
+    case = next(c for c in CASES if c["id"] == "multi-item-receipt")
+    assert case["imageCount"] == 1 and len(case["raw"]["drafts"]) == 3
+    result = run_receipt_evaluation([case])["observations"][0]["result"]
+    assert result["status"] == "drafts"
+    drafts = result["drafts"]
+    assert [d["status"] for d in drafts] == ["complete"] * 3
+    assert [d["values"]["note"] for d in drafts] == [
+        "唐揚雞塊",
+        "味玉魚介鹽味拉麵",
+        "胡麻紅油擔擔拉麵",
+    ]
+    assert [d["values"]["amount"] for d in drafts] == [150, 330, 380]
+    assert sum(d["values"]["amount"] for d in drafts) == 860
+    for key in ("currency", "date", "scope", "payerEmail", "splitMemberEmails"):
+        assert len({repr(d["values"][key]) for d in drafts}) == 1
+
+
+def test_single_item_complete_receipt_still_commits_directly():
+    case = next(c for c in CASES if c["id"] == "single-complete")
+    result = run_receipt_evaluation([case])["observations"][0]["result"]
+    assert result["status"] == "created" and len(result["drafts"]) == 1
+    assert result["drafts"][0]["expense"] is not None
+
+
 def test_expectation_mismatch_counts_as_failure():
     cases = deepcopy(CASES[:1])
     cases[0]["expected"]["drafts"][0]["values"]["amount"] = 999
