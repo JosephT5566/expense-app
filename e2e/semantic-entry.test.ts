@@ -2237,8 +2237,13 @@ test('edited merge summary preserves effective ids and provenance', async ({ pag
 	await editDialog(page).getByRole('button', { name: '合併所選 (2)', exact: true }).click();
 	await editDialog(page).getByRole('button', { name: '編輯合併摘要', exact: true }).click();
 	const panel = page.getByRole('dialog', { name: '編輯草稿 1/2', exact: true });
+	// The panel moves focus to its first field just after opening; filling before that can lose
+	// the typed text to the date input, so wait for the open focus to settle first.
+	await expect(panel.locator('#date-input')).toBeFocused();
 	await panel.locator('#content-input').fill('合併後摘要');
+	await expect(panel.locator('#content-input')).toHaveValue('合併後摘要');
 	await panel.locator('#amount-input').fill('350');
+	await expect(panel.locator('#amount-input')).toHaveValue('350');
 	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
 	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toContainText('NT$ 350');
 	await expect(editDialog(page).locator('[data-draft-card="summary"]')).toContainText(
