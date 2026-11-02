@@ -1129,6 +1129,74 @@ test('AI dialog has one visible title and no mode switch', async ({ page }) => {
 	await expect(page.getByLabel('記帳內容')).toBeEditable();
 });
 
+test('composer starts at one row, grows to six rows, and has no camera button', async ({
+	page
+}) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await setup(page, async (route, body) => {
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByRole('button', { name: '拍照', exact: true })).toHaveCount(0);
+	await expect(dialog.locator('input[type="file"][capture]')).toHaveCount(0);
+	await expect(dialog.getByRole('button', { name: '附加圖片', exact: true })).toBeVisible();
+	await expect(dialog.locator('input[type="file"][multiple]')).toHaveCount(1);
+
+	const composer = page.getByLabel('記帳內容');
+	// Layout height (offsetHeight) is not scaled by the dialog's open animation transform.
+	const height = () => composer.evaluate((el) => (el as HTMLTextAreaElement).offsetHeight);
+	const metrics = await composer.evaluate((el) => {
+		const style = getComputedStyle(el);
+		return {
+			fontSize: style.fontSize,
+			lineHeight: parseFloat(style.lineHeight),
+			touchAction: style.touchAction
+		};
+	});
+	// 16px avoids iOS focus zoom; manipulation disables double-tap zoom but keeps pinch zoom.
+	expect(metrics.fontSize).toBe('16px');
+	expect(metrics.touchAction).toBe('manipulation');
+	const viewport = await page.locator('meta[name="viewport"]').getAttribute('content');
+	expect(viewport).not.toMatch(/maximum-scale|user-scalable/);
+
+	await composer.fill('');
+	const oneRow = await height();
+	await composer.fill('午餐100');
+	expect(await height()).toBe(oneRow);
+
+	await composer.fill('早餐50\n午餐100');
+	const twoRows = await height();
+	expect(twoRows).toBeGreaterThan(oneRow);
+
+	await composer.fill('早'.repeat(120));
+	expect(await height()).toBeGreaterThan(oneRow);
+
+	const lines = (count: number) =>
+		Array.from({ length: count }, (_, i) => `第${i + 1}筆 100`).join('\n');
+	await composer.fill(lines(6));
+	const sixRows = await height();
+	expect(sixRows).toBeGreaterThan(twoRows);
+	expect(Math.abs(sixRows - oneRow - 5 * metrics.lineHeight)).toBeLessThan(2);
+	await composer.fill(lines(10));
+	expect(Math.abs((await height()) - sixRows)).toBeLessThan(1);
+	expect(
+		await composer.evaluate(
+			(el) => el.scrollHeight > el.clientHeight && getComputedStyle(el).overflowY === 'auto'
+		)
+	).toBe(true);
+
+	await composer.fill('');
+	expect(await height()).toBe(oneRow);
+
+	await composer.fill(lines(4));
+	expect(await height()).toBeGreaterThan(oneRow);
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '新增另一筆', exact: true }).click();
+	await expect(composer).toHaveValue('');
+	expect(await height()).toBe(oneRow);
+});
+
 test.describe('Taiwan conversation date baseline', () => {
 	test.use({ timezoneId: 'America/Los_Angeles' });
 	test('initial uncertain retry retains baseline across midnight and new operation gets new day', async ({
