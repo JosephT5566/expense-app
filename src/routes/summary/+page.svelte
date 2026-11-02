@@ -15,7 +15,7 @@
 	// 新增：月份選擇 Dialog 與台灣月份邊界
 	import { Dialog, Accordion } from 'bits-ui';
 	import { toTaiwanDateString } from '$lib/utils/dates';
-	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { ensureMonthLoaded } from '$lib/data/month-loader';
 	import { onDestroy } from 'svelte';
 	import { getIsMobile } from '$lib/utils/detect-device';
 	import Logger from '$lib/utils/logger';
@@ -93,7 +93,7 @@
 	const pieData: PieDatum[] = $derived(
 		categoryGroups.map((g) => ({
 			label: $categoryLabelMap[g.id] ?? (g.id === 'uncategorized' ? '未分類' : g.id),
-			value: g.amount,
+			value: g.amount
 		}))
 	);
 
@@ -105,15 +105,9 @@
 
 	async function fetchMonthlyExpenses() {
 		const [y, m] = selectedMonth.split('-').map(Number);
-
-		if (expensesStore.hasMonthExpenses(y, m)) {
-			return;
-		}
-
-		const newMonthExpense = await getMonthlyFromCacheFirst(
-			`${y}-${String(m).padStart(2, '0')}`
-		);
-		expensesStore.setMoreItems(newMonthExpense);
+		// Rows already in the store (e.g. an approved scheduled expense) do not mean the
+		// whole month was loaded, so check the loaded-month record instead.
+		await ensureMonthLoaded(`${y}-${String(m).padStart(2, '0')}`);
 	}
 
 	onDestroy(() => {

@@ -33,16 +33,19 @@ npm run dev
 
 ## Build and validation
 
-| Command            | Purpose                                                    |
-| ------------------ | ---------------------------------------------------------- |
-| `npm run check`    | Sync SvelteKit and check Svelte/TypeScript                 |
-| `npm run lint`     | Check Prettier formatting and run ESLint                   |
-| `npm run format`   | Format the repository in place                             |
-| `npm run build`    | Build the static site into `build/`                        |
-| `npm run preview`  | Preview the production build                               |
-| `npm run test:e2e` | Run Playwright, which builds and starts the preview server |
+| Command             | Purpose                                                                      |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `npm run check`     | Sync SvelteKit and check Svelte/TypeScript                                   |
+| `npm run lint`      | Check Prettier formatting and run ESLint                                     |
+| `npm run format`    | Format the repository in place                                               |
+| `npm run build`     | Build the static site into `build/`                                          |
+| `npm run preview`   | Preview the production build                                                 |
+| `npm run test:e2e`  | Run Playwright, which builds and starts the preview server                   |
+| `npm run test:unit` | Run Vitest unit tests (`src/**/*.test.ts`, Node, mocked fetchers and caches) |
 
 The E2E suite includes daily carousel tests with mocked Supabase authentication and responses, covering date jumps, repeated swipes, month/year boundaries, bounded card rendering, DOM reuse within and across buffer shifts, date jumps during animation, empty months, and retrying failed loads. The original scaffold test still checks for a visible home-page `h1`. These tests do not verify live authentication or settlement workflows.
+
+The Vitest unit tests cover monthly loading into the expense store (`src/lib/data/month-loader.test.ts`): full-month loads despite partial rows, loaded-month tracking, stale-cache revalidation merging into the store, and scheduled approval in a non-current month. They mock Supabase, IndexedDB, and the scheduled fetchers, and are not yet run by CI workflows.
 
 For a targeted carousel check, run `npm run test:e2e -- e2e/daily-carousel.test.ts`. Playwright needs its browser installed (`npx playwright install chromium`) and the build-time environment above. The suite builds and starts a preview server on port 4173. Keep `BASE_PATH` empty for the existing specs, which navigate to root paths; verify a deployment subpath separately.
 

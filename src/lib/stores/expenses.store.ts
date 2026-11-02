@@ -1,5 +1,10 @@
 import { writable, get } from 'svelte/store';
-import { type ExpenseRow, type ExpenseQuery, type PageResult, NewExpense } from '$lib/types/expense';
+import {
+	type ExpenseRow,
+	type ExpenseQuery,
+	type PageResult,
+	NewExpense
+} from '$lib/types/expense';
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
 import { taiwanMonthBoundsISO, getTaiwanMonthKey } from '$lib/utils/dates';
 import { persistExpensePatch, persistExpenseDelete } from '$lib/cache/monthlyExpense';
@@ -23,6 +28,40 @@ function bumpMonth(row: ExpenseRow | null) {
 }
 export function monthMutationVersion(monthKey: string) {
 	return monthMutations.get(monthKey) ?? 0;
+}
+
+// Taiwan month keys whose complete monthly snapshot (cache or server) has been merged into
+// `items`. A single upserted row (for example an approved scheduled expense) does not mark a
+// month as loaded, so month views still fetch the whole month.
+const loadedMonths = new Set<string>();
+// Bumped by `clearAll` so loads started for a previous account cannot mark months afterwards.
+let storeGeneration = 0;
+
+export function isMonthLoaded(monthKey: string) {
+	return loadedMonths.has(monthKey);
+}
+
+export function markMonthLoaded(monthKey: string) {
+	loadedMonths.add(monthKey);
+}
+
+export function storeGenerationVersion() {
+	return storeGeneration;
+}
+
+/**
+ * Replace one Taiwan month in `items` with a complete fresh snapshot: rows are deduplicated by
+ * id (the snapshot wins), rows of that month missing from the snapshot are removed, and other
+ * months are kept. Callers must discard snapshots older than a local write in that month
+ * (see `monthMutationVersion`); every store row is written to Supabase before it is added here.
+ */
+export function mergeMonth(monthKey: string, rows: ExpenseRow[]) {
+	const ids = new Set(rows.map((row) => row.id));
+	items.update((prev) => [
+		...prev.filter((row) => getTaiwanMonthKey(row.ts) !== monthKey && !ids.has(row.id)),
+		...rows
+	]);
+	loadedMonths.add(monthKey);
 }
 
 export function setMoreItems(data: ExpenseRow[]) {
@@ -257,15 +296,9 @@ export function getMonthExpenses(year?: number, month?: number) {
 	return get(items).filter((e) => e.ts >= from && e.ts <= to);
 }
 
-export function hasMonthExpenses(year: number, month: number) {
-	const selectedYear = year ? year : new Date().getFullYear();
-	const selectedMonth = month ? month : new Date().getMonth() + 1;
-
-	const { from, to } = taiwanMonthBoundsISO(selectedYear, selectedMonth);
-	return get(items).some((e) => e.ts >= from && e.ts <= to);
-}
-
 export function clearAll() {
+	loadedMonths.clear();
+	storeGeneration += 1;
 	monthlyItems.set(new Map());
 	items.set([]);
 	nextCursor.set(null);

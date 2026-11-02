@@ -14,7 +14,7 @@
 	import { Button } from '$lib/components/shadcn/button';
 	import ExpenseDrawerContent from '$lib/components/ExpenseDrawerContent.svelte';
 
-	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { loadMonthIntoStore } from '$lib/data/month-loader';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
 	import AIEntryDialog from '$lib/components/AIEntryDialog.svelte';
 	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
@@ -56,12 +56,13 @@
 		}
 		const generation = requestGeneration;
 		monthStatus[key] = 'loading';
-		const request = getMonthlyFromCacheFirst(key)
-			.then((rows) => {
+		const request = loadMonthIntoStore(key, {
+			isCurrent: () => generation === requestGeneration
+		})
+			.then(() => {
 				if (generation !== requestGeneration) {
 					return;
 				}
-				expensesStore.setMoreItems(rows);
 				monthStatus[key] = 'loaded';
 			})
 			.catch((error) => {
