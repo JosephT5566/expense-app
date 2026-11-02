@@ -1,5 +1,5 @@
 import type { ExpenseRow, ExpenseScope } from '$lib/types/expense';
-import { taiwanMonthBoundsISO } from '$lib/utils/dates';
+import { isWithinRange, taiwanMonthBoundsISO } from '$lib/utils/dates';
 
 export type CategoryGroup = { id: string; amount: number; items: ExpenseRow[] };
 
@@ -16,7 +16,7 @@ export function groupMonthExpensesByCategory(
 ): CategoryGroup[] {
 	const [year, month] = monthKey.split('-').map(Number);
 	const { from, to } = taiwanMonthBoundsISO(year, month);
-	const monthRows = rows.filter((e) => e.ts >= from && e.ts <= to);
+	const monthRows = rows.filter((e) => isWithinRange(e.ts, from, to));
 	const list = scope === 'personal' ? monthRows : monthRows.filter((e) => e.scope === scope);
 
 	const groups = new Map<string, CategoryGroup>();

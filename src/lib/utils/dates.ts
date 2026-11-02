@@ -43,6 +43,26 @@ export function taiwanMonthBoundsISO(year: number, month: number) {
 	return { from: start.toISOString(), to: end.toISOString() };
 }
 
+/**
+ * 判斷 timestamp 是否落在 [from, to]（皆含端點）內，以 Date.parse 的毫秒值比較。
+ * 不可用字串比較：Supabase 回傳 `2026-09-30T16:00:00+00:00`，而邊界是
+ * `2026-09-30T16:00:00.000Z`，同一時間點的字串比較結果會錯（#69）。
+ * `from` / `to` 未提供（undefined、null 或空字串）時該端不限制；`ts` 無法解析時回傳 false。
+ */
+export function isWithinRange(ts: string, from?: string | null, to?: string | null): boolean {
+	const t = Date.parse(ts);
+	if (Number.isNaN(t)) {
+		return false;
+	}
+	if (from && !(t >= Date.parse(from))) {
+		return false;
+	}
+	if (to && !(t <= Date.parse(to))) {
+		return false;
+	}
+	return true;
+}
+
 export function getTaiwanDate(tsUTC: string) {
 	const date = new Date(tsUTC);
 	const year = date.getFullYear();
