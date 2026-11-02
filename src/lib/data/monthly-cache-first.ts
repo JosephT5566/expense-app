@@ -1,33 +1,28 @@
 // src/lib/data/monthly-cache-first.ts
-import { browser } from '$app/environment';
-import Logger from '$lib/utils/logger';
-import { getExpenseFromCache, setExpenseCache, isStale } from '$lib/cache/monthlyExpense';
+import { getExpenseFromCache, isStale } from '$lib/cache/monthlyExpense';
 import { listExpensesMonthly } from '$lib/data/expenses.fetcher';
+import type { ExpenseRow } from '$lib/types/expense';
+import type { MonthSnapshot } from '$lib/stores/expenses.store';
 
-// before using, check the store first.
-export async function getMonthlyFromCacheFirst(monthKey: string) {
-	// 先嘗試命中（記憶體或 IDB），命中就馬上回資料
-	if (browser) {
-		const cached = await getExpenseFromCache(monthKey);
-		if (cached) {
-			// 命中但過期 → 背景 revalidate
-			if (isStale(monthKey)) {
-				revalidateInBackground(monthKey).catch(() => {});
-			}
-			return cached;
-		}
-	}
+// Building blocks for `loadMonthIntoStore` / `ensureMonthLoaded` in `month-loader.ts`, which
+// decide what reaches the store and the cache. Use those for store-backed views.
 
-	Logger.log('monthly cache miss, fetch from supabase. key:', monthKey);
-	// 沒命中 → 正式請求
-	const fresh = await listExpensesMonthly(monthKey);
-	if (browser) {
-		await setExpenseCache(monthKey, fresh.items);
+/** Read a month from memory or IndexedDB. `stale` is true after ten minutes. */
+export async function readMonthFromCache(
+	monthKey: string
+): Promise<{ rows: ExpenseRow[]; stale: boolean } | null> {
+	const rows = await getExpenseFromCache(monthKey);
+	if (!rows) {
+		return null;
 	}
-	return fresh.items;
+	return { rows, stale: isStale(monthKey) };
 }
 
-export async function revalidateInBackground(monthKey: string) {
-	const fresh = await listExpensesMonthly(monthKey);
-	await setExpenseCache(monthKey, fresh.items);
+/**
+ * Fetch the first page (up to 500 rows) of a month from Supabase. When the server reports more
+ * rows (`nextCursor`), the snapshot is marked incomplete; full pagination is not done here.
+ */
+export async function fetchMonthSnapshot(monthKey: string): Promise<MonthSnapshot> {
+	const page = await listExpensesMonthly(monthKey);
+	return { rows: page.items, complete: page.nextCursor === null };
 }

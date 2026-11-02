@@ -13,7 +13,6 @@
 	import { setFromLoad as setCategoriesStore } from '$lib/stores/categories.store';
 	import { setFromLoad as setAppSettingStore } from '$lib/stores/appSetting.store';
 	import {
-		setMoreItems,
 		items as expenseItems,
 		clearAll as clearAllExpenses
 	} from '$lib/stores/expenses.store';
@@ -29,7 +28,7 @@
 	import { startAuthListener } from '$lib/supabase/auth';
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
 	import { clearAllScheduledExpensesCache } from '$lib/cache/scheduledExpenses';
-	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
+	import { ensureMonthLoaded } from '$lib/data/month-loader';
 	import Logger from '$lib/utils/logger';
 	import SideNav from '$lib/components/ui/SideNav.svelte';
 	import classNames from 'classnames';
@@ -56,13 +55,10 @@
 
 	// Try to fetch expenses after the user value is set successfully.
 	if (month) {
-		getMonthlyFromCacheFirst(month).then((monthlyData) => {
+		// Merges into the store (keeping neighbouring months that may have finished loading
+		// first) and marks the month as fully loaded.
+		ensureMonthLoaded(month).then(() => {
 			Logger.log('User signed in, the first time we fetch month data for:', month);
-
-			if (monthlyData) {
-				// Keep neighbouring months that may have finished loading first.
-				setMoreItems(monthlyData);
-			}
 		});
 		loadPendingScheduledExpenses();
 	}

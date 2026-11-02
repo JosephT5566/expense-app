@@ -9,14 +9,14 @@
 	import * as sessionStore from '$lib/stores/session.store';
 	import * as categoriesStore from '$lib/stores/categories.store';
 	import { derived } from 'svelte/store';
-	import type { ExpenseRow, ExpenseScope } from '$lib/types/expense';
+	import type { ExpenseScope } from '$lib/types/expense';
+	import { groupMonthExpensesByCategory } from '$lib/utils/summary';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import Icon from '@iconify/svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
 	import { Dialog, Accordion } from 'bits-ui';
 	import { toTaiwanDateString } from '$lib/utils/dates';
-	import { getMonthlyFromCacheFirst } from '$lib/data/monthly-cache-first';
-	import { onDestroy } from 'svelte';
+	import { ensureMonthLoaded } from '$lib/data/month-loader';
 	import { getIsMobile } from '$lib/utils/detect-device';
 	import Logger from '$lib/utils/logger';
 
@@ -56,44 +56,23 @@
 		(opts) => Object.fromEntries(opts.map((o) => [o.value, o.label])) as Record<string, string>
 	);
 
-	let categoryGroups = $state<{ id: string; amount: number; items: ExpenseRow[] }[]>([]);
-
-	const unsubs = expensesStore.items.subscribe(() => {
-		categoryGroups = groupByCategory();
-	});
-
-	function groupByCategory() {
-		const [y, m] = selectedMonth.split('-').map(Number);
-		const rows = expensesStore.getMonthExpenses(y, m);
-
-		const list =
-			selectedScope === 'personal' ? rows : rows.filter((e) => e.scope === selectedScope);
-		const mapObj: Record<string, { id: string; amount: number; items: ExpenseRow[] }> = {};
-
-		for (const exp of list) {
-			const id = exp.category_id ?? 'uncategorized';
-			if (!mapObj[id]) {
-				mapObj[id] = { id, amount: 0, items: [] };
-			}
-
-			if (exp.scope === 'personal') {
-				mapObj[id].amount += exp.amount;
-			} else if (exp.scope === 'household') {
-				mapObj[id].amount += exp.shares_json?.[$user?.email ?? ''] ?? 0;
-			}
-			mapObj[id].items.push(exp);
-		}
-
-		const groups = Object.values(mapObj);
-		groups.sort((a, b) => b.amount - a.amount);
-		return groups;
-	}
+	// Recomputed whenever the rows, the month, the scope, or the user changes, so switching
+	// back to an already-loaded month (even an empty one) shows that month's totals.
+	const expenseItems = expensesStore.items;
+	const categoryGroups = $derived(
+		groupMonthExpensesByCategory(
+			$expenseItems,
+			selectedMonth,
+			selectedScope,
+			$user?.email ?? ''
+		)
+	);
 
 	// 當月篩選後分組
 	const pieData: PieDatum[] = $derived(
 		categoryGroups.map((g) => ({
 			label: $categoryLabelMap[g.id] ?? (g.id === 'uncategorized' ? '未分類' : g.id),
-			value: g.amount,
+			value: g.amount
 		}))
 	);
 
@@ -105,20 +84,10 @@
 
 	async function fetchMonthlyExpenses() {
 		const [y, m] = selectedMonth.split('-').map(Number);
-
-		if (expensesStore.hasMonthExpenses(y, m)) {
-			return;
-		}
-
-		const newMonthExpense = await getMonthlyFromCacheFirst(
-			`${y}-${String(m).padStart(2, '0')}`
-		);
-		expensesStore.setMoreItems(newMonthExpense);
+		// Rows already in the store (e.g. an approved scheduled expense) do not mean the
+		// whole month was loaded, so check the loaded-month record instead.
+		await ensureMonthLoaded(`${y}-${String(m).padStart(2, '0')}`);
 	}
-
-	onDestroy(() => {
-		unsubs();
-	});
 </script>
 
 <section class="card p-4 mb-[10vh]">
@@ -129,7 +98,6 @@
 			data-active={selectedScope === 'personal'}
 			onclick={() => {
 				selectedScope = 'personal';
-				categoryGroups = groupByCategory();
 			}}
 		>
 			我的花費
@@ -139,7 +107,6 @@
 			data-active={selectedScope === 'household'}
 			onclick={() => {
 				selectedScope = 'household';
-				categoryGroups = groupByCategory();
 			}}
 		>
 			共同花費
