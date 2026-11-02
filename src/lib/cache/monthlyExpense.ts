@@ -52,6 +52,8 @@ export async function clearAllExpensesCache() {
 	const all = (await keys()).map(String).filter((k) => k.startsWith(EXPENSE_CACHE_PREFIX));
 
 	await Promise.all(all.map((k) => del(k)));
+	// Also drop the in-memory layer so a later read cannot return the previous account's rows.
+	mem.set(new Map());
 }
 
 export async function clearExpenseCacheForMonth(monthKey: MonthKey) {

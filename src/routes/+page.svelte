@@ -56,9 +56,9 @@
 		}
 		const generation = requestGeneration;
 		monthStatus[key] = 'loading';
-		const request = loadMonthIntoStore(key, {
-			isCurrent: () => generation === requestGeneration
-		})
+		// The store update itself is shared and kept even if this page goes away; the generation
+		// check below only guards this page's own status bookkeeping.
+		const request = loadMonthIntoStore(key)
 			.then(() => {
 				if (generation !== requestGeneration) {
 					return;

@@ -187,8 +187,7 @@ describe('stale cache revalidation', () => {
 			})
 		);
 
-		const returned = await loadMonthIntoStore('2026-10');
-		expect(idsOf(returned)).toEqual(['oct-1', 'oct-deleted']);
+		await loadMonthIntoStore('2026-10');
 		expect(idsOf(expensesStore.getMonthExpenses(2026, 10))).toEqual(['oct-1', 'oct-deleted']);
 
 		resolveFetch(page(fresh));

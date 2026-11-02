@@ -32,9 +32,13 @@ export function monthMutationVersion(monthKey: string) {
 
 // Taiwan month keys whose complete monthly snapshot (cache or server) has been merged into
 // `items`. A single upserted row (for example an approved scheduled expense) does not mark a
-// month as loaded, so month views still fetch the whole month.
+// month as loaded, so month views still fetch the whole month. A stale cache hit counts as
+// loaded for display while its background revalidation runs.
 const loadedMonths = new Set<string>();
-// Bumped by `clearAll` so loads started for a previous account cannot mark months afterwards.
+// Months whose next load must fetch from the server, skipping the cache: a background
+// revalidation failed, or the server reported more rows than one page.
+const monthsNeedingRevalidation = new Set<string>();
+// Bumped by `clearAll` so loads started for a previous account cannot write afterwards.
 let storeGeneration = 0;
 
 export function isMonthLoaded(monthKey: string) {
@@ -45,23 +49,116 @@ export function markMonthLoaded(monthKey: string) {
 	loadedMonths.add(monthKey);
 }
 
+export function monthNeedsRevalidation(monthKey: string) {
+	return monthsNeedingRevalidation.has(monthKey);
+}
+
+/** Forget that the month is loaded and make its next load fetch from the server. */
+export function markMonthNeedsRevalidation(monthKey: string) {
+	loadedMonths.delete(monthKey);
+	monthsNeedingRevalidation.add(monthKey);
+}
+
 export function storeGenerationVersion() {
 	return storeGeneration;
 }
 
 /**
- * Replace one Taiwan month in `items` with a complete fresh snapshot: rows are deduplicated by
- * id (the snapshot wins), rows of that month missing from the snapshot are removed, and other
- * months are kept. Callers must discard snapshots older than a local write in that month
- * (see `monthMutationVersion`); every store row is written to Supabase before it is added here.
+ * A month load in flight. Local upserts and deletes touching the month while it is active are
+ * recorded by id, so the load's snapshot (fetched or read before them) never overwrites them.
  */
-export function mergeMonth(monthKey: string, rows: ExpenseRow[]) {
-	const ids = new Set(rows.map((row) => row.id));
-	items.update((prev) => [
-		...prev.filter((row) => getTaiwanMonthKey(row.ts) !== monthKey && !ids.has(row.id)),
-		...rows
-	]);
-	loadedMonths.add(monthKey);
+export type MonthLoadToken = {
+	readonly monthKey: string;
+	readonly generation: number;
+	readonly touched: Set<string>;
+};
+const activeLoads = new Set<MonthLoadToken>();
+
+export function beginMonthLoad(monthKey: string): MonthLoadToken {
+	const token = { monthKey, generation: storeGeneration, touched: new Set<string>() };
+	activeLoads.add(token);
+	return token;
+}
+
+export function endMonthLoad(token: MonthLoadToken) {
+	activeLoads.delete(token);
+}
+
+function recordLocalChange(id: string, rows: (ExpenseRow | null)[]) {
+	if (activeLoads.size === 0) {
+		return;
+	}
+	const months = new Set(rows.filter((r) => r !== null).map((r) => getTaiwanMonthKey(r.ts)));
+	for (const token of activeLoads) {
+		// Unknown month (row not in the store): record it everywhere to stay conservative.
+		if (months.size === 0 || months.has(token.monthKey)) {
+			token.touched.add(id);
+		}
+	}
+}
+
+export type MonthSnapshot = {
+	rows: ExpenseRow[];
+	/** False when the server reported more rows than this page (only the first page is read). */
+	complete: boolean;
+};
+
+/**
+ * Apply a month snapshot to `items`. Snapshot rows are deduplicated by id (the last one wins)
+ * and replace store rows with the same id. Rows changed locally since `token` began keep their
+ * store version (or stay deleted). With `mode: 'replace'` and a complete snapshot (fresh from
+ * the server), rows of that month missing from the snapshot are removed; `merge` (cache hits)
+ * and incomplete snapshots never remove rows. A complete snapshot marks the month loaded; an
+ * incomplete one leaves it unloaded and needing revalidation.
+ *
+ * Returns the month's rows now in the store (suitable for the cache), or null when the token
+ * belongs to an earlier store generation (sign-out) and nothing was applied.
+ */
+export function applyMonthSnapshot(
+	token: MonthLoadToken,
+	snapshot: MonthSnapshot,
+	mode: 'merge' | 'replace'
+): ExpenseRow[] | null {
+	if (token.generation !== storeGeneration) {
+		return null;
+	}
+	const { monthKey, touched } = token;
+	const fresh = new Map<string, ExpenseRow>();
+	for (const row of snapshot.rows) {
+		if (!touched.has(row.id)) {
+			fresh.set(row.id, row);
+		}
+	}
+	const removeMissing = mode === 'replace' && snapshot.complete;
+	let monthRows: ExpenseRow[] = [];
+	items.update((prev) => {
+		const kept = prev.filter((row) => {
+			if (fresh.has(row.id)) {
+				return false;
+			}
+			return !(
+				removeMissing &&
+				getTaiwanMonthKey(row.ts) === monthKey &&
+				!touched.has(row.id)
+			);
+		});
+		const next = [...kept, ...fresh.values()];
+		monthRows = next.filter((row) => getTaiwanMonthKey(row.ts) === monthKey);
+		return next;
+	});
+	if (snapshot.complete) {
+		loadedMonths.add(monthKey);
+		if (mode === 'replace') {
+			monthsNeedingRevalidation.delete(monthKey);
+		}
+	} else {
+		markMonthNeedsRevalidation(monthKey);
+		Logger.warn(
+			{ prod: true },
+			`Month ${monthKey} has more rows than one page (${snapshot.rows.length}); it is not treated as complete.`
+		);
+	}
+	return monthRows;
 }
 
 export function setMoreItems(data: ExpenseRow[]) {
@@ -209,6 +306,7 @@ export function upsertOne(row: ExpenseRow) {
 	});
 	bumpMonth(oldRow);
 	bumpMonth(row);
+	recordLocalChange(row.id, [oldRow, row]);
 	Logger.log('Upserted expense', row, oldRow);
 
 	persistExpensePatch(oldRow, row).catch((e) => {
@@ -232,6 +330,9 @@ export function upsertMany(rows: ExpenseRow[]) {
 	});
 	oldRows.forEach(bumpMonth);
 	rows.forEach(bumpMonth);
+	for (const row of rows) {
+		recordLocalChange(row.id, [oldRows.find((old) => old.id === row.id) ?? null, row]);
+	}
 }
 
 export function deleteOne(id: string) {
@@ -249,6 +350,7 @@ export function deleteOne(id: string) {
 	});
 
 	bumpMonth(removed);
+	recordLocalChange(id, [removed]);
 	if (removed) {
 		persistExpenseDelete(removed).catch((e) => {
 			Logger.error('Failed to remove expense from cache', e);
@@ -298,6 +400,8 @@ export function getMonthExpenses(year?: number, month?: number) {
 
 export function clearAll() {
 	loadedMonths.clear();
+	monthsNeedingRevalidation.clear();
+	activeLoads.clear();
 	storeGeneration += 1;
 	monthlyItems.set(new Map());
 	items.set([]);
