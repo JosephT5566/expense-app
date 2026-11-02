@@ -57,6 +57,19 @@ describe('groupMonthExpensesByCategory', () => {
 		).toBe(20);
 	});
 
+	it('counts a Supabase-formatted ts exactly at the Taiwan month start (#69)', () => {
+		// Approved scheduled expenses use ts = scheduled_for, e.g. 2026-10-01 00:00 in Taiwan,
+		// and Supabase returns it as +00:00 rather than .000Z.
+		const rows = [row('scheduled-oct-1', '2026-09-30T16:00:00+00:00', 2700)];
+
+		expect(
+			total(groupMonthExpensesByCategory(rows, '2026-10', 'personal', 'me@example.com'))
+		).toBe(2700);
+		expect(groupMonthExpensesByCategory(rows, '2026-09', 'personal', 'me@example.com')).toEqual(
+			[]
+		);
+	});
+
 	it('counts personal amounts and the user share of household rows, largest group first', () => {
 		const rows = [
 			row('p-1', '2026-10-02T02:00:00.000Z', 100, { category_id: 'food' }),

@@ -6,7 +6,7 @@ import {
 	NewExpense
 } from '$lib/types/expense';
 import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expenses.fetcher';
-import { taiwanMonthBoundsISO, getTaiwanMonthKey } from '$lib/utils/dates';
+import { taiwanMonthBoundsISO, getTaiwanMonthKey, isWithinRange } from '$lib/utils/dates';
 import { persistExpensePatch, persistExpenseDelete } from '$lib/cache/monthlyExpense';
 import Logger from '$lib/utils/logger';
 
@@ -259,8 +259,7 @@ export async function markSettledBulk(
 	} else {
 		items.update((prev) =>
 			prev.map((x) => {
-				const inRange =
-					(!params.from || x.ts >= params.from) && (!params.to || x.ts <= params.to);
+				const inRange = isWithinRange(x.ts, params.from, params.to);
 				return inRange ? { ...x, is_settled: params.next } : x;
 			})
 		);
@@ -395,7 +394,7 @@ export function getMonthExpenses(year?: number, month?: number) {
 	const selectedMonth = month ? month : new Date().getMonth() + 1;
 
 	const { from, to } = taiwanMonthBoundsISO(selectedYear, selectedMonth);
-	return get(items).filter((e) => e.ts >= from && e.ts <= to);
+	return get(items).filter((e) => isWithinRange(e.ts, from, to));
 }
 
 export function clearAll() {

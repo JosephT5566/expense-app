@@ -271,3 +271,33 @@ describe('approving a scheduled expense in a non-current month', () => {
 		expect(monthTotal(2026, 11)).toBe(70);
 	});
 });
+
+describe('month range filters with Supabase-formatted ts (#69)', () => {
+	const monthStart = row('oct-start', '2026-09-30T16:00:00+00:00', 2700);
+	const septLast = row('sep-last', '2026-09-30T15:59:59.999+00:00', 1);
+	const novStart = row('nov-start', '2026-10-31T16:00:00+00:00', 5);
+
+	it('getMonthExpenses includes a row exactly at the Taiwan month start', () => {
+		expensesStore.upsertMany([monthStart, septLast, novStart]);
+
+		expect(idsOf(expensesStore.getMonthExpenses(2026, 10))).toEqual(['oct-start']);
+		expect(idsOf(expensesStore.getMonthExpenses(2026, 9))).toEqual(['sep-last']);
+		expect(idsOf(expensesStore.getMonthExpenses(2026, 11))).toEqual(['nov-start']);
+	});
+
+	it('markSettledBulk optimistically settles a row exactly at the range start', async () => {
+		expensesStore.upsertMany([monthStart, septLast]);
+		fetcher.bulkToggleSettled.mockResolvedValue(undefined);
+
+		await expensesStore.markSettledBulk({
+			from: '2026-09-30T16:00:00.000Z',
+			to: '2026-10-31T15:59:59.999Z',
+			next: true
+		});
+
+		const settled = Object.fromEntries(
+			get(expensesStore.items).map((r) => [r.id, r.is_settled])
+		);
+		expect(settled).toEqual({ 'oct-start': true, 'sep-last': false });
+	});
+});
