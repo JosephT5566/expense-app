@@ -30,7 +30,6 @@
 	import { get } from 'svelte/store';
 	import { Button } from '$lib/components/shadcn/button';
 	import Paperclip from 'lucide-svelte/icons/paperclip';
-	import Camera from 'lucide-svelte/icons/camera';
 	import X from 'lucide-svelte/icons/x';
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
 	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
@@ -227,7 +226,48 @@
 	let converting = $state(false);
 	let uploading = $state(false);
 	let fileInput: HTMLInputElement;
-	let cameraInput: HTMLInputElement;
+	let composerElement = $state<HTMLTextAreaElement>();
+	const composerMaxRows = 6;
+
+	// Grow the composer with its content from one row up to six, then scroll inside it.
+	function resizeComposer() {
+		const el = composerElement;
+		if (!el) {
+			return;
+		}
+		const style = getComputedStyle(el);
+		const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+		const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+		const border = parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+		const maxHeight = lineHeight * composerMaxRows + padding;
+		el.style.height = 'auto';
+		const contentHeight = el.scrollHeight;
+		el.style.height = `${Math.min(contentHeight, maxHeight) + border}px`;
+		el.style.overflowY = contentHeight > maxHeight ? 'auto' : 'hidden';
+	}
+	$effect(() => {
+		// Re-measure whenever the bound value changes, including programmatic clears after sending.
+		void (composingReply ? reply : text);
+		if (composerElement) {
+			resizeComposer();
+		}
+	});
+	$effect(() => {
+		// Width changes (rotation, dialog resize) change soft wrapping.
+		const el = composerElement;
+		if (!el || typeof ResizeObserver === 'undefined') {
+			return;
+		}
+		let width = el.clientWidth;
+		const observer = new ResizeObserver(() => {
+			if (el.clientWidth !== width) {
+				width = el.clientWidth;
+				resizeComposer();
+			}
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	});
 
 	function clearImages() {
 		selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
@@ -1457,14 +1497,14 @@
 
 <svelte:window onpagehide={leavePage} />
 
-<div class="relative flex h-[60vh] min-h-0 flex-col gap-3">
+<div class="relative flex h-[60vh] min-h-0 touch-manipulation flex-col gap-3">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable conversation needs keyboard access.) -->
 	<div
 		bind:this={conversationElement}
 		role="region"
 		aria-label="本次對話"
 		tabindex="0"
-		class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-muted/15 p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+		class="min-h-0 flex-1 touch-manipulation space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-muted/15 p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
 		onscroll={() => {
 			if (conversationElement) {
 				followLatest =
@@ -1630,16 +1670,8 @@
 			class="hidden"
 			onchange={selectImages}
 		/>
-		<input
-			bind:this={cameraInput}
-			type="file"
-			accept="image/jpeg,image/png,image/webp,image/heic,image/heif"
-			capture="environment"
-			class="hidden"
-			onchange={selectImages}
-		/>
 		<div
-			class="bg-background flex items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
+			class="bg-background flex touch-manipulation items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
 		>
 			<Button
 				size="icon"
@@ -1649,15 +1681,8 @@
 				disabled={attachmentsDisabled}
 				onclick={() => fileInput.click()}><Paperclip class="h-4 w-4" /></Button
 			>
-			<Button
-				size="icon"
-				variant="ghost"
-				class="shrink-0"
-				aria-label="拍照"
-				disabled={attachmentsDisabled}
-				onclick={() => cameraInput.click()}><Camera class="h-4 w-4" /></Button
-			>
 			<textarea
+				bind:this={composerElement}
 				id="semantic-entry-text"
 				aria-label={phase === 'drafts'
 					? '補充草稿'
@@ -1676,8 +1701,8 @@
 					}
 				}
 				disabled={converting || !canCompose || (phase === 'input' && attempt !== null)}
-				rows="2"
-				class="min-w-0 flex-1 resize-none bg-transparent px-2 py-1 text-sm focus-visible:outline-none"
+				rows="1"
+				class="min-w-0 flex-1 touch-manipulation resize-none overflow-y-hidden bg-transparent px-2 py-1 text-base focus-visible:outline-none md:text-sm"
 				placeholder={phase === 'drafts'
 					? '例如：第三筆是午餐'
 					: composingReply
