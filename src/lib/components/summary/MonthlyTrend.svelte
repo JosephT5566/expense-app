@@ -99,23 +99,19 @@
 </script>
 
 <div class="mt-4 border-t border-black/5 pt-2">
-	<div class="flex justify-center">
-		<Button
-			variant="ghost"
-			size="icon"
-			class="size-10 motion-reduce:transition-none"
-			aria-label="近 6 個月開銷"
-			title="近 6 個月開銷"
-			aria-expanded={expanded}
-			aria-controls={id}
-			onclick={() => (expanded = !expanded)}
-		>
-			<ChevronDown
-				aria-hidden="true"
-				class={`size-4 transition-transform motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`}
-			/>
-		</Button>
-	</div>
+	<Button
+		variant="ghost"
+		class="h-10 w-full justify-between px-2 text-sm font-normal text-muted-foreground motion-reduce:transition-none"
+		aria-expanded={expanded}
+		aria-controls={id}
+		onclick={() => (expanded = !expanded)}
+	>
+		<span>近 6 個月開銷</span>
+		<ChevronDown
+			aria-hidden="true"
+			class={`size-4 transition-transform motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`}
+		/>
+	</Button>
 	<div {id}>
 		{#if expanded}
 			{#if loading && rows === null}<p
