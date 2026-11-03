@@ -4,6 +4,8 @@ JoPie is a personal and household expense tracker built for Joseph and Pieda. It
 
 The app uses Svelte 5, SvelteKit, TypeScript, and Supabase. It builds as a static site for GitHub Pages and includes PWA configuration through the Vite PWA plugin.
 
+Summary 圓餅圖下方提供預設收合的近六個月開銷折線圖，展開後才載入圖表及月總和；點選月份只選取，按「切換」才更新檢視月份。折線圖隨個人／共同分頁切換，圓餅圖與分類列表維持逐筆計算。資料與快取責任見 [架構文件](docs/architecture.md#summary-monthly-trend)。
+
 ## Development
 
 Use Node.js 22.12 or later within Node 22 to match CI, then install dependencies:

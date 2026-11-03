@@ -104,4 +104,6 @@ These notes were moved from the original README. They describe intended external
 
 Paid 與 Owed 的 `month` 一律以 `date_trunc('month', ts AT TIME ZONE 'Asia/Taipei')` 依台灣月份分桶，與 session 時區無關，因此台灣月初 00:00–08:00 的開銷其 Paid、Owed 與 Net 都落在同一個月。baseline（`20261011000000_existing_public_baseline.sql`）的 Owed 段原本只用 `date_trunc('month', ts)`，會依 session 時區（Supabase 預設 UTC）分到上個月；`supabase/migrations/202611030001_monthly_balances_view_taipei_month.sql` 以 `CREATE OR REPLACE VIEW` 只修正這一段，欄位、`security_invoker` 與權限不變。此 migration 只在拋棄式本機資料庫驗證，套用到正式環境需由 owner 核准並執行。
 
-view 的 SQL 定義在 baseline migration 與上述 migration；目前沒有查詢此 view 的前端呼叫。
+view 的 SQL 定義在 baseline migration 與上述 migration。`src/lib/data/monthly-balances.fetcher.ts` 查詢 `month,scope,email,paid,owed,owed_by_category`，以目前使用者 email 及近六個台北月份的起始 date 篩選。折線圖只使用 `owed`，numeric 字串以 `Number()` 轉換，不另行四捨五入；個人分頁加總 personal 與 household，共同分頁只用 household。超出六個月窗口的回傳資料不繪製。前端 email 篩選不取代外部 RLS。
+
+圓餅圖與分類列表仍使用逐筆資料。#73 的既有本機合成比對共 27 項，22 項一致；三位小數 JSON 分攤 33.335 寫入 `expense_shares.share_amount numeric(12,2)` 後成為 33.34，造成兩分頁各自的總額與類別共四項差異；NULL category 被 view 的類別 FILTER 排除、Summary 則顯示未分類，造成第五項差異，總額一致。Owner 說明目前新增金額為整數，因此允許折線圖採 view 總額；未分類差異不影響仍採逐筆的圓餅圖。此決策不證明所有真實資料一致，也不驗證部署 RLS；改用 view 圓餅圖前仍需 owner 唯讀比對真實資料並決定未分類表示方式。
