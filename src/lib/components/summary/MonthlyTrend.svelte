@@ -39,6 +39,9 @@
 		viewedMonth: string;
 		onSwitch: (month: string) => Promise<void>;
 	}> | null>(null);
+	// Plain bookkeeping: changing these must not retrigger the load effect.
+	let loadedAccount: string | undefined;
+	let loadedWindowStart: string | undefined;
 	const points = $derived(balanceSeries(rows ?? [], months, scope));
 
 	$effect(() => {
@@ -47,14 +50,18 @@
 		const attempt = retry;
 		void revision;
 		void attempt;
+		const window = recentTaiwanMonths();
+		if (loadedAccount !== account || loadedWindowStart !== window[0]) {
+			rows = null;
+			months = window;
+			loadedAccount = account;
+			loadedWindowStart = window[0];
+		}
 		if (!expanded || !account) {
 			return;
 		}
 		let cancelled = false;
 		const version = balanceCacheVersion();
-		const window = recentTaiwanMonths();
-		months = window;
-		rows = null;
 		loading = true;
 		failed = false;
 		const key = balanceCacheKey(account, window[0]);
@@ -101,7 +108,7 @@
 <div class="mt-4 border-t border-black/5 pt-2">
 	<Button
 		variant="ghost"
-		class="h-10 w-full justify-between px-2 text-sm font-normal text-muted-foreground motion-reduce:transition-none"
+		class="h-10 w-full justify-between px-2 text-sm font-normal text-foreground motion-reduce:transition-none"
 		aria-expanded={expanded}
 		aria-controls={id}
 		onclick={() => (expanded = !expanded)}

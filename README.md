@@ -4,7 +4,7 @@ JoPie is a personal and household expense tracker built for Joseph and Pieda. It
 
 The app uses Svelte 5, SvelteKit, TypeScript, and Supabase. It builds as a static site for GitHub Pages and includes PWA configuration through the Vite PWA plugin.
 
-Summary 圓餅圖下方提供預設收合的近六個月開銷折線圖，透過全寬按鈕（左側標題「近 6 個月開銷」、右側向下箭頭）展開後才載入圖表及月總和；展開時箭頭旋轉 180°，再按一次收合並隱藏圖表與摘要。點選月份只選取，按「切換」才更新檢視月份。折線圖隨個人／共同分頁切換，圓餅圖與分類列表維持逐筆計算。資料與快取責任見 [架構文件](docs/architecture.md#summary-monthly-trend)。
+Summary 圓餅圖下方提供預設收合的近六個月開銷折線圖，透過全寬按鈕（左側標題「近 6 個月開銷」、右側向下箭頭）展開後才載入圖表及月總和；展開時箭頭旋轉 180°，再按一次收合並卸載圖表與摘要。點選月份只選取，按「切換」才更新檢視月份。折線圖隨個人／共同分頁切換，圓餅圖與分類列表維持逐筆計算。背景重查時保留既有圖表與已選月份，只有帳號或六個月視窗改變才清空；收合會卸載圖表與狀態訊息，但保留已載入資料；再展開時直接顯示圖表，資料過期則在背景重查，已選月份會重設。折線圖只用兩個主題都有定義的主題變數。 資料與快取責任見 [架構文件](docs/architecture.md#summary-monthly-trend)。
 
 ## Development
 

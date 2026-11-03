@@ -126,3 +126,61 @@ export async function openSummary(page: Page) {
 	await expect(page.locator('section.card')).toContainText('999');
 	await expect(page.getByRole('button', { name: '近 6 個月開銷' })).toBeVisible();
 }
+
+/** Records removals even when a replacement chart is inserted in the same DOM update. */
+export async function observeTrendRefresh(page: Page) {
+	return page.evaluateHandle(() => {
+		const chart = document.querySelector('[role="group"][aria-label="近半年開銷折線圖"]');
+		if (!chart) {
+			throw new Error('Trend must be mounted before observing');
+		}
+		const state = { chartRemoved: false, loadingShown: false };
+		const observer = new MutationObserver((records) => {
+			for (const record of records) {
+				for (const node of record.removedNodes) {
+					if (node === chart || node.contains(chart)) {
+						state.chartRemoved = true;
+					}
+				}
+				for (const node of record.addedNodes) {
+					if (node.textContent?.includes('載入近半年資料…')) {
+						state.loadingShown = true;
+					}
+				}
+				if (
+					record.type === 'characterData' &&
+					record.target.textContent?.includes('載入近半年資料…')
+				) {
+					state.loadingShown = true;
+				}
+			}
+		});
+		observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+		return { state, stop: () => observer.disconnect() };
+	});
+}
+
+export async function switchSummaryAccount(page: Page, supabaseUrl: string) {
+	await page.evaluate(
+		(storageKey) => {
+			const stored = localStorage.getItem(storageKey);
+			if (!stored) {
+				throw new Error('Synthetic session missing');
+			}
+			const session = JSON.parse(stored);
+			const next = {
+				...session,
+				user: {
+					...session.user,
+					id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+					email: 'other@example.test'
+				}
+			};
+			localStorage.setItem(storageKey, JSON.stringify(next));
+			const channel = new BroadcastChannel(storageKey);
+			channel.postMessage({ event: 'SIGNED_IN', session: next });
+			channel.close();
+		},
+		`sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`
+	);
+}

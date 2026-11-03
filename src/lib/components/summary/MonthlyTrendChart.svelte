@@ -19,6 +19,11 @@
 	let switching = $state(false);
 	let switchError = $state(false);
 	const selectedPoint = $derived(points.find((p) => p.month === selected));
+	$effect(() => {
+		if (selected !== null && !points.some((point) => point.month === selected)) {
+			selected = null;
+		}
+	});
 	const data = $derived(points.map((p, i) => ({ ...p, index: i + 0.5 })));
 	const max = $derived(Math.max(1, ...points.map((p) => p.amount)));
 	const step = $derived(max > 20000 ? 10000 : max > 1000 ? 5000 : 100);
@@ -56,7 +61,7 @@
 </script>
 
 <div role="group" aria-label="近半年開銷折線圖">
-	<div class="flex justify-end gap-3 text-xs opacity-70">
+	<div class="flex justify-end gap-3 text-xs text-foreground">
 		<span class="inline-flex items-center gap-1"
 			><i class="h-2 w-2 rounded-full bg-[var(--c-primary)]"></i>檢視中</span
 		>
@@ -83,7 +88,7 @@
 							x2={context.xScale(6)}
 							y1={context.yScale(tick)}
 							y2={context.yScale(tick)}
-							stroke="var(--c-border)"
+							style="stroke: color-mix(in srgb, var(--foreground) 20%, var(--card))"
 							stroke-dasharray={tick === 0 ? undefined : '3 3'}
 						/>
 						<text
@@ -91,7 +96,7 @@
 							y={context.yScale(tick)}
 							text-anchor="end"
 							dominant-baseline="middle"
-							fill="var(--c-text-muted)"
+							fill="var(--foreground)"
 							font-size="10">{axisLabel(tick)}</text
 						>
 					{/each}
@@ -121,9 +126,7 @@
 							cx={x}
 							cy={y}
 							r={point.month === viewedMonth ? 5.5 : 3.5}
-							fill={point.month === viewedMonth
-								? 'var(--c-primary)'
-								: 'var(--c-card)'}
+							fill={point.month === viewedMonth ? 'var(--c-primary)' : 'var(--card)'}
 							stroke="var(--c-primary)"
 							stroke-width="2"
 						/>
@@ -132,9 +135,7 @@
 							y={context.yScale(0) + 17}
 							text-anchor="middle"
 							font-size="11"
-							fill={point.month === viewedMonth
-								? 'var(--c-primary)'
-								: 'var(--c-text-muted)'}>{Number(point.month.split('-')[1])}月</text
+							fill="var(--foreground)">{Number(point.month.split('-')[1])}月</text
 						>
 						{#if selected === point.month}
 							{@const label = formatBalanceAmount(point.amount)}
@@ -143,13 +144,20 @@
 								0,
 								Math.min(context.xScale(6) - width, x - width / 2)
 							)}
-							<rect x={left} y={y - 38} {width} height="24" rx="6" fill="#1f2937" />
+							<rect
+								x={left}
+								y={y - 38}
+								{width}
+								height="24"
+								rx="6"
+								fill="var(--foreground)"
+							/>
 							<text
 								x={left + width / 2}
 								y={y - 25}
 								dominant-baseline="middle"
 								text-anchor="middle"
-								fill="white"
+								fill="var(--card)"
 								font-size="12"
 								font-weight="600">{label}</text
 							>
