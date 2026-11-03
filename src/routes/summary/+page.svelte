@@ -12,6 +12,8 @@
 	import { derived } from 'svelte/store';
 	import type { ExpenseScope } from '$lib/types/expense';
 	import { groupMonthExpensesByCategory } from '$lib/utils/summary';
+	import { summaryChartLabel } from '$lib/utils/summary-chart-label';
+	import { createCategoryColorMap, getCategoryColor } from '$lib/utils/category-colors';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import Icon from '@iconify/svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
@@ -48,6 +50,7 @@
 
 	const categoryItems = categoriesStore.items;
 	const expenseOptions = categoriesStore.expenseOptions;
+	const categoryColors = derived(categoryItems, createCategoryColorMap);
 	const categoryIconMap = derived(categoryItems, (arr) => {
 		const entries = arr.map((c) => [c.id, getCategoryIcon(c.name)] as const);
 		return Object.fromEntries(entries) as Record<string, string>;
@@ -69,9 +72,17 @@
 		)
 	);
 
+	const coloredCategoryGroups = $derived(
+		categoryGroups.map((g) => ({
+			...g,
+			color: getCategoryColor(g.id, g.amount, $categoryColors)
+		}))
+	);
+
 	// 當月篩選後分組
 	const pieData: PieDatum[] = $derived(
-		categoryGroups.map((g) => ({
+		coloredCategoryGroups.map((g) => ({
+			color: g.color,
 			label: $categoryLabelMap[g.id] ?? (g.id === 'uncategorized' ? '未分類' : g.id),
 			value: g.amount
 		}))
@@ -145,7 +156,13 @@
 
 	<!-- 圓餅圖 -->
 	<div class="flex justify-center">
-		<PieChart data={pieData} size={220} thickness={26} />
+		<PieChart
+			data={pieData}
+			size={220}
+			thickness={26}
+			showLegend={false}
+			ariaLabel={summaryChartLabel(pieData)}
+		/>
 	</div>
 
 	<MonthlyTrend
@@ -164,12 +181,18 @@
 			<p class="text-sm opacity-60">本月無資料</p>
 		{:else}
 			<Accordion.Root type="single">
-				{#each categoryGroups as g (g.id)}
-					<Accordion.Item value={g.id} class="group p-1.5">
+				{#each coloredCategoryGroups as g (g.id)}
+					<Accordion.Item value={g.id} class="group p-1.5" data-category-id={g.id}>
 						<Accordion.Header>
 							<Accordion.Trigger
-								class="w-full flex items-center justify-between gap-3 transition-all [&[data-state=open]>div>svg]:rotate-180"
+								class="relative w-full flex items-center justify-between gap-3 transition-all [&[data-state=open]>div>svg]:rotate-180"
 							>
+								<span
+									aria-hidden="true"
+									data-category-dot
+									class="absolute -left-1.5 size-1 rounded-full"
+									style:background-color={g.color}
+								></span>
 								<div class="flex items-center gap-3 min-w-0">
 									<div
 										class="w-8 h-8 grid place-items-center rounded-lg bg-[var(--c-bg)]"

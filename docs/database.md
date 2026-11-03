@@ -39,7 +39,7 @@ Approval uses separate Supabase requests, not a transaction or RPC. If schedule 
 
 ## Categories and settings
 
-- `categories` is queried by `src/lib/data/categories.fetcher.ts`, ordered by `sort_order`, and optionally filtered by `kind`. Its type declares `id`, `name`, and `kind` (`expense` or `income`); startup requests expense categories.
+- `categories` is queried by `src/lib/data/categories.fetcher.ts`, ordered by `sort_order`, and optionally filtered by `kind`. Its type declares `id`, `name`, `kind` (`expense` or `income`), and optional `sort_order`. The fetcher uses `select('*')`, so the ordering column reaches the store. The captured baseline declares `sort_order integer DEFAULT 0 NOT NULL`; optional typing also supports older synthetic rows. Summary sorts by `(sort_order ?? 0, id)` for color assignment; startup requests expense categories. This source inspection does not independently verify the deployed schema.
 - `app_settings` is queried by `src/lib/data/appSetting.fetcher.ts` for the singleton row where `id = true`. Its contract contains `allowed_emails: string[]`.
 - Member names and colors use `PUBLIC_EMAIL_NAME_MAPPING` as well as session metadata; see [setup](../README.md#development).
 
