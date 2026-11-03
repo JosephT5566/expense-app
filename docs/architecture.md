@@ -27,21 +27,23 @@ JoPie is a SvelteKit frontend that accesses Supabase directly from the browser. 
 
 ## Routes
 
-| Route                  | Purpose                                                                                              |
-| ---------------------- | ---------------------------------------------------------------------------------------------------- |
-| `/`                    | Daily expenses, editor, due scheduled items, AI entry                                                |
-| `/summary`             | Monthly category totals, chart, expense drill-down                                                   |
-| `/settle`              | Query unsettled household expenses by date, calculate transfers for selected rows, mark them settled |
-| `/scheduled`           | Manage one-time and recurring expenses; approve or skip due occurrences                              |
-| `/search`              | Search expense notes with filters                                                                    |
-| `/setting`             | Links to settlement, search, scheduling, and sign-out                                                |
-| `/sentry-example-page` | Manual error-trigger page; its name does not establish a configured Sentry integration               |
+| Route                  | Purpose                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| `/`                    | Daily expenses, editor, due scheduled items, AI entry                                                   |
+| `/summary`             | Monthly category totals, chart, expense drill-down                                                      |
+| `/settle`              | Query unsettled household expenses by date, calculate transfers for selected rows, mark them settled    |
+| `/scheduled`           | Manage one-time and recurring expenses; approve or skip due occurrences (SPA fallback, not prerendered) |
+| `/search`              | Search expense notes with filters                                                                       |
+| `/setting`             | Links to settlement, search, scheduling, and sign-out                                                   |
+| `/sentry-example-page` | Manual error-trigger page; its name does not establish a configured Sentry integration                  |
 
 ## Startup and authentication
 
 `src/routes/+layout.ts` skips fetching outside the browser. In the browser it gets the Supabase user, then expense categories and the settings allowlist. Its month comes from the `m` query parameter or the current Taiwan month.
 
 `src/routes/+layout.svelte` initializes stores from load data, loads the initial month through `ensureMonthLoaded`, which merges it into the store so concurrent neighbouring-month loads are retained, loads pending schedules, and renders navigation and the auth modal. On mount it subscribes to auth changes through `src/lib/supabase/auth.ts`. Sign-out clears expense and scheduled stores, invokes cache cleanup, and navigates home. After navigation other than browser history traversal (`popstate`), the layout scrolls its `main` container to the top.
+
+`BottomNav.svelte` and `SideNav.svelte` share items and route-to-tab matching in `src/lib/components/ui/nav-items.ts`. Both navs have `aria-label="主要導覽"` and read `page.route.id` from `$app/state`. Exact tab routes use `aria-current="page"`; `/settle`, `/search`, and `/scheduled` select 更多功能 with `aria-current="true"`. Unknown routes keep the 新增 visual fallback without `aria-current`. Links use SvelteKit `resolve` to preserve the deployment base path.
 
 Google sign-in redirects to the app's origin plus its SvelteKit base path. Database access depends on external RLS policies, not just frontend filters.
 

@@ -178,7 +178,7 @@ test('summary hides legends and keeps category dots matched to chart colors acro
 	expect(new Set(await colors()).size).toBe(9);
 	expect(await colors()).toEqual(original);
 	// BottomNav is the fixed bottom landmark; SideNav repeats the same links.
-	const bottomNav = page.getByRole('navigation').and(page.locator('nav.fixed.bottom-0'));
+	const bottomNav = page.getByRole('navigation', { name: '主要導覽' });
 	await expect(bottomNav).toHaveCount(1);
 	await expect(bottomNav).toBeVisible();
 	await bottomNav.getByRole('link', { name: '新增', exact: true }).click();

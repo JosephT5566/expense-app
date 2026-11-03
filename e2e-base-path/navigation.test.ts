@@ -57,6 +57,7 @@ async function expectReady(page: Page, nav: Locator) {
 	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0, {
 		timeout: 30_000
 	});
+	await expect(nav).toHaveCount(1);
 	await expect(nav).toBeVisible();
 }
 
@@ -68,9 +69,9 @@ async function expectActive(nav: Locator, label: string) {
 	await expect(active).toHaveClass(/\bselected\b/);
 }
 
-for (const { name, viewport, selector } of [
-	{ name: 'mobile', viewport: { width: 390, height: 844 }, selector: 'nav.fixed.bottom-0' },
-	{ name: 'desktop', viewport: { width: 1280, height: 800 }, selector: 'nav.hidden.md\\:block' }
+for (const { name, viewport } of [
+	{ name: 'mobile', viewport: { width: 390, height: 844 } },
+	{ name: 'desktop', viewport: { width: 1280, height: 800 } }
 ]) {
 	test.describe(name, () => {
 		test.use({ viewport });
@@ -90,10 +91,18 @@ for (const { name, viewport, selector } of [
 					documentRequests += 1;
 				}
 			});
-			const nav = page.locator(selector);
+			const nav = page.getByRole('navigation', { name: '主要導覽' });
 			await page.goto('/expense-app/');
 			await expectReady(page, nav);
 			await expectActive(nav, '新增');
+			if (name === 'mobile') {
+				await expect(nav).toHaveCSS('position', 'fixed');
+			} else {
+				const box = await nav.boundingBox();
+				expect(box).not.toBeNull();
+				expect(box?.x).toBeLessThan(300);
+				expect(box?.height).toBeGreaterThan(400);
+			}
 			await page.evaluate(() => {
 				window.__navMarker = 'alive';
 			});
@@ -115,7 +124,7 @@ for (const { name, viewport, selector } of [
 		});
 
 		test('tab navigation resets the main scroll container', async ({ page }) => {
-			const nav = page.locator(selector);
+			const nav = page.getByRole('navigation', { name: '主要導覽' });
 			const main = page.locator('main');
 			await page.goto('/expense-app/');
 			await expectReady(page, nav);
@@ -134,22 +143,26 @@ for (const { name, viewport, selector } of [
 			await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBe(0);
 		});
 
-		for (const pathname of ['/settle', '/search']) {
-			test(`direct ${pathname} entry has no current navigation link`, async ({ page }) => {
-				const nav = page.locator(selector);
+		for (const pathname of ['/settle', '/search', '/scheduled']) {
+			test(`direct ${pathname} entry selects the setting section`, async ({ page }) => {
+				const nav = page.getByRole('navigation', { name: '主要導覽' });
 				await page.goto(`/expense-app${pathname}`);
 				await expectReady(page, nav);
 				await expect(page).toHaveURL((url) => url.pathname === `/expense-app${pathname}`);
-				await expect(nav.locator('a[aria-current]')).toHaveCount(0);
+				await expect(nav.locator('a[aria-current]')).toHaveCount(1);
+				await expect(nav.locator('a[aria-current="page"]')).toHaveCount(0);
+				const setting = nav.getByRole('link', { name: '更多功能', exact: true });
+				await expect(setting).toHaveAttribute('aria-current', 'true');
+				await expect(setting).toHaveClass(/\bselected\b/);
 				await expect(nav.locator('a.selected')).toHaveCount(1);
-				await expect(nav.getByRole('link', { name: '新增', exact: true })).toHaveClass(
+				await expect(nav.getByRole('link', { name: '新增', exact: true })).not.toHaveClass(
 					/\bselected\b/
 				);
 			});
 		}
 
 		test('direct summary entry selects summary', async ({ page }) => {
-			const nav = page.locator(selector);
+			const nav = page.getByRole('navigation', { name: '主要導覽' });
 			await page.goto('/expense-app/summary');
 			await expectReady(page, nav);
 			await expect(page).toHaveURL((url) => url.pathname === '/expense-app/summary');
@@ -157,7 +170,7 @@ for (const { name, viewport, selector } of [
 		});
 
 		test('base root without a trailing slash selects add', async ({ page }) => {
-			const nav = page.locator(selector);
+			const nav = page.getByRole('navigation', { name: '主要導覽' });
 			await page.goto('/expense-app');
 			await expectReady(page, nav);
 			await expectActive(nav, '新增');

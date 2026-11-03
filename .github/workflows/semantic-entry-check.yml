@@ -72,11 +72,12 @@ jobs:
             - run: node --experimental-strip-types packages/semantic-entry-contract/tests/python-parity.mjs
             - run: npm ci
             - run: npm run check
+            - run: npm run test:unit
             # Whole-repository Prettier has a pre-existing baseline failure; scope is explicit.
             - name: Semantic change formatting and lint
               run: |
-                  npx prettier --check packages/semantic-entry-contract src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte src/lib/components/AIEntryDialog.svelte src/lib/components/ExpenseDrawerContent.svelte e2e/semantic-entry.test.ts
-                  npx eslint packages/semantic-entry-contract/src src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte src/lib/components/AIEntryDialog.svelte src/lib/components/ExpenseDrawerContent.svelte e2e/semantic-entry.test.ts
+                  npx prettier --check packages/semantic-entry-contract src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte src/lib/components/AIEntryDialog.svelte src/lib/components/ExpenseDrawerContent.svelte e2e/semantic-entry.test.ts src/lib/components/ui/nav-items.ts src/lib/components/ui/nav-items.test.ts src/lib/components/ui/BottomNav.svelte src/lib/components/ui/SideNav.svelte
+                  npx eslint packages/semantic-entry-contract/src src/lib/data/semantic-entry.fetcher.ts src/lib/data/expenses.fetcher.ts src/lib/components/semantic-entry src/routes/+page.svelte src/lib/components/AIEntryDialog.svelte src/lib/components/ExpenseDrawerContent.svelte e2e/semantic-entry.test.ts src/lib/components/ui/nav-items.ts src/lib/components/ui/nav-items.test.ts src/lib/components/ui/BottomNav.svelte src/lib/components/ui/SideNav.svelte
             - run: npx playwright install --with-deps chromium
             - run: npm run test:e2e -- e2e/semantic-entry.test.ts e2e/daily-carousel.test.ts
             - name: Verify semantic entry under Pages base path
@@ -84,3 +85,5 @@ jobs:
                   BASE_PATH: /expense-app
                   E2E_BASE_PATH: /expense-app
               run: npm run test:e2e -- e2e/semantic-entry.test.ts
+            - name: Verify navigation under Pages base path
+              run: npm run test:e2e:base-path
