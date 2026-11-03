@@ -19,6 +19,7 @@ test('selecting a trend point waits for Switch before changing pie and expense l
 	expect(requests).toHaveLength(0);
 	await expand.click();
 	await expect(expand).toHaveAttribute('aria-expanded', 'true');
+	await expect(chart).toBeVisible();
 	await expect(page.getByRole('button', { name: '點選圖上的月份' })).toBeDisabled();
 	const september = page.getByRole('button', { name: '2026/9 NT$300', exact: true });
 	await september.click();
@@ -49,6 +50,10 @@ test('selecting a trend point waits for Switch before changing pie and expense l
 	await expand.click();
 	await expect(chart).toHaveCount(0);
 	await expect(expand).toHaveAttribute('aria-expanded', 'false');
+	await expect(page.getByRole('button', { name: '切換到 2026/10 →' })).toHaveCount(0);
+	await expect(page.locator('[aria-live="polite"]', { hasText: '已選取 2026/10' })).toHaveCount(
+		0
+	);
 });
 
 test('view failures leave the existing Summary usable and can retry', async ({ page }) => {

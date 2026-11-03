@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Component } from 'svelte';
 	import { ChevronDown } from '@lucide/svelte';
+	import { Button } from '$lib/components/shadcn/button';
 	import type { ExpenseScope } from '$lib/types/expense';
 	import type { MonthlyBalancePoint } from '$lib/types/monthly-balance';
 	import { balanceSeries, recentTaiwanMonths } from '$lib/utils/monthly-balances';
@@ -98,16 +99,23 @@
 </script>
 
 <div class="mt-4 border-t border-black/5 pt-2">
-	<button
-		type="button"
-		class="flex min-h-11 w-full items-center justify-between rounded-md px-2 text-sm font-medium hover:bg-black/5"
-		aria-expanded={expanded}
-		aria-controls={id}
-		onclick={() => (expanded = !expanded)}
-	>
-		近 6 個月開銷
-		<ChevronDown size={16} class={expanded ? 'rotate-180' : ''} />
-	</button>
+	<div class="flex justify-center">
+		<Button
+			variant="ghost"
+			size="icon"
+			class="size-10 motion-reduce:transition-none"
+			aria-label="近 6 個月開銷"
+			title="近 6 個月開銷"
+			aria-expanded={expanded}
+			aria-controls={id}
+			onclick={() => (expanded = !expanded)}
+		>
+			<ChevronDown
+				aria-hidden="true"
+				class={`size-4 transition-transform motion-reduce:transition-none ${expanded ? 'rotate-180' : ''}`}
+			/>
+		</Button>
+	</div>
 	<div {id}>
 		{#if expanded}
 			{#if loading && rows === null}<p

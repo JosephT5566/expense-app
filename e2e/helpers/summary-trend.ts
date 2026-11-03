@@ -124,4 +124,5 @@ export async function openSummary(page: Page) {
 		timeout: 30000
 	});
 	await expect(page.locator('section.card')).toContainText('999');
+	await expect(page.getByRole('button', { name: '近 6 個月開銷' })).toBeVisible();
 }
