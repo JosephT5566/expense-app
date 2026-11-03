@@ -2,6 +2,7 @@
 	import Icon from '@iconify/svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
+	import { navPathsMatch } from '$lib/utils/nav';
 	import classNames from 'classnames';
 
 	type Tab = 'add' | 'summary' | 'setting';
@@ -14,19 +15,20 @@
 			key: 'setting',
 			label: '更多功能',
 			path: '/setting',
-			icon: 'solar:layers-minimalistic-bold-duotone',
-		},
+			icon: 'solar:layers-minimalistic-bold-duotone'
+		}
 	];
 
 	let activeTab: Tab = $derived(
-		items.find((it) => it.path === $page.url.pathname)?.key || 'add',
+		items.find((it) => it.path && navPathsMatch(resolve(it.path), $page.url.pathname))?.key ||
+			'add'
 	);
 </script>
 
 <nav
 	class={classNames(
 		'md:hidden', // Display only on small screens
-		'fixed bottom-0 inset-x-0 safe-bottom bg-white border-t border-black/10 z-20',
+		'fixed bottom-0 inset-x-0 safe-bottom bg-white border-t border-black/10 z-20'
 	)}
 >
 	<ul class="grid grid-cols-3">
@@ -37,7 +39,7 @@
 						class="w-full py-3 text-sm flex flex-col items-center gap-1 text-[var(--c-muted)]"
 						class:selected={activeTab === it.key}
 						href={resolve(it.path)}
-						target="_self"
+						aria-current={activeTab === it.key ? 'page' : undefined}
 					>
 						<Icon icon={it.icon} width="24" height="24" />
 						<span>{it.label}</span>

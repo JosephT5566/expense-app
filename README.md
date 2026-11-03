@@ -35,15 +35,16 @@ npm run dev
 
 ## Build and validation
 
-| Command             | Purpose                                                                      |
-| ------------------- | ---------------------------------------------------------------------------- |
-| `npm run check`     | Sync SvelteKit and check Svelte/TypeScript                                   |
-| `npm run lint`      | Check Prettier formatting and run ESLint                                     |
-| `npm run format`    | Format the repository in place                                               |
-| `npm run build`     | Build the static site into `build/`                                          |
-| `npm run preview`   | Preview the production build                                                 |
-| `npm run test:e2e`  | Run Playwright, which builds and starts the preview server                   |
-| `npm run test:unit` | Run Vitest unit tests (`src/**/*.test.ts`, Node, mocked fetchers and caches) |
+| Command                      | Purpose                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `npm run check`              | Sync SvelteKit and check Svelte/TypeScript                                   |
+| `npm run lint`               | Check Prettier formatting and run ESLint                                     |
+| `npm run format`             | Format the repository in place                                               |
+| `npm run build`              | Build the static site into `build/`                                          |
+| `npm run preview`            | Preview the production build                                                 |
+| `npm run test:e2e:base-path` | Run isolated base-path navigation tests on preview port 4174                 |
+| `npm run test:e2e`           | Run Playwright, which builds and starts the preview server                   |
+| `npm run test:unit`          | Run Vitest unit tests (`src/**/*.test.ts`, Node, mocked fetchers and caches) |
 
 The E2E suite includes daily carousel tests with mocked Supabase authentication and responses, covering date jumps, repeated swipes, month/year boundaries, bounded card rendering, DOM reuse within and across buffer shifts, date jumps during animation, empty months, and retrying failed loads. The original scaffold test still checks for a visible home-page `h1`. These tests do not verify live authentication or settlement workflows.
 
@@ -62,7 +63,9 @@ npm run test:e2e -- e2e/summary-month.test.ts
 
 All remote requests are mocked or blocked; these values do not provide live authentication. The fixture rejects non-synthetic Supabase hosts. These specs do not load environment files themselves; the build toolchain normally supports environment files separately.
 
-For a targeted carousel check, run `npm run test:e2e -- e2e/daily-carousel.test.ts`. Playwright needs its browser installed (`npx playwright install chromium`) and the build-time environment above. The suite builds and starts a preview server on port 4173. Keep `BASE_PATH` empty for the existing specs, which navigate to root paths; verify a deployment subpath separately.
+For a targeted carousel check, run `npm run test:e2e -- e2e/daily-carousel.test.ts`. Playwright needs its browser installed (`npx playwright install chromium`) and the build-time environment above. The suite builds and starts a preview server on port 4173. Keep `BASE_PATH` empty for the existing specs, which navigate to root paths; use the separate base-path suite for deployment subpaths.
+
+Run `npm run test:e2e:base-path` with the synthetic `PUBLIC_*` values above to check mobile and desktop navigation under `/expense-app`. The independent `playwright.base-path.config.ts` builds with `BASE_PATH=/expense-app` and starts preview at `http://localhost:4174/expense-app/` with `--strictPort` and no server reuse. Its `e2e-base-path/` specs block service workers and WebSockets, mock Supabase, and abort other remote requests. They check active link classes and `aria-current`, direct summary entry, the base root with and without a trailing slash, and document preservation across navigation. The default `e2e/` suite and port 4173 configuration are unchanged. CI currently does not run this test.
 
 For documentation-only changes, run `npx prettier --check <changed Markdown files>` and `git diff --check`, then verify local links and source references. Format only those files with `npx prettier --write <changed Markdown files>` if needed. Application builds and E2E runs are unnecessary for documentation-only changes.
 
