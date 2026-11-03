@@ -8,11 +8,13 @@
 		size = 200,
 		thickness = 24,
 		showLegend = true,
+		ariaLabel = '各類別佔比圖'
 	} = $props<{
 		data?: import('./PieChart.svelte').PieDatum[];
 		size?: number;
 		thickness?: number;
 		showLegend?: boolean;
+		ariaLabel?: string;
 	}>();
 
 	const total = $derived(
@@ -62,7 +64,7 @@
 				end: start + sweep,
 				label: d.label,
 				value: d.value,
-				color: d.color ?? fallbackColor(i),
+				color: d.color ?? fallbackColor(i)
 			};
 			start += sweep;
 			segs.push(seg);
@@ -76,9 +78,16 @@
 	<div class="text-sm opacity-60">無資料</div>
 {:else}
 	<div class="flex flex-col items-center">
-		<svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+		<svg
+			role="img"
+			aria-label={ariaLabel}
+			width={size}
+			height={size}
+			viewBox={`0 0 ${size} ${size}`}
+		>
 			{#each segments as seg (seg.label)}
 				<path
+					data-category-label={seg.label}
 					d={arcPath(cx, cy, rMid, seg.start, seg.end)}
 					stroke={seg.color}
 					stroke-width={thickness}
