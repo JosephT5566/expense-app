@@ -102,4 +102,6 @@ These notes were moved from the original README. They describe intended external
 1. Paid 來自 `expenses`，將整筆金額歸給 `payer_email`。
 2. Owed 來自 `expense_shares`，JOIN 回主表取得月份與分類，將分攤金額歸給 `user_email`。
 
-目前 repository 沒有此 view 的 SQL，也沒有查詢此 view 的前端呼叫。
+Paid 與 Owed 的 `month` 一律以 `date_trunc('month', ts AT TIME ZONE 'Asia/Taipei')` 依台灣月份分桶，與 session 時區無關，因此台灣月初 00:00–08:00 的開銷其 Paid、Owed 與 Net 都落在同一個月。baseline（`20261011000000_existing_public_baseline.sql`）的 Owed 段原本只用 `date_trunc('month', ts)`，會依 session 時區（Supabase 預設 UTC）分到上個月；`supabase/migrations/202611030001_monthly_balances_view_taipei_month.sql` 以 `CREATE OR REPLACE VIEW` 只修正這一段，欄位、`security_invoker` 與權限不變。此 migration 只在拋棄式本機資料庫驗證，套用到正式環境需由 owner 核准並執行。
+
+view 的 SQL 定義在 baseline migration 與上述 migration；目前沒有查詢此 view 的前端呼叫。
