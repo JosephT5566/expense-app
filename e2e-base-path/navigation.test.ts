@@ -2,7 +2,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 test.use({ serviceWorkers: 'block' });
 
-const origin = 'http://localhost:4174';
 const supabaseUrl = new URL(process.env.PUBLIC_SUPABASE_URL ?? 'https://synthetic.supabase.co');
 const user = {
 	id: '00000000-0000-4000-8000-000000000002',
@@ -18,7 +17,7 @@ declare global {
 	}
 }
 
-async function prepareNavigation(page: Page) {
+async function prepareNavigation(page: Page, origin: string) {
 	await page.route('**/*', (route) => {
 		const url = new URL(route.request().url());
 		if (url.origin === origin) {
@@ -75,8 +74,11 @@ for (const { name, viewport, selector } of [
 ]) {
 	test.describe(name, () => {
 		test.use({ viewport });
-		test.beforeEach(async ({ page }) => {
-			await prepareNavigation(page);
+		test.beforeEach(async ({ page, baseURL }) => {
+			if (!baseURL) {
+				throw new Error('Navigation tests require use.baseURL');
+			}
+			await prepareNavigation(page, new URL(baseURL).origin);
 		});
 
 		test('base path navigation preserves the document and updates the active link', async ({
@@ -111,6 +113,40 @@ for (const { name, viewport, selector } of [
 				expect(documentRequests).toBe(initialDocumentRequests);
 			}
 		});
+
+		test('tab navigation resets the main scroll container', async ({ page }) => {
+			const nav = page.locator(selector);
+			const main = page.locator('main');
+			await page.goto('/expense-app/');
+			await expectReady(page, nav);
+			await main.evaluate((element) => {
+				const spacer = document.createElement('div');
+				spacer.style.height = '3000px';
+				element.appendChild(spacer);
+				element.scrollTop = 500;
+			});
+			await expect
+				.poll(() => main.evaluate((element) => element.scrollTop))
+				.toBeGreaterThan(0);
+
+			await nav.getByRole('link', { name: '統計', exact: true }).click();
+			await expect(page).toHaveURL((url) => url.pathname === '/expense-app/summary');
+			await expect.poll(() => main.evaluate((element) => element.scrollTop)).toBe(0);
+		});
+
+		for (const pathname of ['/settle', '/search']) {
+			test(`direct ${pathname} entry has no current navigation link`, async ({ page }) => {
+				const nav = page.locator(selector);
+				await page.goto(`/expense-app${pathname}`);
+				await expectReady(page, nav);
+				await expect(page).toHaveURL((url) => url.pathname === `/expense-app${pathname}`);
+				await expect(nav.locator('a[aria-current]')).toHaveCount(0);
+				await expect(nav.locator('a.selected')).toHaveCount(1);
+				await expect(nav.getByRole('link', { name: '新增', exact: true })).toHaveClass(
+					/\bselected\b/
+				);
+			});
+		}
 
 		test('direct summary entry selects summary', async ({ page }) => {
 			const nav = page.locator(selector);

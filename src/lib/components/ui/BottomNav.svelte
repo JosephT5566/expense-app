@@ -2,7 +2,6 @@
 	import Icon from '@iconify/svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/stores';
-	import { navPathsMatch } from '$lib/utils/nav';
 	import classNames from 'classnames';
 
 	type Tab = 'add' | 'summary' | 'setting';
@@ -19,10 +18,8 @@
 		}
 	];
 
-	let activeTab: Tab = $derived(
-		items.find((it) => it.path && navPathsMatch(resolve(it.path), $page.url.pathname))?.key ||
-			'add'
-	);
+	let matchedTab: Tab | undefined = $derived(items.find((it) => $page.route.id === it.path)?.key);
+	let activeTab: Tab = $derived(matchedTab ?? 'add');
 </script>
 
 <nav
@@ -39,7 +36,7 @@
 						class="w-full py-3 text-sm flex flex-col items-center gap-1 text-[var(--c-muted)]"
 						class:selected={activeTab === it.key}
 						href={resolve(it.path)}
-						aria-current={activeTab === it.key ? 'page' : undefined}
+						aria-current={matchedTab === it.key ? 'page' : undefined}
 					>
 						<Icon icon={it.icon} width="24" height="24" />
 						<span>{it.label}</span>
