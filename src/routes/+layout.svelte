@@ -27,6 +27,7 @@
 	import { isDev } from '$lib/utils/helpers';
 	import { startAuthListener } from '$lib/supabase/auth';
 	import { clearAllExpensesCache } from '$lib/cache/monthlyExpense';
+	import { clearMonthlyBalancesCache } from '$lib/cache/monthlyBalances';
 	import { clearAllScheduledExpensesCache } from '$lib/cache/scheduledExpenses';
 	import { ensureMonthLoaded } from '$lib/data/month-loader';
 	import Logger from '$lib/utils/logger';
@@ -85,6 +86,7 @@
 				// callback logout handler
 				clearAllExpenses();
 				clearAllExpensesCache();
+				void clearMonthlyBalancesCache();
 				clearAllScheduledExpenses();
 				clearAllScheduledExpensesCache();
 				goto(resolve('/'));

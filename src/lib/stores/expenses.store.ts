@@ -9,6 +9,7 @@ import { listExpenses, toggleSettled, bulkToggleSettled } from '$lib/data/expens
 import { taiwanMonthBoundsISO, getTaiwanMonthKey, isWithinRange } from '$lib/utils/dates';
 import { persistExpensePatch, persistExpenseDelete } from '$lib/cache/monthlyExpense';
 import Logger from '$lib/utils/logger';
+import { clearMonthlyBalancesCache } from '$lib/cache/monthlyBalances';
 
 export const items = writable<ExpenseRow[]>([]);
 export const nextCursor = writable<string | null>(null);
@@ -278,6 +279,7 @@ export async function markSettledBulk(
 
 /** 以單筆結果更新 store：若存在則覆蓋，否則插入，並依 ts DESC, id DESC 排序 */
 export function upsertOne(row: ExpenseRow) {
+	void clearMonthlyBalancesCache();
 	let oldRow: ExpenseRow | null = null;
 	items.update((prev) => {
 		const idx = prev.findIndex((x) => x.id === row.id);
@@ -335,6 +337,7 @@ export function upsertMany(rows: ExpenseRow[]) {
 }
 
 export function deleteOne(id: string) {
+	void clearMonthlyBalancesCache();
 	let removed: ExpenseRow | null = null;
 	items.update((prev) => {
 		const next: ExpenseRow[] = [];

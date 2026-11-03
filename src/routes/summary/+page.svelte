@@ -1,5 +1,6 @@
 <script lang="ts">
 	import PieChart from '$lib/components/ui/PieChart.svelte';
+	import MonthlyTrend from '$lib/components/summary/MonthlyTrend.svelte';
 	import type { PieDatum } from '$lib/components/ui/PieChart.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import * as ShadcnDialog from '$lib/components/shadcn/dialog';
@@ -163,6 +164,16 @@
 			ariaLabel={summaryChartLabel(pieData)}
 		/>
 	</div>
+
+	<MonthlyTrend
+		email={$user?.email ?? ''}
+		scope={selectedScope}
+		viewedMonth={selectedMonth}
+		onSwitch={async (month) => {
+			await ensureMonthLoaded(month);
+			selectedMonth = month;
+		}}
+	/>
 
 	<!-- 類別列表 -->
 	<div class="mt-4 divide-y divide-black/5">
