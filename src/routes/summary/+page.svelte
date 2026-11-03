@@ -11,7 +11,8 @@
 	import { derived } from 'svelte/store';
 	import type { ExpenseScope } from '$lib/types/expense';
 	import { groupMonthExpensesByCategory } from '$lib/utils/summary';
-	import { getCategoryColor } from '$lib/utils/category-colors';
+	import { summaryChartLabel } from '$lib/utils/summary-chart-label';
+	import { createCategoryColorMap, getCategoryColor } from '$lib/utils/category-colors';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
 	import Icon from '@iconify/svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
@@ -48,6 +49,7 @@
 
 	const categoryItems = categoriesStore.items;
 	const expenseOptions = categoriesStore.expenseOptions;
+	const categoryColors = derived(categoryItems, createCategoryColorMap);
 	const categoryIconMap = derived(categoryItems, (arr) => {
 		const entries = arr.map((c) => [c.id, getCategoryIcon(c.name)] as const);
 		return Object.fromEntries(entries) as Record<string, string>;
@@ -70,7 +72,10 @@
 	);
 
 	const coloredCategoryGroups = $derived(
-		categoryGroups.map((g) => ({ ...g, color: getCategoryColor(g.id, g.amount) }))
+		categoryGroups.map((g) => ({
+			...g,
+			color: getCategoryColor(g.id, g.amount, $categoryColors)
+		}))
 	);
 
 	// 當月篩選後分組
@@ -155,7 +160,7 @@
 			size={220}
 			thickness={26}
 			showLegend={false}
-			ariaLabel="本月各類別花費佔比圖"
+			ariaLabel={summaryChartLabel(pieData)}
 		/>
 	</div>
 

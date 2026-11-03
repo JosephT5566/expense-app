@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { setupSummaryColors, pickSummaryMonth } from './summary-colors.fixture';
+import { setupSummaryColors, pickSummaryMonth, summaryCategories } from './summary-colors.fixture';
 
 test.use({ serviceWorkers: 'block' });
 
@@ -111,17 +111,15 @@ test('switching back to an already-loaded empty month shows that month, not the 
 test('summary hides legends and keeps category dots matched to chart colors across months and scopes', async ({
 	page
 }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
 	await setupSummaryColors(page);
-	const chart = page.getByRole('img', { name: '本月各類別花費佔比圖', exact: true });
+	const chart = page.getByRole('img', { name: /^本月各類別花費佔比圖，總計 / });
 	const section = page.locator('section.card');
 	const dot = (id: string) => section.locator(`[data-category-id="${id}"] [data-category-dot]`);
 	async function verifyColors() {
 		await expect(chart).toBeVisible();
-		await expect(section.locator('[data-category-dot]')).toHaveCount(3);
-		for (const [id, label] of [
-			['a', '合成餐飲'],
-			['b', '合成交通']
-		]) {
+		await expect(section.locator('[data-category-dot]')).toHaveCount(10);
+		for (const { id, name: label } of summaryCategories.filter(({ id }) => id !== 'z')) {
 			// Category text appears only in the accordion, never in a duplicate legend.
 			await expect(section.getByText(label, { exact: true })).toHaveCount(1);
 			const stroke = await chart
@@ -147,10 +145,19 @@ test('summary hides legends and keeps category dots matched to chart colors acro
 	await verifyColors();
 	async function colors() {
 		return Promise.all(
-			['a', 'b'].map((id) => dot(id).evaluate((el) => el.style.backgroundColor))
+			['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i'].map((id) =>
+				dot(id).evaluate((el) => el.style.backgroundColor)
+			)
 		);
 	}
 	const original = await colors();
+	expect(new Set(original).size).toBe(9);
+	// The response starts with z/d/b, but stable category ordering starts a/b/c.
+	await expect(dot('a')).toHaveCSS('background-color', 'rgb(36, 134, 219)');
+	await expect(dot('b')).toHaveCSS('background-color', 'rgb(211, 111, 34)');
+	await expect(dot('c')).toHaveCSS('background-color', 'rgb(40, 159, 80)');
+	await expect(dot('d')).toHaveCSS('background-color', 'rgb(208, 67, 173)');
+	await expect(chart).toHaveAttribute('aria-label', /總計 820：.*合成餐飲 300（36.6%）/);
 	await expect(section.locator('[data-category-id]').first()).toHaveAttribute(
 		'data-category-id',
 		'a'
@@ -161,8 +168,34 @@ test('summary hides legends and keeps category dots matched to chart colors acro
 		'b'
 	);
 	await verifyColors();
+	// All fixture rows are household; each user's share equals the row amount.
+	await expect(chart).toHaveAttribute('aria-label', /總計 930：.*合成交通 500（53.8%）/);
+	expect(new Set(await colors()).size).toBe(9);
 	expect(await colors()).toEqual(original);
 	await page.getByRole('button', { name: '共同花費', exact: true }).click();
+	await verifyColors();
+	await expect(chart).toHaveAttribute('aria-label', /總計 930：.*合成交通 500（53.8%）/);
+	expect(new Set(await colors()).size).toBe(9);
+	expect(await colors()).toEqual(original);
+	// BottomNav is the fixed bottom landmark; SideNav repeats the same links.
+	const bottomNav = page.getByRole('navigation').and(page.locator('nav.fixed.bottom-0'));
+	await expect(bottomNav).toHaveCount(1);
+	await expect(bottomNav).toBeVisible();
+	await bottomNav.getByRole('link', { name: '新增', exact: true }).click();
+	await expect(page).toHaveURL('http://localhost:4173/');
+	await expect(bottomNav).toBeVisible();
+	await bottomNav.getByRole('link', { name: '統計', exact: true }).click();
+	await expect(section.locator('[data-category-id]').first()).toHaveAttribute(
+		'data-category-id',
+		'a'
+	);
+	await verifyColors();
+	expect(await colors()).toEqual(original);
+	await pickSummaryMonth(page, '2026/11', '2026-10');
+	await expect(section.locator('[data-category-id]').first()).toHaveAttribute(
+		'data-category-id',
+		'b'
+	);
 	await verifyColors();
 	expect(await colors()).toEqual(original);
 });
