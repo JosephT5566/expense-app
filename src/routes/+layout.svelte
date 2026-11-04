@@ -5,7 +5,7 @@
 	import { type LayoutData } from './$types';
 	import type { Snippet } from 'svelte';
 	// eslint-disable-next-line @typescript-eslint/no-unused-vars
-	import { goto, invalidateAll } from '$app/navigation';
+	import { afterNavigate, goto, invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import type { AppUser } from '$lib/types/user';
 
@@ -33,6 +33,14 @@
 	import Logger from '$lib/utils/logger';
 	import SideNav from '$lib/components/ui/SideNav.svelte';
 	import classNames from 'classnames';
+
+	let mainEl: HTMLElement | undefined;
+
+	afterNavigate(({ type }) => {
+		if (type !== 'popstate') {
+			mainEl?.scrollTo({ top: 0 });
+		}
+	});
 
 	const webManifestLink = $derived(pwaInfo ? pwaInfo.webManifest.linkTag : '');
 
@@ -115,6 +123,7 @@
 	<div class="md:flex md:h-dvh">
 		<SideNav />
 		<main
+			bind:this={mainEl}
 			class={classNames(
 				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto',
 				'md:h-full md:pb-4 md:max-w-screen-md md:mx-auto'
