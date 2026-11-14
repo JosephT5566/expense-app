@@ -1945,15 +1945,24 @@ async function openDraftEditor(page: Page) {
 	await page.getByRole('button', { name: '進入編輯', exact: true }).click();
 	await expect(editDialog(page)).toBeVisible();
 }
-async function editableDrafts(page: Page, drafts: Draft[]) {
-	const state = await setup(page, async (route, body) => {
-		await route.fulfill({
-			json:
-				body?.action === 'commit'
-					? created(body.requestId)
-					: draftResponse(body!.requestId, drafts)
-		});
-	});
+async function editableDrafts(
+	page: Page,
+	drafts: Draft[],
+	allowedEmails = [user.email, 'b@example.test']
+) {
+	const state = await setup(
+		page,
+		async (route, body) => {
+			await route.fulfill({
+				json:
+					body?.action === 'commit'
+						? created(body.requestId)
+						: draftResponse(body!.requestId, drafts)
+			});
+		},
+		[],
+		allowedEmails
+	);
 	await startDrafts(page);
 	await openDraftEditor(page);
 	return state;
@@ -3825,3 +3834,67 @@ test('failed option reply restores radio choices and preserves conversation iden
 	});
 	await expect(page.getByText('已回答：合成甲', { exact: true })).toBeVisible();
 });
+
+test('draft payer and member radios distinguish duplicate display names by email', async ({
+	page
+}) => {
+	const other = 'Synthetic@example.test';
+	const draft = makeDraft(1);
+	draft.scope.value = 'household';
+	draft.payerEmail.value = user.email;
+	draft.splitMemberEmails.value = [user.email, other];
+	draft.shares = { [user.email]: 50, [other]: 50 };
+	await editableDrafts(page, [draft], [user.email, other]);
+	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '編輯草稿 1/1', exact: true });
+	const payer = panel.getByRole('radiogroup', { name: '草稿付款人', exact: true });
+	await expect(
+		payer.getByRole('radio', { name: `Synthetic (${user.email})`, exact: true })
+	).toBeChecked();
+	await payer.getByRole('radio', { name: `Synthetic (${other})`, exact: true }).check();
+	await expect(
+		payer.getByRole('radio', { name: `Synthetic (${other})`, exact: true })
+	).toBeChecked();
+	for (const email of [user.email, other]) {
+		await expect(
+			panel.getByRole('radiogroup', { name: `Synthetic (${email})是否分攤`, exact: true })
+		).toBeVisible();
+		await expect(
+			panel.getByRole('spinbutton', { name: `Synthetic (${email})的分攤金額`, exact: true })
+		).toBeVisible();
+	}
+});
+
+for (const image of [false, true]) {
+	test(`${image ? 'image' : 'text'} base-shaped clarification never sends unsupported option metadata`, async ({
+		page
+	}) => {
+		const question = '總金額是多少？';
+		const state = await setup(page, async (route, body) =>
+			route.fulfill({
+				json:
+					state.posts.length === 1
+						? {
+								status: 'needs_input',
+								requestId: body!.requestId,
+								question,
+								issues: [{ field: 'amount', code: 'missing' }]
+							}
+						: created(body!.requestId)
+			})
+		);
+		if (image) {
+			await mockUploads(page);
+			await attach(page);
+		}
+		await submit(page);
+		await page.getByRole('textbox', { name: '補充資訊', exact: true }).fill('100元');
+		await page.getByRole('button', { name: '送出補充', exact: true }).click();
+		if (image) {
+			await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+		} else {
+			await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		}
+		expect(state.posts[1].history).toEqual(image ? undefined : [{ question, answer: '100元' }]);
+	});
+}

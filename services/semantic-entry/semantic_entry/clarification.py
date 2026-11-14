@@ -34,14 +34,26 @@ def entity_options(field: str, context: JSON, page: int = 0) -> list[JSON]:
     visible = (
         remaining[:3] if field == "categoryId" and len(remaining) > 4 else remaining[:4]
     )
-    options = [
-        {
-            "id": item["id"],
-            "label": unicodedata.normalize("NFC", " ".join(item["name"].split()))[:80]
-            or item["id"][:80],
-        }
+    # Keep complete labels in the 300-character numbered fallback, including hints.
+    labels = [
+        unicodedata.normalize("NFC", " ".join(item["name"].split()))[:60]
+        or item["id"][:60]
         for item in visible
     ]
+    used = {label.casefold() for label in labels}
+    options = []
+    for index, (item, label) in enumerate(zip(visible, labels, strict=True)):
+        if sum(other.casefold() == label.casefold() for other in labels) > 1:
+            serial = index + 1
+            while True:
+                hint = f" ({item.get('email', item['id'])[:36]} #{serial})"
+                candidate = label[: 60 - len(hint)] + hint
+                if candidate.casefold() not in used:
+                    label = candidate
+                    break
+                serial += 1
+        used.add(label.casefold())
+        options.append({"id": item["id"], "label": label})
     if field == "categoryId" and len(remaining) > 4:
         options.append({"id": f"category-page:{page + 1}", "label": "其他分類"})
     return options
@@ -129,8 +141,19 @@ def make_question(
 ) -> JSON:
     index = len(request.get("history", [])) if turn is None else turn
     page = 0
-    for previous in request.get("history", [])[:index]:
+    for previous_index, previous in enumerate(request.get("history", [])[:index]):
         identifier = previous.get("optionId", "")
+        if not identifier and field == "categoryId":
+            prior = make_question(field, request, context, turn=previous_index)
+            if prior["question"] == previous["question"]:
+                identifier = next(
+                    (
+                        o["id"]
+                        for number, o in enumerate(prior["options"], 1)
+                        if previous["answer"] in (str(number), o["label"])
+                    ),
+                    "",
+                )
         if identifier == f"category-page:{page + 1}":
             page += 1
     options = (
@@ -254,8 +277,7 @@ def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, 
     result = deepcopy(raw)
     custom = False
     for index, turn in enumerate(request.get("history", [])):
-        if "optionId" not in turn:
-            continue
+        structured = "optionId" in turn
         matched = False
         candidates: list[tuple[str, JSON | None]] = [
             (field, None) for field in ENTITY_FIELDS
@@ -289,16 +311,28 @@ def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, 
                     )
         for field, split in candidates:
             expected = make_question(field, request, context, turn=index, split=split)
-            if (
-                expected["questionId"] != turn.get("questionId")
-                or expected["question"] != turn["question"]
-            ):
+            if expected["question"] != turn["question"]:
                 continue
-            chosen = next(
-                (o for o in expected["options"] if o["id"] == turn["optionId"]), None
-            )
-            if chosen is None or chosen["label"] != turn["answer"]:
-                return result, False, False
+            if structured:
+                if expected["questionId"] != turn.get("questionId"):
+                    continue
+                chosen = next(
+                    (o for o in expected["options"] if o["id"] == turn["optionId"]),
+                    None,
+                )
+                if chosen is None or chosen["label"] != turn["answer"]:
+                    return result, False, False
+            else:
+                chosen = next(
+                    (
+                        o
+                        for number, o in enumerate(expected["options"], 1)
+                        if turn["answer"] in (str(number), o["label"])
+                    ),
+                    None,
+                )
+                if chosen is None:
+                    continue
             matched = True
             if field == "categoryId":
                 result["categoryId"] = (
@@ -396,7 +430,7 @@ def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, 
                 ):
                     result["unsupportedReason"] = None
             break
-        if not matched:
+        if structured and not matched:
             return result, False, False
     # A sole category is unambiguous. An explicit unresolved payer must never
     # silently become the caller, even when that is the only allowed member.

@@ -43,6 +43,10 @@ Cloud Run allows 90 seconds and 1 GiB. The image analyze service deadline is cur
 
 The runtime validates Supabase JWTs through HTTPS `/auth/v1/user`, checks the settings allowlist, and sends the same caller JWT to HTTPS Data API/RPC. Cloud Run does not need a PostgreSQL password, direct DB connection, connection pool, or service-role credential. Public Cloud Run ingress and CORS are not authorization. Disable external LangSmith tracing; the server forcibly disables tracing environment flags and emits only sanitized events.
 
+## Rollout order
+
+For the clarification-options release, merge first, wait for the GitHub Pages frontend deployment to complete, then dispatch the semantic-entry deployment. The new frontend accepts both old and new response shapes; older cached bundles reject the added option fields. Reload stale open tabs before using the updated service.
+
 ## Hosted setup (operator action, not performed)
 
 Confirm project, region, budget, IAM permissions, Secret Manager access, actual schema/RLS compatibility, and available expense categories before deployment. Build/push the image to the chosen Artifact Registry repository. Deploy with request-based CPU billing, minimum zero instances, maximum two, one vCPU, 1 GiB memory, and a 90-second request timeout. Limit the runtime service account's secret access to the required secret only; do not grant project-wide secret access or database administration. Configure secrets with Secret Manager bindings, not plaintext committed environment files. Pin versions when releasing.

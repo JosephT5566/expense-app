@@ -204,3 +204,23 @@ for (const patch of [
 ]) {
 	assert.throws(() => parseResponseV3({ ...optionsQuestion, ...patch }));
 }
+
+// Base bundles omit all option metadata; the new parser keeps accepting that wire shape.
+const baseQuestion = {
+	status: 'needs_input',
+	requestId: id,
+	question: '付款人？\n1. 甲\n2. 乙',
+	issues: [{ field: 'payerId', code: 'unknown_member' }]
+};
+assert.deepEqual(parseResponse(baseQuestion), baseQuestion);
+assert.deepEqual(parseResponseV3(baseQuestion), baseQuestion);
+const baseHistory = [{ question: baseQuestion.question, answer: '2' }];
+assert.deepEqual(
+	parseRequest({ requestId: id, text: '午餐', history: baseHistory }).history,
+	baseHistory
+);
+assert.deepEqual(
+	parseRequestV3({ action: 'analyze', requestId: id, text: '午餐', history: baseHistory })
+		.history,
+	baseHistory
+);

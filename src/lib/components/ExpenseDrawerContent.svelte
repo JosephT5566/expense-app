@@ -279,6 +279,17 @@
 		return $allowedUserInfo[email]?.name ?? email;
 	}
 
+	function getDraftMemberLabel(email: string) {
+		const name = getUserDisplayName(email);
+		const normalized = (value: string) =>
+			value.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+		return $allowedUsers.some(
+			(other) => other !== email && normalized(getUserDisplayName(other)) === normalized(name)
+		)
+			? `${name} (${email})`
+			: name;
+	}
+
 	function getEmailByDisplayName(name?: string) {
 		if (!name) {
 			return '';
@@ -612,7 +623,7 @@
 										id={`draft-payer-${index}`}
 										value={email}
 									/><Label for={`draft-payer-${index}`}
-										>{getUserDisplayName(email)}</Label
+										>{getDraftMemberLabel(email)}</Label
 									>
 								</div>
 							{/each}
@@ -643,7 +654,7 @@
 							<p class="text-xs text-muted-foreground">選擇分攤成員，至少兩位。</p>
 							{#each $allowedUsers as email, memberIndex (email)}
 								<RadioGroup.Root
-									aria-label={`${getUserDisplayName(email)}是否分攤`}
+									aria-label={`${getDraftMemberLabel(email)}是否分攤`}
 									value={draftMembers.includes(email) ? 'yes' : 'no'}
 									onValueChange={(value) => selectDraftMember(email, value)}
 								>
@@ -651,7 +662,7 @@
 										class="flex flex-wrap items-center gap-2 rounded-lg border p-2"
 									>
 										<span class="min-w-0 flex-1 break-words"
-											>{getUserDisplayName(email)}</span
+											>{getDraftMemberLabel(email)}</span
 										>
 										<RadioGroup.Item
 											id={`draft-member-${memberIndex}-yes`}
@@ -672,11 +683,11 @@
 							<div class="flex items-center gap-2 py-2" data-member-email={email}>
 								<Label
 									class="min-w-0 flex-1 break-words"
-									for={`draft-share-${index}`}>{getUserDisplayName(email)}</Label
+									for={`draft-share-${index}`}>{getDraftMemberLabel(email)}</Label
 								>
 								<Input
 									id={`draft-share-${index}`}
-									aria-label={`${getUserDisplayName(email)}的分攤金額`}
+									aria-label={`${getDraftMemberLabel(email)}的分攤金額`}
 									class="w-28 text-right"
 									type="number"
 									min="0"

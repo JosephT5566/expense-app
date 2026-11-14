@@ -69,9 +69,7 @@ async def test_custom_choice_returns_editable_draft_without_write(setup):
     adapter.persist_expense.assert_not_awaited()
 
 
-@pytest.mark.parametrize(
-    "tamper", ["id", "questionId", "question", "answer", "removed_member"]
-)
+@pytest.mark.parametrize("tamper", ["id", "questionId", "question", "answer"])
 async def test_forged_or_stale_option_never_writes(setup, tamper):
     deps, adapter = setup
     deps.extract_entry.return_value["raw"] = {**RAW, "payerId": "unknown"}
@@ -85,8 +83,6 @@ async def test_forged_or_stale_option_never_writes(setup, tamper):
         turn["question"] = "different"
     elif tamper == "answer":
         turn["answer"] = "different"
-    else:
-        adapter.load_context.return_value["members"] = [CONTEXT["members"][1]]
     result = await invoke({**REQUEST, "history": [turn]}, "synthetic", deps)
     assert result["status"] == "rejected"
     adapter.persist_expense.assert_not_awaited()
@@ -397,3 +393,143 @@ def test_long_member_names_do_not_hide_split_amounts():
         and "156 元" in result["options"][1]["label"]
     )
     assert "185 元" in result["question"] and "156 元" in result["question"]
+
+
+@pytest.mark.parametrize(
+    "names",
+    [("同名", "同名"), ("A" * 80 + "甲", "a" * 80 + "乙"), ("é  名", "e\u0301 名")],
+)
+async def test_colliding_member_labels_are_distinct_and_bound_to_correct_write(
+    setup, names
+):
+    deps, adapter = setup
+    for member, name in zip(
+        adapter.load_context.return_value["members"], names, strict=True
+    ):
+        member["name"] = name
+    deps.extract_entry.return_value["raw"] = {
+        **RAW,
+        "payerId": "unknown",
+        "scope": "household",
+        "hasSharedIntent": True,
+        "splitMemberIds": ["a", "b"],
+    }
+    first = await invoke(REQUEST, "synthetic", deps)
+    labels = [option["label"] for option in first["options"]]
+    assert len({label.casefold() for label in labels}) == 2
+    assert all(1 <= len(label) <= 80 and label in first["question"] for label in labels)
+    assert len(first["question"]) <= 300
+    result = await invoke({**REQUEST, "history": [reply(first, 1)]}, "synthetic", deps)
+    assert result["status"] == "created"
+    assert adapter.persist_expense.call_args.args[2]["payer_email"] == "b@example.test"
+
+
+@pytest.mark.parametrize("image", [False, True])
+@pytest.mark.parametrize("tamper", ["removed_member", "another_user"])
+async def test_selected_member_must_remain_in_callers_context(setup, image, tamper):
+    deps, adapter = setup
+    request, run = REQUEST, invoke
+    if image:
+        deps, adapter, _ = make_setup()
+        request, run = IMAGE_REQUEST, invoke_v3
+        draft = raw_draft()
+        draft["scope"].update(value="household", state="recognized", source="text")
+        draft["payerEmail"].update(value="unknown", state="recognized", source="text")
+        draft["splitMemberEmails"].update(
+            value=["a", "b"], state="recognized", source="text"
+        )
+        deps.extract_drafts.return_value["raw"]["drafts"] = [draft]
+    else:
+        deps.extract_entry.return_value["raw"] = {
+            **RAW,
+            "payerId": "unknown",
+            "scope": "household",
+            "hasSharedIntent": True,
+            "splitMemberIds": ["a", "b"],
+        }
+    first = await run(request, "synthetic", deps)
+    turn = reply(first, 1)
+    assert turn["optionId"] == "b"
+    if tamper == "removed_member":
+        adapter.load_context.return_value["members"] = [
+            deepcopy(CONTEXT["members"][0]),
+            {"id": "c", "email": "c@example.test", "name": "丙"},
+        ]
+    else:
+        turn["optionId"] = "other-user@example.test"
+    # The latest extraction is otherwise valid, including a still-authorized caller.
+    members = [m["id"] for m in adapter.load_context.return_value["members"]]
+    if image:
+        draft["payerEmail"]["value"] = "a"
+        draft["splitMemberEmails"]["value"] = members
+    else:
+        deps.extract_entry.return_value["raw"].update(
+            payerId="a", splitMemberIds=members
+        )
+    result = await run({**request, "history": [turn]}, "synthetic", deps)
+    assert result["status"] == "rejected"
+    adapter.persist_expense.assert_not_awaited()
+    if image:
+        adapter.persist_expenses.assert_not_awaited()
+    # Control: without the stale/foreign option, the same valid extraction writes.
+    assert (await run(request, "synthetic", deps))["status"] == "created"
+
+
+@pytest.mark.parametrize("image", [False, True])
+@pytest.mark.parametrize("answer", ["2", "label", "plain free text"])
+async def test_base_history_exact_number_or_label_resolves_trusted_option(
+    setup, image, answer
+):
+    deps, adapter = setup
+    request, run = REQUEST, invoke
+    if image:
+        deps, adapter, _ = make_setup()
+        request, run = IMAGE_REQUEST, invoke_v3
+        draft = raw_draft()
+        draft["scope"].update(value="household", state="recognized", source="text")
+        draft["payerEmail"].update(value="unknown", state="recognized", source="text")
+        draft["splitMemberEmails"].update(
+            value=["a", "b"], state="recognized", source="text"
+        )
+        deps.extract_drafts.return_value["raw"]["drafts"] = [draft]
+    else:
+        deps.extract_entry.return_value["raw"] = {
+            **RAW,
+            "payerId": "unknown",
+            "scope": "household",
+            "hasSharedIntent": True,
+            "splitMemberIds": ["a", "b"],
+        }
+    first = await run(request, "synthetic", deps)
+    turn = {
+        "question": first["question"],
+        "answer": first["options"][1]["label"] if answer == "label" else answer,
+    }
+    result = await run({**request, "history": [turn]}, "synthetic", deps)
+    if answer == "plain free text":
+        assert result["status"] == "needs_input"
+        adapter.persist_expense.assert_not_awaited()
+    else:
+        assert result["status"] == "created"
+        assert (
+            adapter.persist_expense.call_args.args[2]["payer_email"] == "b@example.test"
+        )
+
+
+async def test_numbered_category_fallback_can_advance_pages(setup):
+    deps, adapter = setup
+    adapter.load_context.return_value["categories"] = [
+        {"id": f"00000000-0000-4000-8000-{i:012}", "name": f"分類{i}"} for i in range(6)
+    ]
+    deps.extract_entry.return_value["raw"]["categoryId"] = None
+    first = await invoke(REQUEST, "synthetic", deps)
+    history = [{"question": first["question"], "answer": "4"}]
+    second = await invoke({**REQUEST, "history": history}, "synthetic", deps)
+    assert second["status"] == "needs_input"
+    history.append({"question": second["question"], "answer": "2"})
+    result = await invoke({**REQUEST, "history": history}, "synthetic", deps)
+    assert result["status"] == "created"
+    assert (
+        adapter.persist_expense.call_args.args[2]["category_id"]
+        == adapter.load_context.return_value["categories"][4]["id"]
+    )

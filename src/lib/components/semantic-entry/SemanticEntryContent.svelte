@@ -1319,7 +1319,9 @@
 									...(clarification?.questionId
 										? { questionId: clarification.questionId }
 										: {}),
-									...(selectedOption ? { optionId: selectedOption } : {})
+									...(optionQuestion && selectedOption
+										? { optionId: selectedOption }
+										: {})
 								}
 							]
 						: history;
@@ -1356,7 +1358,12 @@
 											: {})
 									}
 								: { text }),
-							...(nextHistory.length ? { history: nextHistory } : {})
+							...(nextHistory.length &&
+							(!previous?.images ||
+								optionQuestion ||
+								history.some((turn) => turn.optionId))
+								? { history: nextHistory }
+								: {})
 						});
 				const items = pending.add(
 					owner,
