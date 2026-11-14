@@ -187,7 +187,7 @@ async def test_hash_and_user_isolation(db):
         {
             "scope": "household",
             "is_settled": False,
-            "shares_json": {"a@example.test": 850, "b@example.test": 1},
+            "shares_json": {"a@example.test": 850, "b@example.test": 2},
         },
         {"ts": "2026-03-01T17:00:00Z"},
         {"note": "fixture_insert_failure"},
@@ -514,3 +514,68 @@ async def test_adapter_batch_different_hash_conflicts(db):
         with pytest.raises(SemanticError) as exc:
             await adapter.persist_expenses(identifier, "b" * 64, [payload()])
         assert exc.value.status == 409 and exc.value.code == "conflict"
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize(
+    "shares",
+    [
+        {"a@example.test": 850, "b@example.test": 1},
+        {"a@example.test": 851, "b@example.test": 0},
+        {"a@example.test": 426, "b@example.test": 425},
+    ],
+)
+async def test_custom_and_equal_shares_persist_exactly(db, batch, shares):
+    expense = {
+        **payload(),
+        "scope": "household",
+        "is_settled": False,
+        "shares_json": shares,
+    }
+    identifier = str(uuid4())
+    response = (
+        await create_batch(db, "a", identifier, [expense])
+        if batch
+        else await create(db, "a", identifier, expense)
+    )
+    assert response.is_success, response.text
+    result = response.json()
+    row = result["expenses"][0] if batch else result["expense"]
+    assert row["shares_json"] == shares
+    persisted = await db("a", "GET", "/expenses", params={"id": f"eq.{row['id']}"})
+    assert persisted.json()[0]["shares_json"] == shares
+
+
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize(
+    "shares",
+    [
+        {"a@example.test": 850, "b@example.test": 2},
+        {"a@example.test": 852, "b@example.test": -1},
+        {"a@example.test": 850.5, "b@example.test": 0.5},
+        {"a@example.test": 850, "outsider@example.test": 1},
+    ],
+)
+async def test_invalid_custom_shares_rollback(db, batch, shares):
+    before = await batch_expense_ids(db)
+    expense = {
+        **payload(),
+        "scope": "household",
+        "is_settled": False,
+        "shares_json": shares,
+    }
+    identifier = str(uuid4())
+    response = (
+        await create_batch(db, "a", identifier, [payload(), expense])
+        if batch
+        else await create(db, "a", identifier, expense)
+    )
+    assert response.status_code == 422 and response.json()["code"] == "PT422"
+    assert await batch_expense_ids(db) == before
+    ledger = await db(
+        "admin",
+        "GET",
+        "/semantic_entry_requests",
+        params={"request_id": f"eq.{identifier}"},
+    )
+    assert ledger.json() == []
