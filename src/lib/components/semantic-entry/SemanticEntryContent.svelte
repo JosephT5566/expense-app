@@ -33,6 +33,8 @@
 	import X from 'lucide-svelte/icons/x';
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
 	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
+	import * as RadioGroup from '$lib/components/shadcn/radio-group';
+	import { Label } from '$lib/components/shadcn/label';
 	import * as pending from './pending';
 	import PendingTray from './PendingTray.svelte';
 	import type { PendingItem } from './pending';
@@ -145,6 +147,9 @@
 		text = '';
 		attempt = null;
 		phase = 'drafts';
+		if (clarification?.purpose === 'split' && selectedOption === 'custom') {
+			onEditDrafts();
+		}
 	}
 	let phase = $state<
 		| 'input'
@@ -160,6 +165,17 @@
 	let attempt = $state<(SemanticRequestV3 & { accountId: string }) | null>(null);
 	let history = $state<ClarificationTurn[]>([]);
 	let question = $state('');
+	let clarification = $state<Extract<SemanticResponseV3, { status: 'needs_input' }> | null>(null);
+	let selectedOption = $state('');
+	const optionQuestion = $derived(phase === 'needs_input' && !!clarification?.options?.length);
+	async function confirmOption() {
+		const option = clarification?.options?.find((item) => item.id === selectedOption);
+		if (!option || processing) {
+			return;
+		}
+		reply = option.label;
+		await execute();
+	}
 	let reply = $state('');
 	let focusedId = $state<string | null>(null);
 	let pendingItems = $state<PendingItem[]>([]);
@@ -204,6 +220,9 @@
 			images?: string[];
 			expenses?: ExpenseRow[];
 			drafts?: boolean;
+			answer?: string;
+			options?: { id: string; label: string }[];
+			optionId?: string;
 		}[]
 	>([]);
 	let conversationElement = $state<HTMLDivElement>();
@@ -547,6 +566,8 @@
 			attempt = null;
 			history = [];
 			question = '';
+			clarification = null;
+			selectedOption = '';
 			reply = '';
 			message = '';
 			analysis = '';
@@ -698,7 +719,10 @@
 	const replyCount = $derived([...reply.trim()].length);
 	const composingReply = $derived(phase === 'needs_input');
 	const canCompose = $derived(
-		phase === 'input' || phase === 'drafts' || phase === 'uncertain' || composingReply
+		phase === 'input' ||
+			phase === 'drafts' ||
+			phase === 'uncertain' ||
+			(composingReply && clarification?.allowFreeText !== false)
 	);
 	const attachmentsDisabled = $derived(
 		!canCompose || !!session || composingReply || converting || selectedImages.length >= 4
@@ -735,6 +759,7 @@
 		payerId: '付款人',
 		members: '成員',
 		splitMemberIds: '分攤',
+		shares: '分攤金額',
 		currency: '幣別',
 		categoryId: '分類',
 		intent: '需求',
@@ -746,7 +771,8 @@
 		unknown_member: '找不到指定成員',
 		ambiguous_member: '無法確定成員',
 		unsupported: '暫不支援',
-		configuration: '服務設定不完整'
+		configuration: '服務設定不完整',
+		custom_required: '請指定每人的整數分攤金額'
 	};
 	$effect(() => {
 		const next = $user?.id;
@@ -774,6 +800,8 @@
 				focusedId = null;
 				history = [];
 				question = '';
+				clarification = null;
+				selectedOption = '';
 				reply = '';
 				savedExpense = null;
 				text = '';
@@ -830,9 +858,15 @@
 			!clear && failedAttempt?.action === 'analyze' && failedAttempt.history?.length
 				? failedAttempt
 				: null;
+		const failedClarification = failedReply ? clarification : null;
+		const failedOption = failedReply ? selectedOption : '';
 		focusedId = null;
 		analysis = '';
-		clearConversation();
+		if (failedReply) {
+			conversation = conversation.slice(0, -2);
+		} else {
+			clearConversation();
+		}
 		clearImages();
 		followLatest = true;
 		revision++;
@@ -840,6 +874,8 @@
 		attempt = null;
 		history = [];
 		question = '';
+		clarification = null;
+		selectedOption = '';
 		reply = '';
 		savedExpense = null;
 		if (clear) {
@@ -850,6 +886,8 @@
 			attempt = failedReply;
 			history = failedReply.history.slice(0, -1);
 			question = failedReply.history[failedReply.history.length - 1].question;
+			clarification = failedClarification;
+			selectedOption = failedOption;
 			reply = failedReply.history[failedReply.history.length - 1].answer;
 			phase = 'needs_input';
 		}
@@ -927,6 +965,8 @@
 			attempt = null;
 			history = [];
 			question = '';
+			clarification = null;
+			selectedOption = '';
 			reply = '';
 			text = '';
 			analysis = '';
@@ -1237,7 +1277,7 @@
 			await executeDraft('revise');
 			return;
 		}
-		if (processing || converting || !$user) {
+		if (processing || converting || !$user || (optionQuestion && !selectedOption)) {
 			return;
 		}
 		if (!retryId && atLimit()) {
@@ -1270,7 +1310,21 @@
 		if (!hadUncertainty) {
 			try {
 				const nextHistory =
-					phase === 'needs_input' ? [...history, { question, answer: reply }] : history;
+					phase === 'needs_input'
+						? [
+								...history,
+								{
+									question,
+									answer: reply,
+									...(clarification?.questionId
+										? { questionId: clarification.questionId }
+										: {}),
+									...(optionQuestion && selectedOption
+										? { optionId: selectedOption }
+										: {})
+								}
+							]
+						: history;
 				// Image retries after a pre-persisting failure require selecting files again and a new ID.
 				const reusable =
 					!filesToUpload.length &&
@@ -1283,18 +1337,7 @@
 						: null;
 				const previous = phase === 'needs_input' ? attempt : reusable;
 				const identity = {
-					requestId:
-						previous &&
-						failedAttempt?.requestId === previous.requestId &&
-						failedAttempt.history?.length &&
-						JSON.stringify(
-							nextHistory.map((turn) => ({
-								question: turn.question.trim().normalize('NFC'),
-								answer: turn.answer.trim().normalize('NFC')
-							}))
-						) !== JSON.stringify(failedAttempt.history)
-							? freshRequestId()
-							: (previous?.requestId ?? freshRequestId()),
+					requestId: previous?.requestId ?? freshRequestId(),
 					referenceDate:
 						previous?.referenceDate ??
 						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000))
@@ -1307,8 +1350,20 @@
 					: parseRequestV3({
 							action: 'analyze',
 							...identity,
-							text,
-							...(nextHistory.length ? { history: nextHistory } : {})
+							...(previous?.images
+								? {
+										images: previous.images,
+										...(previous.text !== undefined
+											? { text: previous.text }
+											: {})
+									}
+								: { text }),
+							...(nextHistory.length &&
+							(!previous?.images ||
+								optionQuestion ||
+								history.some((turn) => turn.optionId))
+								? { history: nextHistory }
+								: {})
 						});
 				const items = pending.add(
 					owner,
@@ -1352,6 +1407,13 @@
 			conversation.push({
 				role: 'assistant',
 				text: phase === 'needs_input' ? question : message || '先前請求結果待確認。',
+				...(phase === 'needs_input'
+					? {
+							answer: outgoingText,
+							options: clarification?.options,
+							optionId: selectedOption
+						}
+					: {}),
 				analysis
 			});
 		}
@@ -1441,6 +1503,8 @@
 					focusedId = null;
 					if (result.status === 'needs_input') {
 						question = result.question;
+						clarification = result;
+						selectedOption = '';
 						phase = 'needs_input';
 					} else {
 						if (result.status === 'drafts') {
@@ -1558,6 +1622,28 @@
 										class="h-12 w-12 rounded-lg object-cover"
 									/>{/each}
 							</div>{/if}
+						{#if entry.options?.length}
+							<RadioGroup.Root
+								value={entry.optionId}
+								disabled
+								aria-label="已回答的選項"
+							>
+								{#each entry.options as option (option.id)}
+									<div class="flex items-center gap-2 py-2">
+										<RadioGroup.Item
+											id={`answered-${index}-${option.id}`}
+											value={option.id}
+										/>
+										<Label for={`answered-${index}-${option.id}`}
+											>{option.label}</Label
+										>
+									</div>
+								{/each}
+							</RadioGroup.Root>
+						{/if}
+						{#if entry.answer}<p class="text-muted-foreground">
+								已回答：{entry.answer}
+							</p>{/if}
 						{#if entry.expenses}<CreatedSummary expenses={entry.expenses} />{/if}
 						<p
 							aria-label={entry.role === 'user' ? '你的訊息' : '助手訊息'}
@@ -1587,7 +1673,28 @@
 						</div>
 					{/if}
 					{#if phase === 'needs_input'}
-						<p role="status" class="font-medium">{question}</p>
+						<p role="status" class="whitespace-pre-wrap font-medium">{question}</p>
+						{#if optionQuestion && clarification?.options}
+							<RadioGroup.Root bind:value={selectedOption} aria-label="補充資訊選項">
+								{#each clarification.options as option, index (option.id)}
+									<div
+										class="flex items-center gap-3 rounded-lg border px-3 py-3"
+									>
+										<RadioGroup.Item
+											id={`semantic-option-${index}`}
+											value={option.id}
+										/>
+										<Label
+											class="flex-1 leading-normal"
+											for={`semantic-option-${index}`}>{option.label}</Label
+										>
+									</div>
+								{/each}
+							</RadioGroup.Root>
+							<Button disabled={!selectedOption || !$user} onclick={confirmOption}
+								>確認</Button
+							>
+						{/if}
 					{/if}
 					<div aria-live="polite" class="space-y-2">
 						{#if phase === 'processing'}<p role="status">
@@ -1670,60 +1777,62 @@
 			class="hidden"
 			onchange={selectImages}
 		/>
-		<div
-			class="bg-background flex touch-manipulation items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
-		>
-			<Button
-				size="icon"
-				variant="ghost"
-				class="shrink-0"
-				aria-label="附加圖片"
-				disabled={attachmentsDisabled}
-				onclick={() => fileInput.click()}><Paperclip class="h-4 w-4" /></Button
+		{#if !optionQuestion || clarification?.allowFreeText !== false}
+			<div
+				class="bg-background flex touch-manipulation items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
 			>
-			<textarea
-				bind:this={composerElement}
-				id="semantic-entry-text"
-				aria-label={phase === 'drafts'
-					? '補充草稿'
-					: composingReply
-						? '補充資訊'
-						: '記帳內容'}
-				aria-describedby="semantic-entry-hint"
-				bind:value={
-					() => (composingReply ? reply : text),
-					(value) => {
-						if (composingReply) {
-							reply = value;
-						} else {
-							text = value;
+				<Button
+					size="icon"
+					variant="ghost"
+					class="shrink-0"
+					aria-label="附加圖片"
+					disabled={attachmentsDisabled}
+					onclick={() => fileInput.click()}><Paperclip class="h-4 w-4" /></Button
+				>
+				<textarea
+					bind:this={composerElement}
+					id="semantic-entry-text"
+					aria-label={phase === 'drafts'
+						? '補充草稿'
+						: composingReply
+							? '補充資訊'
+							: '記帳內容'}
+					aria-describedby="semantic-entry-hint"
+					bind:value={
+						() => (composingReply ? reply : text),
+						(value) => {
+							if (composingReply) {
+								reply = value;
+							} else {
+								text = value;
+							}
 						}
 					}
-				}
-				disabled={converting || !canCompose || (phase === 'input' && attempt !== null)}
-				rows="1"
-				class="min-w-0 flex-1 touch-manipulation resize-none overflow-y-hidden bg-transparent px-2 py-1 text-base focus-visible:outline-none md:text-sm"
-				placeholder={phase === 'drafts'
-					? '例如：第三筆是午餐'
-					: composingReply
-						? '輸入你的回答…'
-						: '例如：今天午餐100元'}
-			></textarea>
-			<Button
-				size="icon"
-				class="shrink-0 rounded-xl"
-				aria-label={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
-				title={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
-				disabled={!$user ||
-					converting ||
-					!canCompose ||
-					(composerCount === 0 && selectedImages.length === 0) ||
-					composerCount > 500}
-				onclick={() => execute()}
-			>
-				<Send class="h-4 w-4" aria-hidden="true" />
-			</Button>
-		</div>
+					disabled={converting || !canCompose || (phase === 'input' && attempt !== null)}
+					rows="1"
+					class="min-w-0 flex-1 touch-manipulation resize-none overflow-y-hidden bg-transparent px-2 py-1 text-base focus-visible:outline-none md:text-sm"
+					placeholder={phase === 'drafts'
+						? '例如：第三筆是午餐'
+						: composingReply
+							? '輸入你的回答…'
+							: '例如：今天午餐100元'}
+				></textarea>
+				<Button
+					size="icon"
+					class="shrink-0 rounded-xl"
+					aria-label={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
+					title={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
+					disabled={!$user ||
+						converting ||
+						!canCompose ||
+						(composerCount === 0 && selectedImages.length === 0) ||
+						composerCount > 500}
+					onclick={() => execute()}
+				>
+					<Send class="h-4 w-4" aria-hidden="true" />
+				</Button>
+			</div>
+		{/if}
 	</div>
 	<div
 		role="status"

@@ -20,6 +20,9 @@ INSERT INTO valid_cases VALUES ('personal',jsonb_build_object(
  'category_id','11111111-1111-4111-8111-111111111111','is_settled',true));
 INSERT INTO valid_cases SELECT 'household two',expense || '{"note":"synthetic two","scope":"household","is_settled":false,"shares_json":{"a@example.test":426,"b@example.test":425}}' FROM valid_cases WHERE name='personal';
 INSERT INTO valid_cases SELECT 'household three',expense || '{"note":"synthetic three","scope":"household","is_settled":false,"shares_json":{"a@example.test":285,"b@example.test":283,"c@example.test":283}}' FROM valid_cases WHERE name='personal';
+INSERT INTO valid_cases SELECT 'household custom',expense || '{"note":"synthetic custom","scope":"household","is_settled":false,"shares_json":{"a@example.test":850,"b@example.test":1}}' FROM valid_cases WHERE name='personal';
+INSERT INTO valid_cases SELECT 'household custom zero',expense || '{"note":"synthetic zero","scope":"household","is_settled":false,"shares_json":{"a@example.test":851,"b@example.test":0}}' FROM valid_cases WHERE name='personal';
+INSERT INTO valid_cases SELECT 'household reverse remainder',expense || '{"note":"synthetic reverse remainder","scope":"household","is_settled":false,"shares_json":{"a@example.test":425,"b@example.test":426}}' FROM valid_cases WHERE name='personal';
 CREATE TEMP TABLE invalid_cases(name text, expense jsonb);
 INSERT INTO invalid_cases
 SELECT patch.name, v.expense || patch.value FROM valid_cases v CROSS JOIN (VALUES
@@ -46,8 +49,10 @@ SELECT patch.name, v.expense || patch.value FROM valid_cases v CROSS JOIN (VALUE
  ('personal unsettled','{"is_settled":false}'),
  ('household one member','{"scope":"household","is_settled":false}'),
  ('household settled','{"scope":"household","shares_json":{"a@example.test":426,"b@example.test":425}}'),
- ('household unequal','{"scope":"household","is_settled":false,"shares_json":{"a@example.test":850,"b@example.test":1}}'),
- ('household wrong remainder','{"scope":"household","is_settled":false,"shares_json":{"a@example.test":425,"b@example.test":426}}')
+ ('household custom wrong sum','{"scope":"household","is_settled":false,"shares_json":{"a@example.test":850,"b@example.test":2}}'),
+ ('household custom negative','{"scope":"household","is_settled":false,"shares_json":{"a@example.test":852,"b@example.test":-1}}'),
+ ('household custom fractional','{"scope":"household","is_settled":false,"shares_json":{"a@example.test":850.5,"b@example.test":0.5}}'),
+ ('household custom non-member','{"scope":"household","is_settled":false,"shares_json":{"a@example.test":850,"unknown@example.test":1}}')
 ) AS patch(name,value) WHERE v.name='personal';
 INSERT INTO invalid_cases SELECT 'missing key',expense-'note' FROM valid_cases WHERE name='personal';
 INSERT INTO invalid_cases SELECT 'tomorrow in Taipei',expense || jsonb_build_object('ts',(((now() at time zone 'Asia/Taipei')::date+1)::timestamp at time zone 'Asia/Taipei')) FROM valid_cases WHERE name='personal';
@@ -119,6 +124,9 @@ BEGIN
      (SELECT count(*) FROM public.expense_shares s WHERE s.expense_id=v_expense_id)<>(SELECT count(*) FROM jsonb_object_keys(c.expense->'shares_json')) THEN
    RAISE EXCEPTION '%: trigger share count or total incorrect',c.name;
   END IF;
+  IF (SELECT jsonb_object_agg(user_email::text,share_amount) FROM public.expense_shares WHERE expense_id=v_expense_id) IS DISTINCT FROM c.expense->'shares_json' THEN
+   RAISE EXCEPTION '%: custom shares changed during persistence',c.name;
+  END IF;
  END LOOP;
  -- Batch-only cast-boundary group：單筆 RPC create_semantic_expense 對這些輸入會拋出 PostgreSQL 原生錯誤（已知限制，依 #49 計畫不修改單筆 RPC），所以不放進共用 parity 清單。
  FOR c IN SELECT name, v || patch AS expense, message FROM (VALUES
@@ -156,7 +164,7 @@ BEGIN
  PERFORM pg_temp.expect_failure('third expense rollback',jsonb_build_array(v,v,v || '{"amount":1.5}'),true,'PT422','Invalid amount','{"index":2}');
  identifier:=gen_random_uuid();
  first_result:=public.create_semantic_expenses(identifier,repeat('a',64),(SELECT jsonb_agg(expense ORDER BY name) FROM valid_cases));
- IF jsonb_array_length(first_result->'expenses')<>3 OR
+ IF jsonb_array_length(first_result->'expenses')<>(SELECT count(*) FROM valid_cases) OR
     (SELECT jsonb_agg(e->>'note' ORDER BY ord) FROM jsonb_array_elements(first_result->'expenses') WITH ORDINALITY AS t(e,ord)) IS DISTINCT FROM
     (SELECT jsonb_agg(expense->>'note' ORDER BY name) FROM valid_cases) THEN RAISE EXCEPTION 'Mixed batch order changed'; END IF;
  expense_count:=(SELECT count(*) FROM public.expenses); share_count:=(SELECT count(*) FROM public.expense_shares);

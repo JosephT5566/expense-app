@@ -41,8 +41,10 @@ def test_receipt_prompt_trust_boundaries_and_rules(mode):
         assert "draftId 沿用輸入 id" in prompt
     # Old per-receipt split wording is replaced by the image-only per-item rule.
     assert "多筆收據逐筆輸出" not in prompt
-    assert DRAFT_VERSION == RECEIPT_PROMPT_VERSION == "semantic-receipt-v2"
-    assert PROMPT_VERSION == "semantic-entry-v8-date-withdrawal"
+    assert (
+        DRAFT_VERSION == RECEIPT_PROMPT_VERSION == "semantic-receipt-v3-custom-shares"
+    )
+    assert PROMPT_VERSION == "semantic-entry-v9-custom-shares"
     assert "nonReceiptImages" not in system_prompt(CONTEXT)
 
 
@@ -102,7 +104,14 @@ def test_receipt_schema_exact_required_keys_and_enums():
 
     check_objects(RECEIPT_SCHEMA)
     draft = RECEIPT_SCHEMA["properties"]["drafts"]["items"]["properties"]
-    assert set(draft) == {"draftId", "originalAmountText", *DRAFT_FIELDS}
+    assert set(draft) == {
+        "draftId",
+        "originalAmountText",
+        *DRAFT_FIELDS,
+        "shares",
+        "splitDifference",
+        "splitRatio",
+    }
     for key in DRAFT_FIELDS:
         props = draft[key]["properties"]
         assert props["state"]["enum"] == [
@@ -124,3 +133,23 @@ def test_receipt_schema_exact_required_keys_and_enums():
     ]
     # No maxItems=20: the graph must see and reject a provider's 21 drafts.
     assert "maxItems" not in RECEIPT_SCHEMA["properties"]["drafts"]
+
+
+def test_custom_split_prompt_keeps_model_as_extractor():
+    text = system_prompt(CONTEXT)
+    for phrase in (
+        "非平分不是unsupported",
+        "splitDifference",
+        "splitRatio",
+        "shares",
+        "不可預設或挑一位",
+        "明確列出完整名單",
+        "早餐麥當勞341元",
+    ):
+        assert phrase in text
+    for mode in ("image", "revise"):
+        receipt = receipt_system_prompt(CONTEXT, mode)
+        assert "可平分或自訂分攤" in receipt
+        assert "只允許平分" not in receipt
+        assert "不做模糊匹配" in receipt
+        assert "明示他人卻未知不可預設自己" in receipt

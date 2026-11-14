@@ -18,7 +18,14 @@ from .contracts import (
     trim,
 )
 from .errors import SemanticError
-from .normalize import MAX_EXPENSE_AMOUNT, equal_shares, valid_date
+from .normalize import (
+    MAX_EXPENSE_AMOUNT,
+    equal_shares,
+    resolve_member,
+    split_shares,
+    valid_date,
+    validate_split_fields,
+)
 from .prompt import RECEIPT_PROMPT_VERSION as RECEIPT_PROMPT_VERSION
 
 
@@ -37,7 +44,12 @@ def parse_raw_extraction(raw: object, image_count: int) -> JSON:
             raise ValueError("Invalid image index")
         for raw_draft in r["drafts"]:
             d = object_(raw_draft)
-            exact_keys(d, ["draftId", *DRAFT_FIELDS, "originalAmountText"])
+            exact_keys(
+                d,
+                ["draftId", *DRAFT_FIELDS, "originalAmountText"],
+                ["shares", "splitDifference", "splitRatio"],
+            )
+            validate_split_fields(d)
             if d["draftId"] is not None:
                 request_id(d["draftId"])
             if d["originalAmountText"] is not None and not isinstance(
@@ -129,6 +141,20 @@ def draft_issues(draft: JSON, ctx: JSON, *, commit: bool = False) -> list[JSON]:
             issue("splitMemberEmails", "unknown_member")
         if len(set(emails)) < 2:
             issue("splitMemberEmails", "invalid")
+    if "shares" in draft:
+        shares, code = split_shares(
+            {"shares": draft["shares"]},
+            amount,
+            values["splitMemberEmails"] or [],
+            ctx,
+        )
+        if code or shares is None:
+            issue(
+                "splitMemberEmails"
+                if code in ("unknown_member", "ambiguous_member")
+                else "shares",
+                code or "invalid",
+            )
     return issues
 
 
@@ -228,36 +254,56 @@ def normalize_draft(
         default("scope", "personal")
     elif d["scope"]["value"] not in ("personal", "household"):
         invalid("scope")
-    members = {m["email"] for m in ctx["members"]}
+    extra_issues: list[JSON] = []
     if d["payerEmail"]["value"] is None:
         default("payerEmail", ctx["currentUserEmail"])
-    elif (
-        not isinstance(d["payerEmail"]["value"], str)
-        or d["payerEmail"]["value"] not in members
-    ):
-        invalid("payerEmail")
+    else:
+        payer, code = resolve_member(d["payerEmail"]["value"], ctx)
+        if code:
+            invalid("payerEmail")
+            extra_issues.append({"field": "payerEmail", "code": code})
+        else:
+            assert payer is not None
+            d["payerEmail"]["value"] = payer["email"]
     split = d["splitMemberEmails"]["value"]
-    extra_issues: list[JSON] = []
-    if (
-        raw["payerEmail"]["value"] is not None
-        and d["payerEmail"]["state"] == "unrecognized"
-    ):
-        extra_issues.append({"field": "payerEmail", "code": "unknown_member"})
     if d["scope"]["value"] == "personal":
         if split is None:
             default("splitMemberEmails", [ctx["currentUserEmail"]])
         else:
             d["splitMemberEmails"]["value"] = [ctx["currentUserEmail"]]
     elif split is not None:
-        if not isinstance(split, list) or any(
-            not isinstance(e, str) or e not in members for e in split
-        ):
+        resolved = []
+        if not isinstance(split, list):
             invalid("splitMemberEmails")
             extra_issues.append(
                 {"field": "splitMemberEmails", "code": "unknown_member"}
             )
         else:
-            d["splitMemberEmails"]["value"] = list(dict.fromkeys(split))
+            for identifier in split:
+                member, code = resolve_member(identifier, ctx)
+                if code:
+                    extra_issues.append({"field": "splitMemberEmails", "code": code})
+                else:
+                    assert member is not None
+                    resolved.append(member["email"])
+            if len(resolved) != len(split):
+                invalid("splitMemberEmails")
+            else:
+                d["splitMemberEmails"]["value"] = list(dict.fromkeys(resolved))
+    if any(raw.get(k) is not None for k in ("shares", "splitDifference", "splitRatio")):
+        emails = d["splitMemberEmails"]["value"] or []
+        shares, code = split_shares(raw, d["amount"]["value"], emails, ctx)
+        if code:
+            extra_issues.append(
+                {
+                    "field": "splitMemberEmails"
+                    if code in ("unknown_member", "ambiguous_member")
+                    else "shares",
+                    "code": code,
+                }
+            )
+        else:
+            d["shares"] = shares
     if client and "mergedFrom" in raw:
         d["mergedFrom"] = deepcopy(raw["mergedFrom"])
     issues = draft_issues(d, ctx)
@@ -290,7 +336,9 @@ def expense_from_draft(d: JSON, ctx: JSON) -> JSON:
         "ts": ts.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "payer_email": v["payerEmail"],
         "scope": v["scope"],
-        "shares_json": equal_shares(v["amount"], emails),
+        "shares_json": deepcopy(d["shares"])
+        if "shares" in d
+        else equal_shares(v["amount"], emails),
         "category_id": v["categoryId"],
         "is_settled": v["scope"] == "personal",
     }

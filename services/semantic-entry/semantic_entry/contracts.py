@@ -122,11 +122,23 @@ def parse_request(raw: Any) -> JSON:
         history = []
         for raw_turn in r["history"]:
             turn = object_(raw_turn)
-            exact_keys(turn, ["question", "answer"])
+            exact_keys(turn, ["question", "answer"], ["questionId", "optionId"])
+            if "optionId" in turn and "questionId" not in turn:
+                raise ValueError("Missing question ID")
             history.append(
                 {
                     "question": bounded_text(turn["question"], 300),
                     "answer": bounded_text(turn["answer"], 500),
+                    **(
+                        {"questionId": request_id(turn["questionId"])}
+                        if "questionId" in turn
+                        else {}
+                    ),
+                    **(
+                        {"optionId": bounded_text(turn["optionId"], 1024)}
+                        if "optionId" in turn
+                        else {}
+                    ),
                 }
             )
         if history:
@@ -220,7 +232,9 @@ DRAFT_CODES = (
     "non_twd",
     "invalid",
     "unknown_member",
+    "ambiguous_member",
     "not_equal_split",
+    "custom_required",
     "future_date",
 )
 ISSUE_CODES = (
@@ -230,6 +244,7 @@ ISSUE_CODES = (
     "ambiguous_member",
     "unsupported",
     "configuration",
+    "custom_required",
 )
 
 
@@ -283,7 +298,7 @@ def draft_issues_v3(raw: Any) -> list[JSON]:
     for item in raw:
         i = object_(item)
         exact_keys(i, ["field", "code"])
-        if i["field"] not in DRAFT_FIELDS or i["code"] not in DRAFT_CODES:
+        if i["field"] not in (*DRAFT_FIELDS, "shares") or i["code"] not in DRAFT_CODES:
             raise ValueError("Invalid draft issue")
         result.append({"field": i["field"], "code": i["code"]})
     return result
@@ -294,7 +309,7 @@ def parse_draft_v3(raw: Any) -> JSON:
     exact_keys(
         r,
         ["draftId", *DRAFT_FIELDS, "status", "issues"],
-        ["mergedFrom", "originalAmount", "updated"],
+        ["mergedFrom", "originalAmount", "updated", "shares"],
     )
     result: JSON = {"draftId": request_id(r["draftId"])}
     if "mergedFrom" in r:
@@ -357,6 +372,13 @@ def parse_draft_v3(raw: Any) -> JSON:
                 raise ValueError("Invalid default")
             field["defaulted"] = f["defaulted"]
         result[key] = field
+    if "shares" in r:
+        shares = object_(r["shares"])
+        if any(not safe_integer(amount) for amount in shares.values()):
+            raise ValueError("Invalid shares")
+        result["shares"] = {
+            email_v3(email): int(amount) for email, amount in shares.items()
+        }
     if "originalAmount" in r:
         original = r["originalAmount"]
         if original is not None:
@@ -406,7 +428,13 @@ def parse_request_v3(raw: Any) -> JSON:
         ["requestId", "action", *required],
         [
             "referenceDate",
-            *(["text"] if image else [] if action == "commit" else ["history"]),
+            *(
+                ["text", "history"]
+                if image
+                else []
+                if action == "commit"
+                else ["history"]
+            ),
         ],
     )
     result: JSON = {"requestId": request_id(r["requestId"]), "action": action}
@@ -427,6 +455,7 @@ def parse_request_v3(raw: Any) -> JSON:
         if history:
             result["history"] = [
                 {
+                    **turn,
                     "question": text_v3(turn["question"], 300),
                     "answer": text_v3(turn["answer"], 500),
                 }
@@ -502,7 +531,38 @@ def parse_response_v3(raw: Any) -> JSON:
             metadata=metadata_v3(r["metadata"]),
         )
     elif r.get("status") == "needs_input":
-        exact_keys(r, ["status", "requestId", "question", "issues"])
+        exact_keys(
+            r,
+            ["status", "requestId", "question", "issues"],
+            ["questionId", "options", "allowFreeText", "purpose"],
+        )
+        if "questionId" in r:
+            result["questionId"] = request_id(r["questionId"])
+        if "options" in r:
+
+            def option(raw: Any) -> JSON:
+                item = object_(raw)
+                exact_keys(item, ["id", "label"])
+                return {
+                    "id": bounded_text(item["id"], 1024),
+                    "label": bounded_text(item["label"], 80),
+                }
+
+            result["options"] = list_v3(r["options"], 4, option, 0)
+            if len({item["id"] for item in result["options"]}) != len(
+                result["options"]
+            ):
+                raise ValueError("Duplicate options")
+            if not result["options"] and r.get("allowFreeText") is not True:
+                raise ValueError("Empty options require free text")
+        if "allowFreeText" in r:
+            if type(r["allowFreeText"]) is not bool or (
+                not result.get("options") and not r["allowFreeText"]
+            ):
+                raise ValueError("Invalid free text")
+            result["allowFreeText"] = r["allowFreeText"]
+        if "purpose" in r:
+            result["purpose"] = bounded_text(r["purpose"], 80)
         result.update(
             question=bounded_text(r["question"], 300),
             issues=issues_v3(r["issues"], False),

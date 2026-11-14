@@ -1,4 +1,4 @@
-"""V3 draft graph; text analysis delegates to the frozen v2 graph."""
+"""V3 draft graph with shared bounded text/image clarification."""
 
 import time
 from collections.abc import Awaitable, Callable
@@ -7,6 +7,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
+from .clarification import apply_answers, clarification_result, split_context
 from .contracts import DRAFT_FIELDS, JSON, parse_request_v3
 from .drafts import (
     RECEIPT_PROMPT_VERSION,
@@ -19,6 +20,42 @@ from .errors import SemanticError, log_failure
 from .graph import Dependencies, input_hash_v4, invoke
 from .images import ImageMetadata, download_verified, read_verified_metadata
 from .provider_stream import AnalysisCallback
+
+
+def text_extraction(raw: JSON) -> JSON:
+    """Common receipt fields use the same trusted selection rules as text."""
+    return {
+        "payerId": raw["payerEmail"]["value"],
+        "splitMemberIds": raw["splitMemberEmails"]["value"],
+        "categoryId": raw["categoryId"]["value"],
+        "amount": raw["amount"]["value"],
+        "scope": raw["scope"]["value"],
+        **{k: raw[k] for k in ("shares", "splitDifference", "splitRatio") if k in raw},
+    }
+
+
+def selected_receipt(raw: JSON, request: JSON, ctx: JSON) -> tuple[JSON, bool, bool]:
+    from copy import deepcopy
+
+    adjusted, trusted, custom = apply_answers(text_extraction(raw), request, ctx)
+    d = deepcopy(raw)
+    for field, target in (
+        ("payerId", "payerEmail"),
+        ("splitMemberIds", "splitMemberEmails"),
+        ("categoryId", "categoryId"),
+        ("scope", "scope"),
+    ):
+        if adjusted.get(field) != text_extraction(raw).get(field):
+            d[target].update(
+                value=adjusted[field],
+                state="recognized",
+                source="user",
+                confidence=None,
+            )
+    for field in ("shares", "splitDifference", "splitRatio"):
+        if field in adjusted:
+            d[field] = adjusted[field]
+    return d, trusted, custom
 
 
 class DraftState(TypedDict, total=False):
@@ -215,8 +252,17 @@ async def invoke_v3(
             return reject("too_many_drafts")
         originals = state["originals"]
         drafts = []
+        force_drafts = False
         seen: set[str] = set()
-        for r in raw["drafts"]:
+        selected_raw = []
+        for original_raw in raw["drafts"]:
+            r = original_raw
+            if action == "analyze":
+                r, trusted, custom = selected_receipt(r, request, ctx)
+                if not trusted:
+                    return reject("invalid", "history")
+                force_drafts = force_drafts or custom
+            selected_raw.append(r)
             if (
                 action == "revise"
                 and r["draftId"] is not None
@@ -237,8 +283,69 @@ async def invoke_v3(
                 ):
                     d["updated"] = True
             drafts.append(d)
+        if action == "analyze" and not force_drafts:
+            # Payer/members apply to the request; item amount/note/date stay editable.
+            common_issues = []
+            mapping = {
+                "payerEmail": "payerId",
+                "splitMemberEmails": "splitMemberIds",
+                "categoryId": "categoryId",
+                "shares": "shares",
+            }
+            for field, target in mapping.items():
+                if field == "categoryId" and not all(
+                    r[field]["source"] == "text" for r in selected_raw
+                ):
+                    continue
+                failures = [
+                    next((i for i in d["issues"] if i["field"] == field), {})
+                    for d in drafts
+                ]
+                same_values = all(
+                    (r.get(field) if field == "shares" else r[field]["value"])
+                    == (
+                        selected_raw[0].get(field)
+                        if field == "shares"
+                        else selected_raw[0][field]["value"]
+                    )
+                    for r in selected_raw
+                )
+                if (
+                    field == "shares"
+                    and split_context(text_extraction(selected_raw[0]), ctx) is None
+                ):
+                    continue
+                if all(failures) and same_values:
+                    codes = {
+                        i["code"]
+                        for d in drafts
+                        for i in d["issues"]
+                        if i["field"] == field
+                    }
+                    code = next(
+                        (
+                            c
+                            for c in (
+                                "ambiguous_member",
+                                "unknown_member",
+                                "custom_required",
+                                "invalid",
+                                "missing",
+                            )
+                            if c in codes
+                        ),
+                        "invalid",
+                    )
+                    common_issues.append({"field": target, "code": code})
+            if common_issues:
+                validation: JSON = {"issues": common_issues}
+                split = split_context(text_extraction(selected_raw[0]), ctx)
+                if split is not None:
+                    validation["splitContext"] = split
+                return {"result": clarification_result(validation, request, ctx)}
         if (
             action == "analyze"
+            and not force_drafts
             and len(drafts) == 1
             and drafts[0]["status"] == "complete"
         ):

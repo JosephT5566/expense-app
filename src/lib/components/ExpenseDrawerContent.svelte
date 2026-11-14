@@ -66,30 +66,37 @@
 
 	const initialDraft = untrack(() => aiDraft);
 	let expenseData = $state(
-		initialDraft
-			? Object.assign({}, new NewExpense(), {
-					note: initialDraft.note.value ?? '',
-					amount:
-						initialDraft.currency.value === 'TWD'
-							? (initialDraft.amount.value ?? 0)
-							: 0,
-					category_id: initialDraft.categoryId.value ?? '',
-					scope: initialDraft.scope.value ?? 'personal',
-					payer_email:
-						initialDraft.scope.value === 'personal'
-							? ($currentUser?.email ?? '')
-							: (initialDraft.payerEmail.value ?? ''),
-					ts: initialDraft.date.value ? `${initialDraft.date.value}T00:00:00+08:00` : ''
-				})
-			: expenseId
-				? getExpenseById(expenseId)
-				: Object.assign({}, new NewExpense(), initialExpense) // transfer a Class to an Object.
+		untrack(
+			() =>
+				initialDraft
+					? Object.assign({}, new NewExpense(), {
+							note: initialDraft.note.value ?? '',
+							amount:
+								initialDraft.currency.value === 'TWD'
+									? (initialDraft.amount.value ?? 0)
+									: 0,
+							category_id: initialDraft.categoryId.value ?? '',
+							scope: initialDraft.scope.value ?? 'personal',
+							payer_email:
+								initialDraft.scope.value === 'personal'
+									? ($currentUser?.email ?? '')
+									: (initialDraft.payerEmail.value ?? ''),
+							ts: initialDraft.date.value
+								? `${initialDraft.date.value}T00:00:00+08:00`
+								: ''
+						})
+					: expenseId
+						? getExpenseById(expenseId)
+						: Object.assign({}, new NewExpense(), initialExpense) // transfer a Class to an Object.
+		)
 	);
 
 	let selectedDate = $state(
-		initialDraft
-			? (initialDraft.date.value ?? '')
-			: selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : '')
+		untrack(() =>
+			initialDraft
+				? (initialDraft.date.value ?? '')
+				: selectedDateProp || (expenseData.ts ? toTaiwanDateString(expenseData.ts) : '')
+		)
 	);
 	const effectiveDateDisabled = $derived(aiDraft ? false : (dateDisabled ?? !editMode));
 	const effectiveShowDelete = $derived(
@@ -97,13 +104,28 @@
 	);
 
 	const foreignCurrency = $derived(!!aiDraft && aiDraft.currency.value !== 'TWD');
-	const draftMembers = $derived.by(() => {
-		const members = [...new Set(aiDraft?.splitMemberEmails.value ?? [])];
-		return members.length >= 2 && members.every((email) => $allowedUsers.includes(email))
-			? members
-			: [...new Set($allowedUsers)];
-	});
-	const draftShares = $derived.by(() => {
+	let draftMembers = $state<string[]>(
+		untrack(() => {
+			const members = [...new Set(initialDraft?.splitMemberEmails.value ?? [])];
+			return members.length >= 2 && members.every((email) => $allowedUsers.includes(email))
+				? members
+				: [];
+		})
+	);
+	function selectDraftMember(email: string, included: string) {
+		const members =
+			included === 'yes'
+				? [...new Set([...draftMembers, email])]
+				: draftMembers.filter((member) => member !== email);
+		if (customDraftShares) {
+			customDraftShares = Object.fromEntries(
+				members.map((member) => [member, customDraftShares?.[member] ?? 0])
+			);
+		}
+		draftMembers = members;
+	}
+
+	const equalDraftShares = $derived.by(() => {
 		const amount = Number(expenseData.amount) || 0;
 		const count = draftMembers.length;
 		return Object.fromEntries(
@@ -111,10 +133,17 @@
 				.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 				.map((email, index) => [
 					email,
-					Math.floor(amount / count) + (index < amount % count ? 1 : 0)
+					Math.floor(amount / count) + (index === 0 ? amount % count : 0)
 				])
 		);
 	});
+	let customDraftShares = $state<Record<string, number> | null>(
+		initialDraft?.shares ? { ...initialDraft.shares } : null
+	);
+	const draftShares = $derived(customDraftShares ?? equalDraftShares);
+	const draftSharesTotal = $derived(
+		draftMembers.reduce((sum, email) => sum + (Number(draftShares[email]) || 0), 0)
+	);
 	let draftError = $state('');
 	function applyDraft() {
 		if (!aiDraft) {
@@ -156,7 +185,13 @@
 			splitMemberEmails: field(
 				aiDraft.splitMemberEmails,
 				expenseData.scope === 'personal' ? [email] : draftMembers
-			)
+			),
+			shares:
+				expenseData.scope === 'personal'
+					? { [email]: amount }
+					: Object.fromEntries(
+							draftMembers.map((member) => [member, draftShares[member]])
+						)
 		});
 	}
 
@@ -244,6 +279,17 @@
 		return $allowedUserInfo[email]?.name ?? email;
 	}
 
+	function getDraftMemberLabel(email: string) {
+		const name = getUserDisplayName(email);
+		const normalized = (value: string) =>
+			value.normalize('NFC').trim().replace(/\s+/g, ' ').toLowerCase();
+		return $allowedUsers.some(
+			(other) => other !== email && normalized(getUserDisplayName(other)) === normalized(name)
+		)
+			? `${name} (${email})`
+			: name;
+	}
+
 	function getEmailByDisplayName(name?: string) {
 		if (!name) {
 			return '';
@@ -280,7 +326,25 @@
 		}
 		if (expenseData?.scope === 'household') {
 			if (aiDraft) {
-				return draftMembers.length >= 2 ? '' : '請至少分配兩位成員';
+				if (
+					draftMembers.length < 2 ||
+					draftMembers.some((email) => !$allowedUsers.includes(email))
+				) {
+					return '請至少分配兩位成員';
+				}
+				if (Object.keys(draftShares).some((email) => !draftMembers.includes(email))) {
+					return '分帳成員需與分攤名單一致';
+				}
+				if (
+					!Number.isSafeInteger(Number(expenseData.amount)) ||
+					draftMembers.some(
+						(email) =>
+							!Number.isSafeInteger(draftShares[email]) || draftShares[email] < 0
+					)
+				) {
+					return '分帳金額須為非負整數';
+				}
+				return draftSharesTotal === Number(expenseData.amount) ? '' : '分帳總和需等於金額';
 			}
 			if (!sharesValid) {
 				return '分帳總和需等於金額';
@@ -454,7 +518,27 @@
 		<legend class="text-sm font-semibold mb-2"
 			>類別 {#if aiDraft}<DraftFieldChip field={aiDraft.categoryId} />{/if}</legend
 		>
-		{#if $expenseOptions.length > 0}
+		{#if aiDraft && $expenseOptions.length > 0}
+			<RadioGroup.Root
+				bind:value={
+					() => expenseData.category_id ?? '',
+					(value) => (expenseData.category_id = value)
+				}
+				aria-label="草稿分類"
+			>
+				{#each $expenseOptions as option, index (option.value)}
+					<div class="flex items-center gap-2 rounded-lg border px-3 py-3">
+						<RadioGroup.Item id={`draft-category-${index}`} value={option.value} />
+						<Label class="flex-1" for={`draft-category-${index}`}>
+							{option.label}
+							{#if aiDraft.categoryId.value === option.value && aiDraft.categoryId.state === 'recognized' && ['image', 'text'].includes(aiDraft.categoryId.source)}<span
+									class="text-xs">建議</span
+								>{/if}
+						</Label>
+					</div>
+				{/each}
+			</RadioGroup.Root>
+		{:else if $expenseOptions.length > 0}
 			{#snippet children(page: unknown, i: number)}
 				<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
 					{#each page as CategoryCard[] as cat (cat.id)}
@@ -528,38 +612,113 @@
 			<div class="grid gap-4 mt-2">
 				<div class="grid gap-2">
 					<Label>付款人</Label>
-					<Select.Root
-						type="single"
-						value={getUserDisplayName(expenseData.payer_email)}
-						onValueChange={(name) =>
-							(expenseData.payer_email = getEmailByDisplayName(name))}
-					>
-						<Select.Trigger class="w-full">
-							<Select.Value placeholder="選擇付款人" />
-						</Select.Trigger>
-						<Select.Content>
-							{#each $allowedUsers as email (email)}
-								<Select.Item value={getUserDisplayName(email)} />
+					{#if aiDraft}
+						<RadioGroup.Root
+							bind:value={expenseData.payer_email}
+							aria-label="草稿付款人"
+						>
+							{#each $allowedUsers as email, index (email)}
+								<div class="flex items-center gap-2 py-2">
+									<RadioGroup.Item
+										id={`draft-payer-${index}`}
+										value={email}
+									/><Label for={`draft-payer-${index}`}
+										>{getDraftMemberLabel(email)}</Label
+									>
+								</div>
 							{/each}
-						</Select.Content>
-					</Select.Root>
+						</RadioGroup.Root>
+					{:else}
+						<Select.Root
+							type="single"
+							value={getUserDisplayName(expenseData.payer_email)}
+							onValueChange={(name) =>
+								(expenseData.payer_email = getEmailByDisplayName(name))}
+						>
+							<Select.Trigger class="w-full">
+								<Select.Value placeholder="選擇付款人" />
+							</Select.Trigger>
+							<Select.Content>
+								{#each $allowedUsers as email (email)}
+									<Select.Item value={getUserDisplayName(email)} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					{/if}
 				</div>
 
 				{#if aiDraft}
 					<fieldset class="rounded-lg border px-4 pb-2" aria-label="草稿分帳">
-						<legend class="text-sm font-semibold"
-							>分帳 <span class="text-xs font-normal">AI 草稿只支援平分</span></legend
-						>
-						{#each draftMembers as email (email)}
-							<div class="flex justify-between gap-2 py-1" data-member-email={email}>
-								<span>{getUserDisplayName(email)}</span><span
-									>{draftShares[email]}</span
+						<legend class="text-sm font-semibold">分帳</legend>
+						<div class="mb-3 space-y-2">
+							<p class="text-xs text-muted-foreground">選擇分攤成員，至少兩位。</p>
+							{#each $allowedUsers as email, memberIndex (email)}
+								<RadioGroup.Root
+									aria-label={`${getDraftMemberLabel(email)}是否分攤`}
+									value={draftMembers.includes(email) ? 'yes' : 'no'}
+									onValueChange={(value) => selectDraftMember(email, value)}
 								>
+									<div
+										class="flex flex-wrap items-center gap-2 rounded-lg border p-2"
+									>
+										<span class="min-w-0 flex-1 break-words"
+											>{getDraftMemberLabel(email)}</span
+										>
+										<RadioGroup.Item
+											id={`draft-member-${memberIndex}-yes`}
+											value="yes"
+										/><Label for={`draft-member-${memberIndex}-yes`}>分攤</Label
+										>
+										<RadioGroup.Item
+											id={`draft-member-${memberIndex}-no`}
+											value="no"
+										/><Label for={`draft-member-${memberIndex}-no`}
+											>不分攤</Label
+										>
+									</div>
+								</RadioGroup.Root>
+							{/each}
+						</div>
+						{#each draftMembers as email, index (email)}
+							<div class="flex items-center gap-2 py-2" data-member-email={email}>
+								<Label
+									class="min-w-0 flex-1 break-words"
+									for={`draft-share-${index}`}>{getDraftMemberLabel(email)}</Label
+								>
+								<Input
+									id={`draft-share-${index}`}
+									aria-label={`${getDraftMemberLabel(email)}的分攤金額`}
+									class="w-28 text-right"
+									type="number"
+									min="0"
+									step="1"
+									inputmode="numeric"
+									value={draftShares[email] ?? 0}
+									oninput={(event) => {
+										customDraftShares = {
+											...draftShares,
+											[email]: Number(event.currentTarget.value)
+										};
+									}}
+								/>
 							</div>
 						{/each}
-						<p class="text-xs text-muted-foreground">
-							金額或成員變更時自動重新平分，無法手動輸入。
+						<p
+							class="text-right text-xs"
+							class:text-destructive={draftSharesTotal !== Number(expenseData.amount)}
+						>
+							合計：{draftSharesTotal} / 金額：{expenseData.amount}
 						</p>
+						<div class="mt-2 flex justify-end">
+							<Button
+								type="button"
+								variant="outline"
+								size="xs"
+								onclick={() => {
+									customDraftShares = null;
+								}}>平分</Button
+							>
+						</div>
 					</fieldset>
 				{:else}
 					<fieldset

@@ -8,11 +8,11 @@ from typing import Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
-from .clarification import clarification_result
+from .clarification import apply_answers, clarification_result
 from .contracts import JSON, parse_request
 from .errors import SemanticError, error_details, log_failure
 from .images import ImageStore
-from .normalize import normalize_extraction
+from .normalize import normalize_extraction, parse_extraction
 from .prompt import PROMPT_VERSION
 from .provider_stream import AnalysisCallback
 
@@ -159,6 +159,47 @@ def input_hash_v4(request: JSON, images: list[JSON] | None = None) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+def editable_draft(expense: JSON, context: JSON) -> JSON:
+    from uuid import uuid4
+
+    from .drafts import normalize_draft
+
+    values = {
+        "note": expense["note"],
+        "amount": expense["amount"],
+        "currency": expense["currency"],
+        "date": context.get("referenceDate", context["today"]),
+        "scope": expense["scope"],
+        "payerEmail": expense["payer_email"],
+        "categoryId": expense["category_id"],
+        "splitMemberEmails": list(expense["shares_json"]),
+    }
+    # Convert the expense's UTC timestamp back to its Taiwan calendar day.
+    from datetime import datetime, timedelta, timezone
+
+    values["date"] = (
+        datetime.fromisoformat(expense["ts"].replace("Z", "+00:00"))
+        .astimezone(timezone(timedelta(hours=8)))
+        .date()
+        .isoformat()
+    )
+    raw = {
+        "draftId": str(uuid4()),
+        "originalAmountText": None,
+        "shares": expense["shares_json"],
+        **{
+            key: {
+                "value": value,
+                "state": "recognized",
+                "confidence": None,
+                "source": "user",
+            }
+            for key, value in values.items()
+        },
+    }
+    return normalize_draft(raw, context)
+
+
 async def invoke(
     request: JSON,
     token: str,
@@ -276,9 +317,37 @@ async def invoke(
     def validate(state: State) -> JSON:
         nonlocal active_node
         active_node = "validate"
-        validation = normalize_extraction(state["extraction"]["raw"], state["context"])
+        try:
+            raw = parse_extraction(state["extraction"]["raw"])
+        except (ValueError, TypeError):
+            return {
+                "validation": {"status": "rejected"},
+                "result": {
+                    "status": "rejected",
+                    "requestId": request["requestId"],
+                    "issues": [{"field": "extraction", "code": "invalid"}],
+                },
+            }
+        raw, trusted, custom = apply_answers(raw, request, state["context"])
+        validation: JSON = (
+            normalize_extraction(raw, state["context"])
+            if trusted
+            else {
+                "status": "rejected",
+                "issues": [{"field": "history", "code": "invalid"}],
+            }
+        )
         result = {"validation": validation}
-        if validation["status"] == "rejected":
+        if custom and validation["status"] == "valid":
+            result["validation"] = {"status": "drafts"}
+            result["result"] = {
+                "status": "drafts",
+                "requestId": request["requestId"],
+                "drafts": [editable_draft(validation["expense"], state["context"])],
+                "reason": "incomplete",
+                "metadata": metadata(state["extraction"]),
+            }
+        elif validation["status"] == "rejected":
             result["result"] = clarification_result(
                 validation, request, state["context"]
             )
