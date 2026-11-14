@@ -26,16 +26,16 @@ uv run --directory services/semantic-entry --locked python -m semantic_entry.ser
 
 ## Configuration
 
-| Variable                    | Value                                                                        |
-| --------------------------- | ---------------------------------------------------------------------------- |
-| `SUPABASE_URL`              | Existing Supabase project HTTPS origin                                       |
-| `SUPABASE_PUBLISHABLE_KEY`  | Publishable key; never a service-role key                                    |
-| `GEMINI_API_KEY`            | Secret Manager secret exposed only to the backend                            |
-| `SEMANTIC_MODEL`            | `gemini-3.5-flash-lite` by default                                           |
-| `SEMANTIC_MEMBER_NAMES`     | JSON object of allowed email to display name; e.g. `{"a@example.test":"甲"}` |
-| `SEMANTIC_UPLOAD_BUCKET`    | Existing private GCS bucket for caller-owned receipt uploads                 |
-| `SEMANTIC_ALLOWED_ORIGINS`  | Comma-separated exact frontend origins, without paths/trailing slash         |
-| `PUBLIC_SEMANTIC_ENTRY_URL` | Frontend build value: Cloud Run origin; client appends `/semantic-entry`     |
+| Variable                    | Value                                                                                                                                                               |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_URL`              | Existing Supabase project HTTPS origin                                                                                                                              |
+| `SUPABASE_PUBLISHABLE_KEY`  | Publishable key; never a service-role key                                                                                                                           |
+| `GEMINI_API_KEY`            | Secret Manager secret exposed only to the backend                                                                                                                   |
+| `SEMANTIC_MODEL`            | `gemini-3.5-flash-lite` by default                                                                                                                                  |
+| `SEMANTIC_MEMBER_NAMES`     | Runtime JSON email-to-name map, e.g. `{"a@example.test":"甲"}`; deployment derives it from GitHub `vars.PUBLIC_EMAIL_NAME_MAPPING`; local tests may set it directly |
+| `SEMANTIC_UPLOAD_BUCKET`    | Existing private GCS bucket for caller-owned receipt uploads                                                                                                        |
+| `SEMANTIC_ALLOWED_ORIGINS`  | Comma-separated exact frontend origins, without paths/trailing slash                                                                                                |
+| `PUBLIC_SEMANTIC_ENTRY_URL` | Frontend build value: Cloud Run origin; client appends `/semantic-entry`                                                                                            |
 
 `SEMANTIC_UPLOAD_BUCKET` is required for image uploads and must match `[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]` in the deployment workflow. The operator creates/configures the private bucket, grants the runtime account scoped object read/write and signed-URL signing permissions, and configures bucket CORS for the exact frontend origins, PUT, and Content-Type. Bucket CORS is separate from service CORS. The operator also configures an appropriate object lifecycle deletion policy; the service does not create the bucket or automatically delete uploaded objects. Signed URLs expire after 15 minutes; URL expiration does not delete objects. Verify IAM, CORS and lifecycle separately before enabling images.
 
@@ -51,7 +51,7 @@ Set the frontend's public URL to the service origin, rebuild under the GitHub Pa
 
 The service uses FastAPI with Uvicorn and accepts `POST /semantic-entry`, `POST /semantic-entry/uploads`, `GET /semantic-entry/:requestId`, `OPTIONS`, and `GET /health`. The pure text adapter uses one structured model call, an 800-token output cap, minimal thinking for the default model, a 15-second model deadline, and no model retries. The image/revise adapter uses the Google GenAI SDK with a 4096-token cap and 75s/25s model deadlines respectively; commit does not call the model. The REST `generationConfig.responseFormat.text.mimeType` is the enum `APPLICATION_JSON`, not the MIME string `application/json`. [Gemini structured output reference](https://ai.google.dev/gemini-api/docs/generate-content/structured-output) and [model reference](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite).
 
-The v3 POST endpoint accepts analyze/revise/commit and negotiates JSON or SSE with `semantic-version=3`; pure text retains bounded clarification history. For legacy requests, clients requesting `Accept: text/event-stream; semantic-version=2` also receive bounded Gemini analysis fragments before the usual events. Unversioned clients retain the old event set, and ordinary JSON POST is unchanged. Analysis is informational; completeness and fixed questions remain rule-based. The pure text provider retains one call per round, an 800-token output cap, and a 15-second total model deadline. Analysis and extraction must both fit that cap; hosted compatibility and latency still need authorized live verification.
+The v3 POST endpoint accepts analyze/revise/commit and negotiates JSON or SSE with `semantic-version=3`; both text and image analyze retain bounded clarification history. Request-level payer, members, category and split questions use server-generated options; per-item missing fields remain editable drafts. For legacy requests, clients requesting `Accept: text/event-stream; semantic-version=2` also receive bounded Gemini analysis fragments before the usual events. Unversioned clients retain the old event set, and ordinary JSON POST is unchanged. Analysis is informational; completeness and fixed questions remain rule-based. The pure text provider retains one call per round, an 800-token output cap, and a 15-second total model deadline. Analysis and extraction must both fit that cap; hosted compatibility and latency still need authorized live verification.
 
 The SSE lifecycle retains its existing behavior; no new agent endpoint or conversation table is required. See [wire and idempotency contracts](database.md#semantic-entry-service). The hosting path must forward `text/event-stream` incrementally without buffering. A `persisting` event precedes the RPC; accepted writes continue in an in-process task after response disconnection, subject to the request deadline and instance lifetime. Verify this on the hosted path, including proxy buffering, lost responses, cold starts, and instance shutdown. Only UUID recovery is stored by the browser.
 
@@ -67,7 +67,7 @@ For Gemini non-success responses, logs include `upstreamHttpStatus`. An error bo
 
 ## Production migrations
 
-The chain is `20261011000000_existing_public_baseline.sql` → `202610120001_semantic_entry.sql` → `202610130001_semantic_trigger_citext.sql`. The baseline captures existing public schema without application data. Its older version establishes ordering; it was captured on 2026-10-13. On the designated project, baseline and existing semantic migration were recorded as applied after verification; only the trigger fix was executed. Never rerun adopted schema DDL or mark unverified changes applied.
+The chain is `20261011000000_existing_public_baseline.sql` → `202610120001_semantic_entry.sql` → `202610130001_semantic_trigger_citext.sql` → `202610280001_semantic_entry_batch.sql` → `202611140001_semantic_entry_custom_shares.sql`. The latest migration replaces both single and batch semantic RPCs so text and draft writes accept custom shares. Each share must be a non-negative integer for an allowed member, and the sum must equal the expense amount. Personal and household scope checks, caller authorization, definer search path, grants and replay semantics remain in place. Equal shares and their existing first-email remainder remain valid. The new migration has not been applied or verified against production. The baseline captures existing public schema without application data. Its older version establishes ordering; it was captured on 2026-10-13. On the designated project, baseline and existing semantic migration were recorded as applied after verification; only the trigger fix was executed. Never rerun adopted schema DDL or mark unverified changes applied.
 
 The repository's `supabase/config.toml` remains the disposable test configuration. Production CLI operations use an initialized independent workdir with only the reviewed migration files. Compare `migration list`, review `db push --dry-run`, then apply pending changes with `db push --yes`. Future migrations must follow the adopted chain; do not edit applied files or run a remote reset.
 
@@ -99,6 +99,8 @@ The full Supabase CLI path used by Linux CI starts local services with automatic
 supabase start
 docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/fixtures/semantic-entry-test-schema.sql
 docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610120001_semantic_entry.sql
+docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610280001_semantic_entry_batch.sql
+docker exec -i supabase_db_jopie-semantic-entry-test psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202611140001_semantic_entry_custom_shares.sql
 supabase status -o env > /tmp/jopie-semantic-supabase.env
 set -a
 . /tmp/jopie-semantic-supabase.env
@@ -114,6 +116,8 @@ On the development Mac, CLI 2.120.0 failed in its realtime migration with an OS 
 ```sh
 services/semantic-entry/scripts/local-db.sh
 docker exec -i jopie-semantic-test-db psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610120001_semantic_entry.sql
+docker exec -i jopie-semantic-test-db psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202610280001_semantic_entry_batch.sql
+docker exec -i jopie-semantic-test-db psql -U postgres -v ON_ERROR_STOP=1 < supabase/migrations/202611140001_semantic_entry_custom_shares.sql
 TEST_SUPABASE_URL=http://127.0.0.1:55421 TEST_STANDALONE_POSTGREST=1 uv run --directory services/semantic-entry --locked pytest -o addopts="" tests/test_db_integration.py
 docker rm -f jopie-semantic-test-rest jopie-semantic-test-db
 ```
@@ -131,30 +135,34 @@ The release target is the existing **Cloud Run container service**, rather than 
 Configure GCP in the console after code review:
 
 1. Select project/region and enable Cloud Run, Artifact Registry, Secret Manager, IAM, IAM Credentials, and Security Token Service APIs. Create a Docker Artifact Registry repository in the chosen region; set a budget/alerts.
-2. Create separate deployer and runtime service accounts. Give the deployer Artifact Registry Writer on that repository, Cloud Run Developer for the intended service (project scope is needed for initial creation), and Service Account User only on the runtime account. The deployer does not need to read the model secret or administer the database. Give the runtime Secret Manager Secret Accessor only on the model-key secret. Member display names are ordinary runtime configuration, provided by the GitHub environment variable `SEMANTIC_MEMBER_NAMES`.
+2. Create separate deployer and runtime service accounts. Give the deployer Artifact Registry Writer on that repository, Cloud Run Developer for the intended service (project scope is needed for initial creation), and Service Account User only on the runtime account. The deployer does not need to read the model secret or administer the database. Give the runtime Secret Manager Secret Accessor only on the model-key secret. Member display names are ordinary runtime configuration derived from GitHub `vars.PUBLIC_EMAIL_NAME_MAPPING`, the same source used by the frontend.
 3. Create a GitHub OIDC Workload Identity pool/provider. Restrict its attribute condition to your repository/owner IDs and `refs/heads/master`; grant the matching principal Workload Identity User only on the deployer account. Do not upload a service-account JSON key to GitHub. Follow [Google's authentication action setup](https://github.com/google-github-actions/auth#setting-up-workload-identity-federation).
 4. Create a Secret Manager version for the Gemini API key. Record numeric versions, not `latest`. Verify the actual expense schema/RLS, install only the reviewed production-compatible migration, and confirm the caller can read existing expense categories before releasing. This workflow never applies SQL.
 5. Configure public browser access for the Cloud Run service in the console. Supabase bearer JWT authentication remains enforced inside the application. The deployer does not change IAM/public invocation policy. If the first deployment creates a private service, its unauthenticated health check fails after deployment; configure public invocation and rerun. The failed health step does not roll back the deployed revision. See [public access configuration](https://docs.cloud.google.com/run/docs/authenticating/public) and [required deployment roles](https://docs.cloud.google.com/run/docs/deploying).
 
 Create the GitHub environment `semantic-entry-production`, restrict it to `master`, and configure required reviewers if desired. Add these environment variables:
 
-| Name                             | Value                                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `GCP_PROJECT_ID`                 | Selected project ID                                                                              |
-| `GCP_REGION`                     | Selected region, e.g. `asia-east1`                                                               |
-| `GCP_ARTIFACT_REPOSITORY`        | Docker repository name                                                                           |
-| `GCP_CLOUD_RUN_SERVICE`          | Dedicated service name, e.g. `jopie-semantic-entry`                                              |
-| `GCP_DEPLOY_SERVICE_ACCOUNT`     | Deployer service account email                                                                   |
-| `GCP_RUNTIME_SERVICE_ACCOUNT`    | Separate runtime service account email                                                           |
-| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` name |
-| `SEMANTIC_UPLOAD_BUCKET`         | Existing private receipt upload bucket; forwarded to runtime                                     |
-| `SEMANTIC_GEMINI_SECRET`         | Secret name plus numeric version, e.g. `semantic-gemini-key:1`                                   |
-| `SEMANTIC_MODEL`                 | Optional; defaults to `gemini-3.5-flash-lite`                                                    |
-| `SEMANTIC_MEMBER_NAMES`          | JSON email-to-display-name mapping, e.g. `{"a@example.test":"甲"}`                               |
-| `SEMANTIC_ALLOWED_ORIGINS`       | Exact HTTPS frontend origins, comma-separated without whitespace, path, or trailing slash        |
-| `PUBLIC_SUPABASE_URL`            | Existing Supabase project HTTPS origin                                                           |
+| Name                             | Value                                                                                              |
+| -------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `GCP_PROJECT_ID`                 | Selected project ID                                                                                |
+| `GCP_REGION`                     | Selected region, e.g. `asia-east1`                                                                 |
+| `GCP_ARTIFACT_REPOSITORY`        | Docker repository name                                                                             |
+| `GCP_CLOUD_RUN_SERVICE`          | Dedicated service name, e.g. `jopie-semantic-entry`                                                |
+| `GCP_DEPLOY_SERVICE_ACCOUNT`     | Deployer service account email                                                                     |
+| `GCP_RUNTIME_SERVICE_ACCOUNT`    | Separate runtime service account email                                                             |
+| `GCP_WORKLOAD_IDENTITY_PROVIDER` | Full `projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/<provider>` name   |
+| `SEMANTIC_UPLOAD_BUCKET`         | Existing private receipt upload bucket; forwarded to runtime                                       |
+| `SEMANTIC_GEMINI_SECRET`         | Secret name plus numeric version, e.g. `semantic-gemini-key:1`                                     |
+| `SEMANTIC_MODEL`                 | Optional; defaults to `gemini-3.5-flash-lite`                                                      |
+| `PUBLIC_EMAIL_NAME_MAPPING`      | Single source: JSON email-to-object map, e.g. `{"a@example.test":{"name":"甲","color":"#808080"}}` |
+| `SEMANTIC_ALLOWED_ORIGINS`       | Exact HTTPS frontend origins, comma-separated without whitespace, path, or trailing slash          |
+| `PUBLIC_SUPABASE_URL`            | Existing Supabase project HTTPS origin                                                             |
 
-The workflow validates `SEMANTIC_MEMBER_NAMES` as a JSON object with string values, then injects it into the Cloud Run runtime through `--env-vars-file`; it is not baked into the container image. Updating the GitHub variable takes effect on the next deployment. This mapping is ordinary configuration visible to users with access to those settings; it is not a Secret Manager binding. No `semantic-member-names` secret is required. The mapping does not grant database authorization, which remains controlled by Supabase. Names used in descriptions (for example, 「派大」 in 「與派大平分」) must match this backend mapping or a member email; the frontend `PUBLIC_EMAIL_NAME_MAPPING` is not automatically read by the service. Unmapped members use their email as their name. Use distinct names to avoid ambiguous matches. Bare 「平分」 without specified participants or headcount defaults to all currently allowed members; specified members take precedence. Shares are calculated by the backend, not Gemini.
+The existing Python release-validation step calls [`derive_member_names.py`](../services/semantic-entry/scripts/derive_member_names.py) with `vars.PUBLIC_EMAIL_NAME_MAPPING`. It requires a JSON object with email keys and object values containing non-empty string `name`; arrays, malformed JSON, missing names and invalid shapes fail deployment without echoing values. An empty object is valid. The helper discards frontend-only `color`, producing the existing `{email: name}` runtime `SEMANTIC_MEMBER_NAMES`, injected through `--env-vars-file`. The service parser is unchanged and never reads `PUBLIC_*` directly. No `vars.SEMANTIC_MEMBER_NAMES` fallback is used, and the map is not baked into the image or stored in Secret Manager. Fixture tests run with backend pytest in `semantic-entry-check.yml`.
+
+After merging this workflow to `master`, the operator must start a new `workflow_dispatch` deployment for the source change to take effect, then remove the obsolete GitHub `vars.SEMANTIC_MEMBER_NAMES` after successful deployment. Local services and tests may still set the runtime `SEMANTIC_MEMBER_NAMES` JSON map directly. Production variable contents and the deployed revision remain unverified by repository tests.
+
+The map does not grant database authorization, which remains controlled by Supabase. Unmapped members use their email as their name. Backend matching accepts member id, email, or a case-insensitive exact configured name only when uniquely matched; unknown or duplicate names require clarification. Relationship words and fuzzy matching are not resolved. Bare 「平分」 without participants or headcount defaults to all allowed members; an explicit complete list takes precedence. Missing payer defaults to the caller, but an explicitly unresolved payer never does. Custom shares must be non-negative integers summing exactly to the total. An impossible integer difference returns split candidates rather than silently rounding.
 
 Add the environment secret `PUBLIC_SUPABASE_PUBLISHABLE_KEY` (publishable key only). The workflow writes a temporary runtime environment file, binds secret references, pushes an image tagged with the source SHA, and deploys the resolved immutable digest. The environment file and secret bindings are authoritative for this dedicated service. It uses request-based CPU allocation, zero minimum/two maximum instances, one vCPU, 1 GiB, and a 90-second request timeout. It does not set up IAM, create secret versions, or run paid evaluation. The workflow definition has been inspected locally; Google authentication, permissions, Artifact Registry push, and hosted behavior require the first authorized execution.
 

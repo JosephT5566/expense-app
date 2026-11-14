@@ -48,7 +48,7 @@ jobs:
             GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
             SEMANTIC_GEMINI_SECRET: ${{ vars.SEMANTIC_GEMINI_SECRET }}
             SEMANTIC_MODEL: ${{ vars.SEMANTIC_MODEL || 'gemini-3.5-flash-lite' }}
-            SEMANTIC_MEMBER_NAMES: ${{ vars.SEMANTIC_MEMBER_NAMES }}
+            PUBLIC_EMAIL_NAME_MAPPING: ${{ vars.PUBLIC_EMAIL_NAME_MAPPING }}
             SEMANTIC_UPLOAD_BUCKET: ${{ vars.SEMANTIC_UPLOAD_BUCKET }}
             SEMANTIC_ALLOWED_ORIGINS: ${{ vars.SEMANTIC_ALLOWED_ORIGINS }}
             SUPABASE_URL: ${{ vars.PUBLIC_SUPABASE_URL }}
@@ -59,7 +59,7 @@ jobs:
               shell: bash
               run: |
                   python3 - <<'PY'
-                  import json, os, re
+                  import json, os, re, runpy
                   from pathlib import Path
                   from urllib.parse import urlparse
                   patterns = {
@@ -78,11 +78,10 @@ jobs:
                     if not re.fullmatch(pattern, os.environ[name]):
                       raise SystemExit(f'Missing or invalid configuration: {name}')
                   try:
-                    member_names = json.loads(os.environ['SEMANTIC_MEMBER_NAMES'])
-                  except ValueError:
-                    raise SystemExit('Invalid SEMANTIC_MEMBER_NAMES JSON') from None
-                  if not isinstance(member_names, dict) or any(not isinstance(value, str) for value in member_names.values()):
-                    raise SystemExit('SEMANTIC_MEMBER_NAMES must map emails to display-name strings')
+                    derive_member_names = runpy.run_path('services/semantic-entry/scripts/derive_member_names.py')['derive_member_names']
+                    member_names = derive_member_names(os.environ['PUBLIC_EMAIL_NAME_MAPPING'])
+                  except ValueError as error:
+                    raise SystemExit(str(error)) from None
                   if os.environ['GCP_DEPLOY_SERVICE_ACCOUNT'] == os.environ['GCP_RUNTIME_SERVICE_ACCOUNT']:
                     raise SystemExit('Deploy and runtime service accounts must differ')
                   def origin(value):
