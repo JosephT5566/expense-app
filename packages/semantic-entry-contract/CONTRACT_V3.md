@@ -12,7 +12,8 @@
 - `analyze`：純文字需要 `text`；圖片模式需要 `images`，可附 `text`（可空白）。
 - `revise`：需要 `text` 與 `drafts`。
 - `commit`：需要 `drafts`，不接受 `text`、`history` 或 `images`。
-- 純文字 analyze／revise 可附 `history`，最多三組 `{question, answer}`。
+- 文字／圖片 analyze 及 revise 可附 `history`，最多三組 `{question, answer, questionId?, optionId?}`。
+  `optionId` 必須搭配 UUID `questionId`；選項答案以 label 填入 `answer`，後端依可信 context 重新驗證 id。
 
 文字會 trim 並做 NFC 正規化；text 最多 500 字元，history 問答上限為 300／500。
 `images` 是 1–4 個路徑字串，每個最多 1024 字元，不接受含 `..` 的路徑；
@@ -21,7 +22,8 @@
 `note`、`amount`、`currency`、`date`、`categoryId`、`scope`、`payerEmail`、`splitMemberEmails`。
 每欄包含 `value/state/confidence/source`，date 另含 `defaulted`；
 state 區分 recognized、unrecognized、missing、explicit_null。
-草稿可附 `mergedFrom`、`originalAmount`。
+草稿可附 `mergedFrom`、`originalAmount`、`shares`。
+`shares` 是 email → 非負安全整數金額的 map；省略時採平分，提供時須涵蓋分攤名單且總和等於 amount。
 用戶端回傳草稿可省略 `status`、`issues`、`updated`；有帶會先驗證再丟棄。
 
 ## v3 response 與 SSE
@@ -29,7 +31,10 @@ state 區分 recognized、unrecognized、missing、explicit_null。
 response 都包含 `status`、`requestId`。
 `created` 回傳 1–20 筆 `expenses`、`replayed`、可為 null 的 `metadata`；
 `drafts` 回傳草稿、`reason: multiple | incomplete` 與 metadata。
-`needs_input` 包含 question／issues；`rejected` 包含 issues，可附逐草稿 draftIssues。
+`needs_input` 包含 question／issues，可附 UUID `questionId`、最多四個 `{id,label}` 的 `options`、
+布林 `allowFreeText` 與 `purpose`。label 為 1–80 字元，不可重複 option id；空 options 必須搭配 `allowFreeText:true`。
+實體題由服務列出可信 context 的成員／分類，`allowFreeText:false`；題目含編號文字 fallback。分類超過四個時，以「其他分類」分頁，每頁最多四個選項；分頁也計入三題上限，分頁 id 不會寫入分類。
+`rejected` 包含 issues，可附逐草稿 draftIssues。
 狀態查詢為 `completed`（expenses、replayed:true）或 `not_found`。
 SSE `result` 使用上述 v3 response；其餘事件為 `analysis_delta`、
 `persisting`、`error`。analysis_delta 包含 requestId／非負整數 seq／1–200 字元 text；
@@ -41,7 +46,7 @@ persisting 包含 status／requestId；error 包含 `{error:{code,uncertain}}`�
 內容為 `v4\n` 加上固定欄位順序的緊湊 JSON，數字採 ECMAScript 表示法。
 依序涵蓋 action、text（預設空字串）、history（預設 []）、referenceDate（預設 null）、
 images（依序為 path／服務讀取的 generation）、drafts（預設 []）。
-草稿包含 draftId、可選 mergedFrom／originalAmount，以及八欄的全部欄位資料；
+草稿包含 draftId、可選 mergedFrom／originalAmount／shares，以及八欄的全部欄位資料；
 status／issues／updated 已被丟棄，不參與雜湊；requestId 也不參與。
 沒有 images／drafts 時沿用既有 input_hash 的 v1／v2／v3 分支。
 `graph_v3.py` 的圖片／草稿分支使用此函式；純文字 analyze 委派既有 graph。
@@ -52,7 +57,8 @@ status／issues／updated 已被丟棄，不參與雜湊；requestId 也不參�
 成功回傳 `{expenses, replayed}`；一批 1–20 筆，依輸入順序寫入並保存快照。
 RPC 在同一交易中操作 ledger、expenses 與 trigger shares，失敗整批回滾。
 金額為正整數且不超過 9999999999；shares 為非負整數且總和等於 amount。
-household 只接受平分，餘數給 `min(key collate "C")`。
+household 接受自訂整數分攤，成員須屬於當下 allowed members；平分路徑的餘數仍給 `min(key collate "C")`。
+新增 migration `202611140001_semantic_entry_custom_shares.sql` 放寬單筆與批次 RPC 的平分限制；正式部署尚需 operator 套用。
 
 - PT401：Authentication required；PT403：Membership required。
 - PT400：Invalid request identity（request_id 缺少，或 hash 非 64 位小寫十六進位）。
@@ -83,7 +89,7 @@ Cloud Run 設定 90s／1Gi；圖片 analyze 的服務 deadline 目前是 85s（�
 
 `requestId`、`draftId` 與 `mergedFrom` 項目均須符合 UUID 的 8-4-4-4-12 十六進位格式。
 新 analyze／revise／commit 使用新的 UUID；同一不確定寫入的重試須保留原 UUID 與完整 payload。
-純文字補答保留對話 UUID，但答案會改變 hash；已完成 UUID 改用不同 hash 會衝突。
+文字與圖片補答保留對話 UUID 及 referenceDate，但答案會改變 hash；已完成 UUID 改用不同 hash 會衝突。
 同一使用者已完成且 hash 相同的請求回放原快照，不會再次新增。
 圖片 hash 綁定服務讀取的 generation，不能由用戶端指定。
 
@@ -99,7 +105,9 @@ Cloud Run 設定 90s／1Gi；圖片 analyze 的服務 deadline 目前是 85s（�
 - 純文字 `analyze` 沿用既有單筆支出／補問流程；不是多筆純文字擷取。
   `needs_input` 的 `question` 為 1–300 字元，`issues` 為欄位原因，補答放入 bounded history。
 - 圖片 `analyze` 的「一筆」是收據上的一個消費品項（多品項收據會拆成多筆草稿）。
-  只有一筆且完整時直接寫入，回 `created`；多筆或任一不完整時回 `drafts`。
+  請求層級的付款人／分攤／分類等可修問題先回 `needs_input`；補答攜帶原圖片與更新後 history。
+  一輪一題，滿三題仍未解決則 `rejected`。只有一筆且完整時直接寫入，回 `created`；
+  多筆或品項各自缺欄位時回 `drafts`。選擇「我來指定每人金額」也回草稿供編輯，不自動寫入。
   所有圖片均非收據且沒有草稿時回 `rejected`／`not_a_receipt`；超過 20 筆回 `too_many_drafts`。
 - `revise` 依 text 與目前 drafts 重新擷取，不寫入支出；即使只剩一筆完整草稿也回 `drafts`。
   既有草稿變更或新增時可帶 `updated:true`，合併來源可保留 `mergedFrom`。
@@ -150,10 +158,11 @@ SSE 每 frame 使用 `event` 與 JSON `data`：
 用戶端回傳的 computed 欄位不作為服務信任來源。
 
 Draft issue code 為 `missing`、`unrecognized`、`low_confidence`、`missing_confidence`、
-`date_defaulted`、`non_twd`、`invalid`、`unknown_member`、`not_equal_split`、`future_date`。
+`date_defaulted`、`non_twd`、`invalid`、`unknown_member`、`ambiguous_member`、`not_equal_split`、`custom_required`、`future_date`。
 目前自動完整度檢查會標記低於 0.7 的 confidence、圖片已辨識卻無 confidence、
 無法辨識日期的預設值，以及不合法／缺少的必要值。
-`not_equal_split` 是契約可接受 code，目前 `drafts.py` 未產生它；分攤金額由服務計算平分。
+`not_equal_split` 保留 wire 相容性；`shares` issue 可標記無效自訂金額或需手動確認。
+分攤可採既有平分或每人自訂非負整數金額，服務再次驗證總和與成員授權。
 `commit` 以 value 驗證，不以 confidence、state 或 defaulted 阻擋有效值。
 
 圖片正規化會將正數小數金額向上取整並保存 originalAmount；非 TWD 保留並標記。

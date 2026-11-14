@@ -3,6 +3,8 @@ export type { ExpenseRow };
 export interface ClarificationTurn {
 	question: string;
 	answer: string;
+	questionId?: string;
+	optionId?: string;
 }
 export interface SemanticRequest {
 	requestId: string;
@@ -29,6 +31,9 @@ export interface ModelExtraction {
 	scope: 'personal' | 'household' | null;
 	hasSharedIntent: boolean;
 	splitMemberIds: string[] | null;
+	shares?: Record<string, number> | null;
+	splitDifference?: number | null;
+	splitRatio?: Record<string, number> | null;
 	categoryId: string | null;
 	unsupportedReason: string | null;
 }
@@ -38,7 +43,8 @@ export type IssueCode =
 	| 'unknown_member'
 	| 'ambiguous_member'
 	| 'unsupported'
-	| 'configuration';
+	| 'configuration'
+	| 'custom_required';
 export interface Issue {
 	field: string;
 	code: IssueCode;
@@ -71,7 +77,16 @@ export interface CompletedResult {
 export type SemanticResponse =
 	| ({ status: 'created'; requestId: string; metadata: Metadata } & CompletedResult)
 	| { status: 'rejected'; requestId: string; issues: Issue[] }
-	| { status: 'needs_input'; requestId: string; question: string; issues: Issue[] };
+	| {
+			status: 'needs_input';
+			requestId: string;
+			question: string;
+			issues: Issue[];
+			questionId?: string;
+			options?: { id: string; label: string }[];
+			allowFreeText?: boolean;
+			purpose?: string;
+	  };
 export type StatusResponse =
 	| ({ status: 'completed'; requestId: string } & CompletedResult)
 	| { status: 'not_found'; requestId: string };
@@ -82,7 +97,8 @@ const codes: IssueCode[] = [
 	'unknown_member',
 	'ambiguous_member',
 	'unsupported',
-	'configuration'
+	'configuration',
+	'custom_required'
 ];
 export function object(raw: unknown): Record<string, unknown> {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -161,10 +177,19 @@ export function parseRequest(raw: unknown): SemanticRequest {
 		}
 		const history = r.history.map((raw): ClarificationTurn => {
 			const turn = object(raw);
-			exactKeys(turn, ['question', 'answer']);
+			exactKeys(turn, ['question', 'answer'], ['questionId', 'optionId']);
+			if (Object.hasOwn(turn, 'optionId') && !Object.hasOwn(turn, 'questionId')) {
+				throw new Error('Missing question ID');
+			}
 			return {
 				question: boundedText(turn.question, 300),
-				answer: boundedText(turn.answer, 500)
+				answer: boundedText(turn.answer, 500),
+				...(Object.hasOwn(turn, 'questionId')
+					? { questionId: requestId(turn.questionId) }
+					: {}),
+				...(Object.hasOwn(turn, 'optionId')
+					? { optionId: boundedText(turn.optionId, 1024) }
+					: {})
 			};
 		});
 		if (history.length) {
@@ -242,7 +267,8 @@ export function parseResponse(raw: unknown): SemanticResponse {
 			r,
 			r.status === 'needs_input'
 				? ['status', 'requestId', 'issues', 'question']
-				: ['status', 'requestId', 'issues']
+				: ['status', 'requestId', 'issues'],
+			r.status === 'needs_input' ? ['questionId', 'options', 'allowFreeText', 'purpose'] : []
 		);
 		if (!Array.isArray(r.issues) || !r.issues.length) {
 			throw new Error('Invalid issues');
@@ -256,11 +282,58 @@ export function parseResponse(raw: unknown): SemanticResponse {
 			}
 			return i as unknown as Issue;
 		});
+		const clarification: Partial<Extract<SemanticResponse, { status: 'needs_input' }>> = {};
+		if (r.status === 'needs_input') {
+			if (Object.hasOwn(r, 'questionId')) {
+				clarification.questionId = requestId(r.questionId);
+			}
+			if (Object.hasOwn(r, 'options')) {
+				clarification.options = listV3(
+					r.options,
+					4,
+					(raw) => {
+						const option = object(raw);
+						exactKeys(option, ['id', 'label']);
+						return {
+							id: boundedText(option.id, 1024),
+							label: boundedText(option.label, 80)
+						};
+					},
+					0
+				);
+				if (
+					new Set(clarification.options.map((option) => option.id)).size !==
+					clarification.options.length
+				) {
+					throw new Error('Duplicate options');
+				}
+			}
+			if (Object.hasOwn(r, 'allowFreeText')) {
+				if (
+					typeof r.allowFreeText !== 'boolean' ||
+					(!clarification.options?.length && !r.allowFreeText)
+				) {
+					throw new Error('Invalid free text');
+				}
+				clarification.allowFreeText = r.allowFreeText;
+			}
+			if (
+				Object.hasOwn(r, 'options') &&
+				!clarification.options?.length &&
+				r.allowFreeText !== true
+			) {
+				throw new Error('Empty options require free text');
+			}
+			if (Object.hasOwn(r, 'purpose')) {
+				clarification.purpose = boundedText(r.purpose, 80);
+			}
+		}
 		return r.status === 'needs_input'
 			? {
 					status: 'needs_input',
 					requestId: id,
 					question: boundedText(r.question, 300),
+					...clarification,
 					issues
 				}
 			: { status: 'rejected', requestId: id, issues };
@@ -375,6 +448,7 @@ export interface Draft {
 	scope: DraftField<'personal' | 'household'>;
 	payerEmail: DraftField<string>;
 	splitMemberEmails: DraftField<string[]>;
+	shares?: Record<string, number>;
 	status: 'complete' | 'incomplete';
 	issues: DraftIssue[];
 	updated?: boolean;
@@ -390,7 +464,7 @@ const draftFields = [
 	'payerEmail',
 	'splitMemberEmails'
 ] as const;
-export type DraftFieldName = (typeof draftFields)[number];
+export type DraftFieldName = (typeof draftFields)[number] | 'shares';
 export type DraftIssueCode =
 	| 'missing'
 	| 'unrecognized'
@@ -400,7 +474,9 @@ export type DraftIssueCode =
 	| 'non_twd'
 	| 'invalid'
 	| 'unknown_member'
+	| 'ambiguous_member'
 	| 'not_equal_split'
+	| 'custom_required'
 	| 'future_date';
 const draftCodes: DraftIssueCode[] = [
 	'missing',
@@ -411,7 +487,9 @@ const draftCodes: DraftIssueCode[] = [
 	'non_twd',
 	'invalid',
 	'unknown_member',
+	'ambiguous_member',
 	'not_equal_split',
+	'custom_required',
 	'future_date'
 ];
 export interface DraftIssue {
@@ -426,7 +504,13 @@ export type SemanticRequestV3 = { requestId: string; referenceDate?: string } & 
 			images?: never;
 			drafts?: never;
 	  }
-	| { action: 'analyze'; text?: string; images: string[]; history?: never; drafts?: never }
+	| {
+			action: 'analyze';
+			text?: string;
+			images: string[];
+			history?: ClarificationTurn[];
+			drafts?: never;
+	  }
 	| {
 			action: 'revise';
 			text: string;
@@ -515,7 +599,7 @@ function draftIssuesV3(raw: unknown): DraftIssue[] {
 		const i = object(raw);
 		exactKeys(i, ['field', 'code']);
 		if (
-			!draftFields.includes(i.field as DraftFieldName) ||
+			![...draftFields, 'shares'].includes(i.field as (typeof draftFields)[number]) ||
 			!draftCodes.includes(i.code as DraftIssueCode)
 		) {
 			throw new Error('Invalid draft issue');
@@ -528,7 +612,7 @@ export function parseDraftV3(raw: unknown): Draft {
 	exactKeys(
 		r,
 		['draftId', ...draftFields, 'status', 'issues'],
-		['mergedFrom', 'originalAmount', 'updated']
+		['mergedFrom', 'originalAmount', 'updated', 'shares']
 	);
 	const result: Record<string, unknown> = { draftId: requestId(r.draftId) };
 	if (Object.hasOwn(r, 'mergedFrom')) {
@@ -597,6 +681,14 @@ export function parseDraftV3(raw: unknown): Draft {
 		}
 		result[key] = field;
 	}
+	if (Object.hasOwn(r, 'shares')) {
+		result.shares = Object.fromEntries(
+			Object.entries(object(r.shares)).map(([email, amount]) => [
+				emailV3(email),
+				integer(amount)
+			])
+		);
+	}
 	if (Object.hasOwn(r, 'originalAmount')) {
 		if (r.originalAmount === null) {
 			result.originalAmount = null;
@@ -645,7 +737,10 @@ export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 	exactKeys(
 		r,
 		['requestId', 'action', ...required],
-		['referenceDate', ...(image ? ['text'] : r.action === 'commit' ? [] : ['history'])]
+		[
+			'referenceDate',
+			...(image ? ['text', 'history'] : r.action === 'commit' ? [] : ['history'])
+		]
 	);
 	const result: Record<string, unknown> = { requestId: requestId(r.requestId), action: r.action };
 	if (Object.hasOwn(r, 'text')) {
@@ -660,6 +755,7 @@ export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 		}).history;
 		if (history) {
 			result.history = history.map((turn) => ({
+				...turn,
 				question: textV3(turn.question, 300),
 				answer: textV3(turn.answer, 500)
 			}));

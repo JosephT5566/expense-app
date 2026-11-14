@@ -139,7 +139,7 @@ def vectors():
                 or (action == "revise" and field == "images")
                 or (action == "commit" and field != "drafts")
             )
-            # Image analyze cannot carry history, including an empty history.
+            # Image analyze accepts the same bounded clarification history.
             if action == "analyze" and field == "images":
                 invalid = False
             add(f"action-{action}-{field}", "request", base, invalid)
@@ -148,7 +148,6 @@ def vectors():
         {"requestId": REQUEST_ID, "action": "analyze"},
         {**analyze, "text": " "},
         {**revise, "text": ""},
-        {**image, "history": []},
         {**image, "images": [{"path": "uploads/synthetic/a.png", "generation": "1"}]},
     ]:
         add("bad-combination", "request", raw, True)
@@ -173,6 +172,38 @@ def vectors():
         (None, True),
     ]:
         add("history", "request", {**revise, "history": history}, invalid)
+    choice = {
+        "question": "付款人？",
+        "answer": "甲",
+        "questionId": REQUEST_ID,
+        "optionId": "member-0",
+    }
+    for raw in (analyze, image, revise):
+        add("option-history", "request", {**raw, "history": [choice]})
+        add("image-empty-history", "request", {**image, "history": []})
+        for turn in (
+            {**choice, "questionId": "bad"},
+            {k: v for k, v in choice.items() if k != "questionId"},
+            {**choice, "optionId": ""},
+            {**choice, "extra": True},
+        ):
+            add("invalid-option-history", "request", {**raw, "history": [turn]}, True)
+    for shares, invalid in [
+        ({"a@example.test": 100}, False),
+        ({"a@example.test": 0, "b@example.test": 100}, False),
+        ({"a@example.test": -1}, True),
+        ({"a@example.test": 1.5}, True),
+        ({"a@example.test": True}, True),
+        ({"bad": 100}, True),
+        ([], True),
+    ]:
+        add("custom-shares", "draft", {**draft(), "shares": shares}, invalid)
+        if not invalid:
+            add(
+                "custom-shares-hash",
+                "request",
+                {**commit, "drafts": [{**draft(), "shares": shares}]},
+            )
     for date, invalid in [
         ("0100-01-01", False),
         ("2000-02-29", False),
@@ -339,6 +370,41 @@ def vectors():
         question="金額？",
         issues=[{"field": "amount", "code": "missing"}],
     )
+    option_needs = {
+        **needs,
+        "questionId": REQUEST_ID,
+        "options": [{"id": "member-0", "label": "甲"}],
+        "allowFreeText": False,
+        "purpose": "payer",
+    }
+    add("option-question", "response", option_needs)
+    add("option-question-event", "stream", option_needs, event="result")
+    add(
+        "free-text-question",
+        "response",
+        {**needs, "options": [], "allowFreeText": True},
+    )
+    add(
+        "max-options-label",
+        "response",
+        {
+            **option_needs,
+            "options": [{"id": str(index), "label": "🍜" * 80} for index in range(4)],
+        },
+    )
+    for patch in (
+        {"questionId": "bad"},
+        {"options": []},
+        {"options": [], "allowFreeText": False},
+        {"allowFreeText": 1},
+        {"options": [{"id": "a", "label": ""}]},
+        {"options": [{"id": "a", "label": "🍜" * 81}]},
+        {"options": [{"id": str(index), "label": "甲"} for index in range(5)]},
+        {"options": [{"id": "a", "label": "甲"}] * 2},
+        {"options": [{"id": "a", "label": "甲", "extra": True}]},
+        {"extra": True},
+    ):
+        add("invalid-option-question", "response", {**option_needs, **patch}, True)
     for response in (
         created,
         {**created, "metadata": None},

@@ -167,3 +167,40 @@ for (const item of cases.uploads) {
 	}
 }
 console.log(`Upload request parity: ${cases.uploads.length} cases passed`);
+
+// Optional option metadata remains strict and survives both text and image history parsing.
+const optionsQuestion = {
+	status: 'needs_input',
+	requestId: id,
+	questionId: id,
+	question: '付款人？\n1. 合成甲',
+	options: [{ id: 'member-0', label: '合成甲' }],
+	allowFreeText: false,
+	purpose: 'payer',
+	issues: [{ field: 'payerId', code: 'unknown_member' }]
+};
+assert.deepEqual(parseResponse(optionsQuestion), optionsQuestion);
+assert.deepEqual(parseResponseV3(optionsQuestion), optionsQuestion);
+const answer = {
+	question: optionsQuestion.question,
+	answer: '合成甲',
+	questionId: id,
+	optionId: 'member-0'
+};
+assert.deepEqual(
+	parseRequestV3({
+		action: 'analyze',
+		requestId: id,
+		images: ['uploads/synthetic/image.png'],
+		history: [answer]
+	}).history,
+	[answer]
+);
+for (const patch of [
+	{ options: [] },
+	{ options: Array(5).fill({ id: 'x', label: '甲' }) },
+	{ options: [{ id: 'x', label: '甲'.repeat(81) }] },
+	{ allowFreeText: 'false' }
+]) {
+	assert.throws(() => parseResponseV3({ ...optionsQuestion, ...patch }));
+}
