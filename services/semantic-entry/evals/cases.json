@@ -157,7 +157,10 @@
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": true,
-			"splitMemberIds": ["b", "a"],
+			"splitMemberIds": [
+				"b",
+				"a"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
@@ -216,7 +219,10 @@
 			"payerId": "b",
 			"scope": "household",
 			"hasSharedIntent": true,
-			"splitMemberIds": ["a", "b"],
+			"splitMemberIds": [
+				"a",
+				"b"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
@@ -900,7 +906,7 @@
 			"status": "rejected",
 			"issues": [
 				{
-					"field": "members",
+					"field": "payerId",
 					"code": "unknown_member"
 				}
 			]
@@ -951,7 +957,7 @@
 			"status": "rejected",
 			"issues": [
 				{
-					"field": "members",
+					"field": "payerId",
 					"code": "ambiguous_member"
 				}
 			]
@@ -1045,7 +1051,10 @@
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": true,
-			"splitMemberIds": ["a", "unknown"],
+			"splitMemberIds": [
+				"a",
+				"unknown"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
@@ -1053,7 +1062,7 @@
 			"status": "rejected",
 			"issues": [
 				{
-					"field": "members",
+					"field": "splitMemberIds",
 					"code": "unknown_member"
 				}
 			]
@@ -1147,7 +1156,11 @@
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": true,
-			"splitMemberIds": ["a", "b", "c"],
+			"splitMemberIds": [
+				"a",
+				"b",
+				"c"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
@@ -1207,7 +1220,10 @@
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": false,
-			"splitMemberIds": ["a", "a"],
+			"splitMemberIds": [
+				"a",
+				"a"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
@@ -1256,18 +1272,25 @@
 				"value": null
 			},
 			"payerId": null,
-			"scope": null,
-			"hasSharedIntent": false,
-			"splitMemberIds": null,
+			"scope": "household",
+			"hasSharedIntent": true,
+			"splitMemberIds": [
+				"a",
+				"b"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
-			"unsupportedReason": "unequal_split"
+			"unsupportedReason": null,
+			"splitRatio": {
+				"a": 7,
+				"b": 3
+			}
 		},
 		"expected": {
 			"status": "rejected",
 			"issues": [
 				{
-					"field": "intent",
-					"code": "unsupported"
+					"field": "shares",
+					"code": "custom_required"
 				}
 			]
 		}
@@ -1309,7 +1332,10 @@
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": false,
-			"splitMemberIds": ["a", "b"],
+			"splitMemberIds": [
+				"a",
+				"b"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},
@@ -1373,7 +1399,10 @@
 			"payerId": null,
 			"scope": "household",
 			"hasSharedIntent": true,
-			"splitMemberIds": ["a", "b"],
+			"splitMemberIds": [
+				"a",
+				"b"
+			],
 			"categoryId": "11111111-1111-4111-8111-111111111111",
 			"unsupportedReason": null
 		},

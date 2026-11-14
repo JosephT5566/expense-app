@@ -227,6 +227,9 @@ async def test_conversation_never_reaches_structured_logs(setup):
 @pytest.mark.parametrize("category", [None, "", "unknown"])
 async def test_unknown_category_requires_answer_before_write(setup, category):
     deps, adapter = setup
+    adapter.load_context.return_value["categories"].append(
+        {"id": "99999999-9999-4999-8999-999999999999", "name": "交通"}
+    )
     deps.extract_entry.return_value["raw"] = {**RAW, "categoryId": category}
     first = await invoke(REQUEST, "t", deps)
     assert first["status"] == "needs_input"
@@ -242,6 +245,9 @@ async def test_unknown_category_requires_answer_before_write(setup, category):
 
 async def test_category_still_missing_after_limit_never_writes(setup):
     deps, adapter = setup
+    adapter.load_context.return_value["categories"].append(
+        {"id": "99999999-9999-4999-8999-999999999999", "name": "交通"}
+    )
     deps.extract_entry.return_value["raw"] = {**RAW, "categoryId": None}
     result = await invoke({**REQUEST, "history": HISTORY * 3}, "t", deps)
     assert result["status"] == "rejected"

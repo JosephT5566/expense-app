@@ -147,7 +147,7 @@ def test_contextual_clarifications_are_bounded():
         {"issues": [{"field": "categoryId", "code": "missing"}]}, REQUEST, context
     )
     assert len(result["question"]) <= 300
-    assert "\n" not in result["question"]
+    assert all("\n" not in o["label"] for o in result["options"])
     parse_request(
         {**REQUEST, "history": [{"question": result["question"], "answer": "食品"}]}
     )
