@@ -2148,7 +2148,7 @@ test('JPY panel validates an empty TWD amount, preserves unchanged fields and co
 	}
 });
 
-test('household draft shares are readonly and distribute remainder in email code unit order', async ({
+test('household draft shares accept custom integers with sum validation and preserve equal remainder', async ({
 	page
 }) => {
 	const draft = makeDraft(1);
@@ -2176,14 +2176,19 @@ test('household draft shares are readonly and distribute remainder in email code
 	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
 	const panel = page.getByRole('dialog', { name: '編輯草稿 1/1', exact: true });
 	const shares = panel.getByRole('group', { name: '草稿分帳', exact: true });
-	await expect(shares.locator('[data-member-email="a@example.test"]')).toHaveText(/34$/);
-	await expect(shares.locator('[data-member-email="b@example.test"]')).toHaveText(/33$/);
-	await expect(shares.locator('[data-member-email="c@example.test"]')).toHaveText(/33$/);
-	await expect(shares.locator('input')).toHaveCount(0);
-	await expect(panel.getByRole('button', { name: '平分', exact: true })).toHaveCount(0);
+	await expect(shares.locator('[data-member-email="a@example.test"] input')).toHaveValue('34');
+	await expect(shares.locator('[data-member-email="b@example.test"] input')).toHaveValue('33');
+	await expect(shares.locator('[data-member-email="c@example.test"] input')).toHaveValue('33');
+	await expect(shares.locator('input')).toHaveCount(3);
+	await expect(panel.getByRole('button', { name: '平分', exact: true })).toBeVisible();
 	await expect(panel.getByLabel('已結清', { exact: true })).toHaveCount(0);
 	await panel.locator('#amount-input').fill('101');
-	await expect(shares.locator('[data-member-email="b@example.test"]')).toHaveText(/34$/);
+	await expect(shares.locator('[data-member-email="a@example.test"] input')).toHaveValue('35');
+	await shares.locator('[data-member-email="a@example.test"] input').fill('50');
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await expect(panel.getByRole('alert')).toHaveText('分帳總和需等於金額');
+	await shares.locator('[data-member-email="b@example.test"] input').fill('51');
+	await shares.locator('[data-member-email="c@example.test"] input').fill('0');
 	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
 	await editDialog(page).getByRole('button', { name: '完成，回到對話', exact: true }).click();
 	await commitDrafts(page, 1).click();
@@ -2191,6 +2196,11 @@ test('household draft shares are readonly and distribute remainder in email code
 	expect(
 		state.posts.find((post) => post.action === 'commit')!.drafts![0].splitMemberEmails.value
 	).toEqual(['c@example.test', user.email, 'b@example.test']);
+	expect(state.posts.find((post) => post.action === 'commit')!.drafts![0].shares).toEqual({
+		[user.email]: 50,
+		'b@example.test': 51,
+		'c@example.test': 0
+	});
 });
 
 test('Taipei date edit commits the exact calendar day and excluded editors omit position', async ({
@@ -3054,7 +3064,7 @@ for (const lifecycle of ['pagehide', 'account-switch'] as const) {
 	}
 }
 
-test('changed clarification answer after pre-persist failure gets a new id and original Taiwan date', async ({
+test('changed clarification answer after pre-persist failure retains the id and original Taiwan date', async ({
 	page
 }) => {
 	let round = 0;
@@ -3086,7 +3096,7 @@ test('changed clarification answer after pre-persist failure gets a new id and o
 	await page.getByLabel('補充資訊').fill('120');
 	await page.getByRole('button', { name: '送出補充', exact: true }).click();
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-	expect(s.posts[2].requestId).not.toBe(s.posts[1].requestId);
+	expect(s.posts[2].requestId).toBe(s.posts[1].requestId);
 	expect(s.posts[2].referenceDate).toBe(s.posts[1].referenceDate);
 	expect(s.posts[2].referenceDate).toBe('2026-10-01');
 	expect(s.posts[2].history).toEqual([{ question, answer: '120' }]);
@@ -3600,4 +3610,218 @@ test('a late month refresh from a lookup does not drop an expense created meanwh
 	expect(((await cachedMonth(page, '2026-10')) as { id: string }[]).map((r) => r.id)).toEqual(
 		expect.arrayContaining([added.id, queried.id])
 	);
+});
+
+for (const image of [false, true]) {
+	test(`${image ? 'image' : 'text'} clarification radio confirms one trusted option and locks the answered card`, async ({
+		page
+	}, testInfo) => {
+		const questionId = '11111111-1111-4111-8111-111111111111';
+		const question = '由誰付款？\n1. 合成甲\n2. 合成乙';
+		const options = [
+			{ id: 'member-0', label: '合成甲' },
+			{ id: 'member-1', label: '合成乙' }
+		];
+		const state = await setup(page, async (route, body) => {
+			if (!body) {
+				return route.fulfill({
+					json: { status: 'not_found', requestId: route.request().url().split('/').pop() }
+				});
+			}
+			return route.fulfill({
+				json:
+					state.posts.length === 1
+						? {
+								status: 'needs_input',
+								requestId: body.requestId,
+								questionId,
+								question,
+								options,
+								allowFreeText: false,
+								purpose: 'payer',
+								issues: [{ field: 'payerId', code: 'unknown_member' }]
+							}
+						: created(body.requestId)
+			});
+		});
+		const uploads = image ? await mockUploads(page) : null;
+		if (image) {
+			await attach(page);
+		}
+		await submit(page);
+		const confirm = page.getByRole('button', { name: '確認', exact: true });
+		await expect(confirm).toBeDisabled();
+		await expect(page.getByRole('textbox', { name: '補充資訊', exact: true })).toHaveCount(0);
+		await page.getByRole('radio', { name: '合成乙', exact: true }).check();
+		expect(state.posts).toHaveLength(1);
+		await expect(confirm).toBeEnabled();
+		await confirm.click();
+		await expect.poll(() => state.posts.length).toBe(2);
+		expect(state.posts[1]).toEqual({
+			...state.posts[0],
+			history: [{ question, answer: '合成乙', questionId, optionId: 'member-1' }]
+		});
+		await expect(page.getByText('已回答：合成乙', { exact: true })).toBeVisible();
+		const locked = page.getByRole('radiogroup', { name: '已回答的選項', exact: true });
+		await expect(locked.getByRole('radio', { name: '合成乙', exact: true })).toBeDisabled();
+		await expect(locked.getByRole('radio', { name: '合成乙', exact: true })).toBeChecked();
+		if (image) {
+			expect(uploads!.puts()).toBe(1);
+			expect(state.posts[1].images).toEqual([imagePath]);
+		}
+		await testInfo.attach('option-answered-aria', {
+			body: await page.getByRole('region', { name: '本次對話' }).ariaSnapshot(),
+			contentType: 'text/yaml'
+		});
+		await page.screenshot({ path: testInfo.outputPath('option-answered.png') });
+	});
+}
+
+test('allowFreeText clarification retains the supplemental composer', async ({ page }) => {
+	const state = await setup(page, async (route, body) =>
+		route.fulfill({
+			json:
+				state.posts.length === 1
+					? {
+							status: 'needs_input',
+							requestId: body!.requestId,
+							question: '總金額是多少？',
+							allowFreeText: true,
+							options: [],
+							issues: [{ field: 'amount', code: 'missing' }]
+						}
+					: created(body!.requestId)
+		})
+	);
+	await submit(page);
+	await page.getByRole('textbox', { name: '補充資訊', exact: true }).fill('100元');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(state.posts[1].history).toEqual([{ question: '總金額是多少？', answer: '100元' }]);
+});
+
+test('unknown draft members require explicit radio selection before custom shares can be applied', async ({
+	page
+}) => {
+	const draft = makeDraft(1);
+	draft.scope.value = 'household';
+	draft.splitMemberEmails = {
+		value: null,
+		state: 'unrecognized',
+		confidence: null,
+		source: 'text'
+	};
+	draft.status = 'incomplete';
+	draft.issues = [{ field: 'splitMemberEmails', code: 'unknown_member' }];
+	const state = await editableDrafts(page, [draft]);
+	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '編輯草稿 1/1', exact: true });
+	await expect(
+		panel.getByRole('group', { name: '草稿分帳', exact: true }).getByRole('spinbutton')
+	).toHaveCount(0);
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await expect(panel.getByRole('alert')).toHaveText('請至少分配兩位成員');
+	await panel
+		.getByRole('radiogroup', { name: 'Synthetic是否分攤', exact: true })
+		.getByRole('radio', { name: '分攤', exact: true })
+		.check();
+	await panel
+		.getByRole('radiogroup', { name: 'b是否分攤', exact: true })
+		.getByRole('radio', { name: '分攤', exact: true })
+		.check();
+	await panel.getByLabel('Synthetic的分攤金額', { exact: true }).fill('75');
+	await panel.getByLabel('b的分攤金額', { exact: true }).fill('25');
+	await panel.getByRole('button', { name: '套用到草稿', exact: true }).click();
+	await editDialog(page).getByRole('button', { name: '完成，回到對話', exact: true }).click();
+	await commitDrafts(page, 1).click();
+	await expect.poll(() => state.posts.filter((post) => post.action === 'commit').length).toBe(1);
+	expect(state.posts.find((post) => post.action === 'commit')!.drafts![0].shares).toEqual({
+		'a@example.test': 75,
+		'b@example.test': 25
+	});
+});
+
+test('choosing custom split opens editable drafts without automatic persistence', async ({
+	page
+}) => {
+	const draft = makeDraft(1);
+	draft.scope.value = 'household';
+	draft.splitMemberEmails.value = [user.email, 'b@example.test'];
+	draft.status = 'incomplete';
+	draft.issues = [{ field: 'shares', code: 'custom_required' }];
+	const state = await setup(page, async (route, body) =>
+		route.fulfill({
+			json:
+				state.posts.length === 1
+					? {
+							status: 'needs_input',
+							requestId: body!.requestId,
+							questionId: '11111111-1111-4111-8111-111111111111',
+							question: '請選擇分攤方式。\n1. 我來指定每人金額',
+							purpose: 'split',
+							options: [{ id: 'custom', label: '我來指定每人金額' }],
+							allowFreeText: false,
+							issues: [{ field: 'shares', code: 'invalid' }]
+						}
+					: draftResponse(body!.requestId, [draft], 'incomplete')
+		})
+	);
+	await submit(page);
+	await page.getByRole('radio', { name: '我來指定每人金額', exact: true }).check();
+	await page.getByRole('button', { name: '確認', exact: true }).click();
+	await expect(editDialog(page)).toBeVisible();
+	expect(state.posts.every((post) => post.action === 'analyze')).toBe(true);
+	await editDialog(page).getByRole('button', { name: '編輯第 1 筆', exact: true }).click();
+	await expect(
+		page
+			.getByRole('dialog', { name: '編輯草稿 1/1', exact: true })
+			.getByRole('spinbutton', { name: 'Synthetic的分攤金額', exact: true })
+	).toBeEditable();
+});
+
+test('failed option reply restores radio choices and preserves conversation identity when changed', async ({
+	page
+}) => {
+	const questionId = '11111111-1111-4111-8111-111111111111';
+	const question = '由誰付款？\n1. 合成甲\n2. 合成乙';
+	const state = await setup(page, async (route, body) => {
+		if (state.posts.length === 1) {
+			return route.fulfill({
+				json: {
+					status: 'needs_input',
+					requestId: body!.requestId,
+					questionId,
+					question,
+					options: [
+						{ id: 'member-0', label: '合成甲' },
+						{ id: 'member-1', label: '合成乙' }
+					],
+					allowFreeText: false,
+					purpose: 'payer',
+					issues: [{ field: 'payerId', code: 'unknown_member' }]
+				}
+			});
+		}
+		if (state.posts.length === 2) {
+			return route.fulfill({
+				status: 503,
+				json: { error: { code: 'service_error', uncertain: false } }
+			});
+		}
+		return route.fulfill({ json: created(body!.requestId) });
+	});
+	await submit(page);
+	await page.getByRole('radio', { name: '合成乙', exact: true }).check();
+	await page.getByRole('button', { name: '確認', exact: true }).click();
+	await page.getByRole('button', { name: '修改後重新送出', exact: true }).click();
+	await expect(page.getByRole('textbox', { name: '補充資訊', exact: true })).toHaveCount(0);
+	await expect(page.getByRole('radio', { name: '合成乙', exact: true })).toBeChecked();
+	await page.getByRole('radio', { name: '合成甲', exact: true }).check();
+	await page.getByRole('button', { name: '確認', exact: true }).click();
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	expect(state.posts[2]).toEqual({
+		...state.posts[0],
+		history: [{ question, answer: '合成甲', questionId, optionId: 'member-0' }]
+	});
+	await expect(page.getByText('已回答：合成甲', { exact: true })).toBeVisible();
 });

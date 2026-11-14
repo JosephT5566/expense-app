@@ -38,7 +38,9 @@ const priority: DraftIssueCode[] = [
 	'invalid',
 	'non_twd',
 	'unknown_member',
+	'ambiguous_member',
 	'not_equal_split',
+	'custom_required',
 	'future_date',
 	'date_defaulted',
 	'low_confidence',
@@ -118,6 +120,26 @@ export function draftIssues(draft: Draft, ctx: DraftContext): DraftIssue[] {
 		draft.payerEmail.value !== ctx.currentUserEmail
 	) {
 		add('payerEmail', 'invalid');
+	}
+	if (draft.shares) {
+		const entries = Object.entries(draft.shares);
+		const members =
+			draft.scope.value === 'personal'
+				? [ctx.currentUserEmail]
+				: (draft.splitMemberEmails.value ?? []);
+		if (
+			entries.length !== members.length ||
+			entries.some(
+				([email, amount]) =>
+					!members.includes(email) ||
+					!ctx.allowedEmails.includes(email) ||
+					!Number.isSafeInteger(amount) ||
+					amount < 0
+			) ||
+			entries.reduce((sum, [, amount]) => sum + amount, 0) !== draft.amount.value
+		) {
+			add('shares', 'invalid');
+		}
 	}
 	return [...issues.values()];
 }
@@ -203,6 +225,26 @@ export function effectiveDrafts(session: DraftSession, ctx?: DraftContext): Draf
 				source: 'user'
 			}
 		};
+		if (members.some((member) => member.draft.shares)) {
+			const shares: Record<string, number> = {};
+			for (const member of members) {
+				const emails = [...new Set(member.draft.splitMemberEmails.value ?? [])].sort();
+				const total = member.draft.amount.value ?? 0;
+				const source =
+					member.draft.shares ??
+					Object.fromEntries(
+						emails.map((email, index) => [
+							email,
+							Math.floor(total / emails.length) +
+								(index === 0 ? total % emails.length : 0)
+						])
+					);
+				for (const [email, amount] of Object.entries(source)) {
+					shares[email] = (shares[email] ?? 0) + amount;
+				}
+			}
+			draft.shares = shares;
+		}
 		// Without external context, preserve server checks for fields the merge did not change.
 		draft.issues = ctx
 			? draftIssues(draft, ctx)
@@ -233,7 +275,8 @@ const labels: Record<DraftFieldName, string> = {
 	categoryId: '分類',
 	scope: '範圍',
 	payerEmail: '付款人',
-	splitMemberEmails: '分攤成員'
+	splitMemberEmails: '分攤成員',
+	shares: '分攤金額'
 };
 export function issueText(issue: DraftIssue): string {
 	const label = labels[issue.field];
@@ -252,9 +295,11 @@ export function issueText(issue: DraftIssue): string {
 		case 'invalid':
 			return issue.field === 'categoryId' ? '分類已不存在，請重新選擇' : `${label}無效`;
 		case 'unknown_member':
+		case 'ambiguous_member':
 			return `${label}不在成員名單`;
+		case 'custom_required':
 		case 'not_equal_split':
-			return '只支援平分';
+			return '請確認每人的整數分攤金額';
 		case 'future_date':
 			return '日期不能晚於今天';
 	}
