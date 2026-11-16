@@ -10,6 +10,7 @@ from .history_tool import (
     HISTORY_TRIGGER,
     explicit_history_split,
     history_text,
+    references_history,
     sanitize_rows,
 )
 from .normalize import equal_shares, resolve_member, split_shares
@@ -19,15 +20,28 @@ def history_applies(items: list[JSON], request: JSON, queries: int) -> bool:
     if queries:
         return True
     text = history_text(request)
-    # A bare terminal reference in a shared expense still needs a lookup; a reference
-    # to a purchase (e.g. 跟上次一樣買咖啡) must preserve the current extraction.
     shared = any(
         i.get("hasSharedIntent") or i.get("scope") == "household" for i in items
     )
-    bare = re.search(
-        r"(?:" + HISTORY_TRIGGER.pattern + r")\s*[。.!！?？]*$", text, re.IGNORECASE
+    # Only a separate, explicit current-turn split can disambiguate purchase history.
+    punctuation = r"[，,。.!！?？:：、;；\n]"
+    current_purchase_split = re.fullmatch(
+        r"\s*(?:"
+        + HISTORY_TRIGGER.pattern
+        + r")(?:買|的)"
+        + r"[^，,。.!！?？:：、;；\n]+"
+        + punctuation
+        + r"+[^，,。.!！?？:：、;；\n]*(?:這次|本次|this\s+time)\s*"
+        + r"(?:平分|平攤|均分|分攤|分|攤|拆|AA|split|share)[\s。.!！?？]*",
+        text,
+        re.IGNORECASE,
     )
-    return bool(explicit_history_split(request) or shared and bare)
+    return bool(
+        explicit_history_split(request)
+        or shared
+        and references_history(request)
+        and not (current_purchase_split and len(HISTORY_TRIGGER.findall(text)) == 1)
+    )
 
 
 def prepare_history(

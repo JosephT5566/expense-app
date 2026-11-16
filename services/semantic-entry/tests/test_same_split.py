@@ -240,3 +240,16 @@ def test_exact_member_set_skips_newer_valid_subset():
     )
     assert items[0]["shares"] == {A: 140, B: 40, c: 20}
     assert confirmation is not None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "跟上次一樣買咖啡100跟之前一樣平分，甲和乙這次平分",
+        "跟上次一樣買咖啡100，照上次甲和乙這次平分",
+    ],
+)
+def test_current_split_exception_does_not_hide_another_history_reference(text):
+    from semantic_entry.same_split import history_applies
+
+    assert history_applies([raw()], {"text": text}, 0)

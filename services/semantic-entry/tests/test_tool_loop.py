@@ -657,25 +657,50 @@ async def test_explicit_same_split_cannot_be_silently_extracted_as_personal(setu
     adapter.persist_expense.assert_not_awaited()
 
 
-async def test_generic_purchase_history_keeps_explicit_current_equal_split(setup):
-    deps, adapter = setup
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("reference", ["跟上次一樣", "跟之前一樣", "照上次", "同上次"])
+async def test_generic_purchase_history_keeps_explicit_current_equal_split(
+    mode, reference
+):
+    deps, adapter, _ = make_setup()
     adapter.find_recent_household_splits = AsyncMock(
         side_effect=AssertionError("no lookup")
     )
     item = raw()
     item["shares"] = {A: 50, B: 50}
+    receipt = receipt_raw((100,))
+    receipt["drafts"][0]["shares"] = {A: 50, B: 50}
+    request = {**REQUEST, "text": reference + "買咖啡100，甲和乙這次平分"}
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
             lambda r: httpx.Response(200, json=text_response(item))
         )
     ) as client:
         deps.extract_entry = Provider(client, "synthetic-key")
-        result = await invoke(
-            {**REQUEST, "text": "跟上次一樣買咖啡100，甲和乙這次平分"}, "t", deps
-        )
-    assert result["status"] == "created"
-    assert adapter.persist_expense.call_args.args[2]["shares_json"] == {A: 50, B: 50}
+        run = invoke
+        if mode != "text":
+            deps.extract_drafts = DraftProvider(
+                "synthetic-key", client=fake_client(sdk_response(receipt))
+            )
+            run = invoke_v3
+            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            if mode == "revise":
+                request.pop("images")
+                request.update(action="revise", drafts=[client_draft()])
+        result = await run(request, "t", deps)
+    if mode == "revise":
+        assert result["status"] == "drafts"
+        assert result["drafts"][0]["status"] == "complete"
+        assert result["drafts"][0]["shares"] == {A: 50, B: 50}
+        adapter.persist_expense.assert_not_awaited()
+    else:
+        assert result["status"] == "created"
+        assert adapter.persist_expense.call_args.args[2]["shares_json"] == {
+            A: 50,
+            B: 50,
+        }
     adapter.find_recent_household_splits.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
 
 
 @pytest.mark.parametrize("mode", ["text", "image", "revise"])
@@ -728,6 +753,37 @@ async def test_explicit_history_without_tool_cannot_trust_model_shares(
     adapter.find_recent_household_splits.assert_not_awaited()
     adapter.persist_expense.assert_not_awaited()
     adapter.persist_expenses.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("reference", ["跟之前一樣", "跟上次一樣", "照上次", "同上次"])
+@pytest.mark.parametrize(
+    "split_word",
+    [
+        "分",
+        "攤",
+        "分攤",
+        "平分",
+        "平攤",
+        "均分",
+        "拆",
+        "AA",
+        "aa",
+        "split",
+        "SPLIT",
+        "share",
+        "ShArE",
+        "沿用兩人的方式",
+    ],
+)
+@pytest.mark.parametrize("separator", ["", "， ", " !\n "])
+@pytest.mark.parametrize("in_history", [False, True])
+async def test_history_shared_extraction_fails_closed_without_tool(
+    mode, reference, split_word, separator, in_history
+):
+    await test_explicit_history_without_tool_cannot_trust_model_shares(
+        mode, reference + separator + split_word, in_history
+    )
 
 
 @pytest.mark.parametrize("mode", ["text", "image"])
