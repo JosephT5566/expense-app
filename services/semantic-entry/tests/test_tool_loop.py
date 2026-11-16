@@ -990,3 +990,101 @@ async def test_explicit_current_numeric_without_history_is_unchanged(mode):
     await no_tool_allocation(
         mode, "甲和乙午餐100，這次甲70乙30", False, expected={A: 70, B: 30}
     )
+
+
+F3_PHRASES = [
+    "跟上次一樣買咖啡100，甲和乙沿用之前的比例這次分攤",
+    "甲和乙午餐100和上回一樣",
+    "甲和乙午餐100，一樣的比例",
+]
+
+
+async def f3_result(mode, scope, phrase, in_history, carrier):
+    deps, adapter, _ = make_setup()
+    adapter.find_recent_household_splits = AsyncMock(return_value=[])
+    item = raw()
+    item.update(scope=scope, hasSharedIntent=False, shares=None)
+    if carrier == "ratio":
+        item["splitRatio"] = {A: 7, B: 3}
+    elif carrier == "difference":
+        item["splitDifference"] = 40
+    elif carrier == "custom":
+        item.update(unsupportedReason="custom_split", shares={A: 70, B: 30})
+    elif carrier == "personal":
+        item["splitMemberIds"] = None
+    request = {**REQUEST, "text": "甲和乙午餐100" if in_history else phrase}
+    if in_history:
+        request["history"] = [{"question": "如何分攤？", "answer": phrase}]
+    receipt = receipt_raw((100,))
+    draft = receipt["drafts"][0]
+    draft["scope"].update(value=scope, state="recognized")
+    draft["splitMemberEmails"].update(value=item["splitMemberIds"], state="recognized")
+    for key in ("shares", "splitDifference", "splitRatio"):
+        if key in item:
+            draft[key] = item[key]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json=text_response(item))
+        )
+    ) as client:
+        deps.extract_entry = Provider(client, "synthetic-key")
+        run = invoke
+        if mode != "text":
+            deps.extract_drafts = DraftProvider(
+                "synthetic-key", client=fake_client(sdk_response(receipt))
+            )
+            run = invoke_v3
+            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            if mode == "revise":
+                request.pop("images")
+                request.update(action="revise", drafts=[client_draft()])
+        result = await run(request, "t", deps)
+    adapter.find_recent_household_splits.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+    return result, adapter
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("scope", [None, "personal"])
+@pytest.mark.parametrize("phrase", F3_PHRASES)
+@pytest.mark.parametrize("in_history", [False, True])
+@pytest.mark.parametrize("carrier", ["ratio", "difference", "custom"])
+async def test_f3_contradictory_scope_cannot_bypass_history(
+    mode, scope, phrase, in_history, carrier
+):
+    result, adapter = await f3_result(mode, scope, phrase, in_history, carrier)
+    adapter.persist_expense.assert_not_awaited()
+    assert result["status"] == "needs_input" or (
+        result["status"] == "drafts"
+        and result["drafts"]
+        and all(d["status"] == "incomplete" for d in result["drafts"])
+    )
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("scope", [None, "personal"])
+@pytest.mark.parametrize(
+    "in_history,personal", [(False, False), (False, True), (True, True)]
+)
+async def test_f3_purchase_controls(mode, scope, in_history, personal):
+    phrase = (
+        "跟上次一樣買咖啡100，我自己付，不分攤"
+        if personal
+        else "跟上次一樣買咖啡100，甲和乙這次平分"
+    )
+    result, adapter = await f3_result(
+        mode, scope, phrase, in_history, "personal" if personal else "ratio"
+    )
+    expected = {A: 100} if personal else {A: 50, B: 50}
+    if mode == "revise":
+        assert result["status"] == "drafts"
+        draft = result["drafts"][0]
+        assert draft["status"] == "complete"
+        assert draft["scope"]["value"] == ("personal" if personal else "household")
+        assert draft.get("shares", {A: 100}) == expected
+        adapter.persist_expense.assert_not_awaited()
+    else:
+        assert result["status"] == "created"
+        expense = adapter.persist_expense.call_args.args[2]
+        assert expense["scope"] == ("personal" if personal else "household")
+        assert expense["shares_json"] == expected

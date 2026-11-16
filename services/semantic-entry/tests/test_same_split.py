@@ -253,3 +253,22 @@ def test_current_split_exception_does_not_hide_another_history_reference(text):
     from semantic_entry.same_split import history_applies
 
     assert history_applies([raw()], {"text": text}, 0)
+
+
+@pytest.mark.parametrize("scope", [None, "personal"])
+@pytest.mark.parametrize(
+    "signal",
+    [
+        {"splitRatio": {A: 7, B: 3}},
+        {"splitDifference": 40},
+        {"shares": {A: 70, B: 30}},
+        {"unsupportedReason": "custom_split"},
+        {"unsupportedReason": "unequal_split"},
+        {"splitMemberIds": ["a", "b"]},
+    ],
+)
+def test_f3_each_shared_signal_requires_history_mapping(scope, signal):
+    from semantic_entry.same_split import history_applies
+
+    item = {"scope": scope, "hasSharedIntent": False, **signal}
+    assert history_applies([item], {"text": "甲和乙午餐100和上回一樣"}, 0)

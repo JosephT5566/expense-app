@@ -20,7 +20,14 @@ def history_applies(items: list[JSON], request: JSON, queries: int) -> bool:
     if queries:
         return True
     shared = any(
-        i.get("hasSharedIntent") or i.get("scope") == "household" for i in items
+        i.get("hasSharedIntent")
+        or i.get("scope") == "household"
+        or i.get("unsupportedReason") in ("unequal_split", "custom_split")
+        or any(
+            i.get(k) is not None for k in ("shares", "splitRatio", "splitDifference")
+        )
+        or (isinstance(i.get("splitMemberIds"), list) and len(i["splitMemberIds"]) > 1)
+        for i in items
     )
     return explicit_history_split(request) or shared and references_history(request)
 
