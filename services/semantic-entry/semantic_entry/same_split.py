@@ -19,28 +19,30 @@ from .normalize import equal_shares, resolve_member, split_shares
 def history_applies(items: list[JSON], request: JSON, queries: int) -> bool:
     if queries:
         return True
-    text = history_text(request)
     shared = any(
         i.get("hasSharedIntent") or i.get("scope") == "household" for i in items
     )
-    # Only a separate, explicit current-turn split can disambiguate purchase history.
-    punctuation = r"[，,。.!！?？:：、;；\n]"
-    current_purchase_split = re.fullmatch(
-        r"\s*(?:"
-        + HISTORY_TRIGGER.pattern
-        + r")(?:買|的)"
-        + r"[^，,。.!！?？:：、;；\n]+"
-        + punctuation
-        + r"+[^，,。.!！?？:：、;；\n]*(?:這次|本次|this\s+time)\s*"
-        + r"(?:平分|平攤|均分|分攤|分|攤|拆|AA|split|share)[\s。.!！?？]*",
-        text,
+    return explicit_history_split(request) or shared and references_history(request)
+
+
+def current_purchase_equal(request: JSON) -> bool:
+    """Only an independent current equal clause can replace a purchase reference."""
+    match = re.fullmatch(
+        r"\s*(?:" + HISTORY_TRIGGER.pattern + r")(?:買|的)"
+        r"(?P<purchase>[^，,。.!！?？:：、;；\n]+)[，,。.!！?？:：、;；\n]+"
+        r"(?P<current>[^，,。.!！?？:：、;；\n]*(?:這次|本次|this\s+time)\s*"
+        r"(?:平分|平攤|均分|AA|split\s+evenly))[\s。.!！?？]*",
+        history_text(request),
         re.IGNORECASE,
     )
-    return bool(
-        explicit_history_split(request)
-        or shared
-        and references_history(request)
-        and not (current_purchase_split and len(HISTORY_TRIGGER.findall(text)) == 1)
+    if match is None:
+        return False
+    # Reject history wording even when it is not a recognized trigger phrase.
+    return not re.search(
+        r"上次|上回|上一次|前一次|之前|先前|照舊|老樣子|沿用|比例|"
+        r"before|last\s+time|" + HISTORY_TRIGGER.pattern,
+        match["purchase"] + match["current"],
+        re.IGNORECASE,
     )
 
 
@@ -83,6 +85,10 @@ def prepare_history(
         return items, None
     matches = [r for r in sanitize_rows(rows) if set(r["shares_json"]) == set(emails)]
     if not matches:
+        if request is not None and current_purchase_equal(request):
+            for item in items:
+                if safe_integer(item.get("amount"), 1):
+                    item["shares"] = equal_shares(item["amount"], emails)
         return items, None
     latest = max(
         datetime.fromisoformat(r["ts"].replace("Z", "+00:00")) for r in matches

@@ -22,8 +22,10 @@ TOOL_SCHEMA: JSON = {
     "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
 }
 HISTORY_TRIGGER = re.compile(
-    r"(?:跟|和|與)?上次(?:一樣|相同)|同上次|照上次|跟之前一樣|"
-    r"(?:like|same\s+as)\s+last\s+time",
+    r"(?:跟|和|與)?(?:上次|上回|上一次|前一次|之前|先前)(?:一樣|相同|同樣)|"
+    r"同上次|照(?:上次|之前|先前|上回)|照舊|老樣子|沿用(?:上次|之前|先前)|"
+    r"(?:一樣|之前)的比例|(?:like|same\s+as)\s+last\s+time|"
+    r"(?:same\s+)?as\s+before|like\s+before|same\s+split\s+as\s+last\s+time",
     re.IGNORECASE,
 )
 

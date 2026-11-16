@@ -667,9 +667,9 @@ async def test_generic_purchase_history_keeps_explicit_current_equal_split(
         side_effect=AssertionError("no lookup")
     )
     item = raw()
-    item["shares"] = {A: 50, B: 50}
+    item["shares"] = {A: 70, B: 30}
     receipt = receipt_raw((100,))
-    receipt["drafts"][0]["shares"] = {A: 50, B: 50}
+    receipt["drafts"][0]["shares"] = {A: 70, B: 30}
     request = {**REQUEST, "text": reference + "買咖啡100，甲和乙這次平分"}
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(
@@ -869,3 +869,124 @@ async def test_receipt_changed_relation_requires_fresh_structured_choice(answer_
         assert fresh["id"] != option["id"]
     adapter.persist_expense.assert_not_awaited()
     adapter.persist_expenses.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("in_history", [False, True])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "跟上次一樣買咖啡100，甲和乙沿用之前的比例這次分攤",
+        "跟上次一樣買咖啡100，甲和乙沿用之前的70/30比例這次分攤",
+        "跟上次一樣買咖啡100照舊分70/30，甲和乙這次分攤",
+        "跟上次一樣買咖啡100，甲和乙這次分70/30",
+        "跟上次一樣買咖啡100，甲和乙這次甲70乙30",
+        "跟上次一樣買咖啡100，甲和乙沿用之前的比例這次平分",
+        "跟上次一樣買咖啡100，甲和乙這次照舊AA",
+    ],
+)
+async def test_f1_purchase_history_cannot_accept_model_allocation(
+    mode, in_history, text
+):
+    await no_tool_allocation(mode, text, in_history)
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("in_history", [False, True])
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "和上回一樣",
+        "上一次相同",
+        "前一次同樣",
+        "之前一樣",
+        "先前相同",
+        "上回同樣",
+        "照舊分",
+        "老樣子",
+        "沿用上次",
+        "沿用之前",
+        "沿用先前",
+        "照之前",
+        "照先前",
+        "照上回",
+        "一樣的比例",
+        "之前的比例",
+        "split as before",
+        "SAME AS BEFORE",
+        "like before",
+        "Same Split As Last Time",
+    ],
+)
+async def test_f2_equivalents_offer_tool_and_fail_closed(mode, in_history, phrase):
+    await no_tool_allocation(mode, "甲和乙午餐100，" + phrase, in_history)
+
+
+async def no_tool_allocation(mode, text, in_history, *, expected=None):
+    deps, adapter, _ = make_setup()
+    adapter.find_recent_household_splits = AsyncMock(return_value=[])
+    item = raw()
+    item.update(shares={A: 70, B: 30}, splitRatio={A: 7, B: 3}, splitDifference=40)
+    receipt = receipt_raw((100,))
+    receipt["drafts"][0].update(
+        shares={A: 70, B: 30}, splitRatio={A: 7, B: 3}, splitDifference=40
+    )
+    request = {**REQUEST, "text": text}
+    if in_history:
+        request.update(
+            text="甲和乙午餐100", history=[{"question": "如何分攤？", "answer": text}]
+        )
+    bodies = []
+
+    def respond(r):
+        bodies.append(json.loads(r.content))
+        return httpx.Response(200, json=text_response(item))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        deps.extract_entry = Provider(client, "synthetic-key")
+        run = invoke
+        if mode != "text":
+            sdk = fake_client(sdk_response(receipt))
+            deps.extract_drafts = DraftProvider("synthetic-key", client=sdk)
+            run = invoke_v3
+            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            if mode == "revise":
+                request.pop("images")
+                request.update(action="revise", drafts=[client_draft()])
+        result = await run(request, "t", deps)
+    if expected is None:
+        if mode == "text":
+            assert bodies[0]["tools"][0]["functionDeclarations"][0]["name"] == TOOL_NAME
+        else:
+            config = sdk.aio.models.generate_content.call_args.kwargs["config"]
+            assert config.tools[0].function_declarations[0].name == TOOL_NAME
+        assert result["status"] == "needs_input" or (
+            result["status"] == "drafts"
+            and all(d["status"] == "incomplete" for d in result["drafts"])
+        )
+        adapter.persist_expense.assert_not_awaited()
+    elif mode == "revise":
+        assert result["status"] == "drafts"
+        assert result["drafts"][0]["status"] == "complete"
+        assert result["drafts"][0]["shares"] == expected
+        adapter.persist_expense.assert_not_awaited()
+    else:
+        assert result["status"] == "created"
+        assert adapter.persist_expense.call_args.args[2]["shares_json"] == expected
+    adapter.find_recent_household_splits.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize("word", ["均分", "平攤", "AA", "split evenly"])
+async def test_f1_current_equal_recomputes_all_model_allocations(mode, word):
+    await no_tool_allocation(
+        mode, "跟上次一樣買咖啡100，甲和乙這次" + word, False, expected={A: 50, B: 50}
+    )
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+async def test_explicit_current_numeric_without_history_is_unchanged(mode):
+    await no_tool_allocation(
+        mode, "甲和乙午餐100，這次甲70乙30", False, expected={A: 70, B: 30}
+    )
