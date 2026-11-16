@@ -7,7 +7,12 @@ from typing import Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
-from .clarification import apply_answers, clarification_result, split_context
+from .clarification import (
+    apply_answers,
+    clarification_result,
+    historical_confirmed,
+    split_context,
+)
 from .contracts import DRAFT_FIELDS, JSON, parse_request_v3
 from .drafts import (
     RECEIPT_PROMPT_VERSION,
@@ -18,8 +23,10 @@ from .drafts import (
 )
 from .errors import SemanticError, log_failure
 from .graph import Dependencies, input_hash_v4, invoke
+from .history_tool import HistoryTool, references_history
 from .images import ImageMetadata, download_verified, read_verified_metadata
 from .provider_stream import AnalysisCallback
+from .same_split import history_applies, prepare_history
 
 
 def text_extraction(raw: JSON) -> JSON:
@@ -34,10 +41,14 @@ def text_extraction(raw: JSON) -> JSON:
     }
 
 
-def selected_receipt(raw: JSON, request: JSON, ctx: JSON) -> tuple[JSON, bool, bool]:
+def selected_receipt(
+    raw: JSON, request: JSON, ctx: JSON, historical: JSON | None = None
+) -> tuple[JSON, bool, bool]:
     from copy import deepcopy
 
-    adjusted, trusted, custom = apply_answers(text_extraction(raw), request, ctx)
+    adjusted, trusted, custom = apply_answers(
+        text_extraction(raw), request, ctx, historical=historical
+    )
     d = deepcopy(raw)
     for field, target in (
         ("payerId", "payerEmail"),
@@ -107,6 +118,12 @@ async def invoke_v3(
             int((time.monotonic() - started) * 1000),
         )
         raise
+
+    history_tool = (
+        HistoryTool(adapter.find_recent_household_splits)
+        if action != "commit" and references_history(request)
+        else None
+    )
 
     def elapsed() -> int:
         return int((time.monotonic() - started) * 1000)
@@ -202,16 +219,19 @@ async def invoke_v3(
             {k: v for k, v in d.items() if k not in ("status", "issues", "updated")}
             for d in drafts
         ]
-        extraction = await deps.extract_drafts(
-            {
-                "mode": "revise" if action == "revise" else "image",
-                "text": request.get("text", ""),
-                "history": request.get("history", []),
-                "images": images,
-                "drafts": drafts,
-            },
-            state["context"],
-        )
+        payload = {
+            "mode": "revise" if action == "revise" else "image",
+            "text": request.get("text", ""),
+            "history": request.get("history", []),
+            "images": images,
+            "drafts": drafts,
+        }
+        if history_tool is not None and hasattr(deps.extract_drafts, "with_tool"):
+            extraction = await deps.extract_drafts.with_tool(
+                payload, state["context"], history_tool
+            )
+        else:
+            extraction = await deps.extract_drafts(payload, state["context"])
         try:
             raw = parse_raw_extraction(extraction["raw"], len(images))
         except (KeyError, TypeError, ValueError):
@@ -250,6 +270,32 @@ async def invoke_v3(
             )
         if len(raw["drafts"]) > 20:
             return reject("too_many_drafts")
+        historical = None
+        using_history = history_tool is not None and history_applies(
+            [text_extraction(r) for r in raw["drafts"]],
+            request,
+            history_tool.queries,
+        )
+        if using_history:
+            assert history_tool is not None
+            selected = [selected_receipt(r, request, ctx)[0] for r in raw["drafts"]]
+            items, historical = prepare_history(
+                [text_extraction(r) for r in selected], history_tool.rows, ctx, request
+            )
+            for r, item in zip(selected, items, strict=True):
+                r["scope"].update(
+                    value="household",
+                    state="recognized",
+                    source="text",
+                    confidence=None,
+                )
+                if item["splitMemberIds"] != r["splitMemberEmails"]["value"]:
+                    r["splitMemberEmails"].update(
+                        value=item["splitMemberIds"], state="missing"
+                    )
+                for key in ("shares", "splitDifference", "splitRatio"):
+                    r[key] = item[key]
+            raw = {**raw, "drafts": selected}
         originals = state["originals"]
         drafts = []
         force_drafts = False
@@ -257,8 +303,8 @@ async def invoke_v3(
         selected_raw = []
         for original_raw in raw["drafts"]:
             r = original_raw
-            if action == "analyze":
-                r, trusted, custom = selected_receipt(r, request, ctx)
+            if action == "analyze" or using_history:
+                r, trusted, custom = selected_receipt(r, request, ctx, historical)
                 if not trusted:
                     return reject("invalid", "history")
                 force_drafts = force_drafts or custom
@@ -270,6 +316,10 @@ async def invoke_v3(
             ):
                 raise SemanticError(502, "provider_invalid")
             d = normalize_draft(r, ctx, previous=originals.get(r["draftId"]))
+            if using_history:
+                for issue in d["issues"]:
+                    if issue["field"] == "shares" and issue["code"] == "invalid":
+                        issue["code"] = "custom_required"
             if d["draftId"] in seen:
                 raise SemanticError(502, "provider_invalid")
             seen.add(d["draftId"])
@@ -283,7 +333,20 @@ async def invoke_v3(
                 ):
                     d["updated"] = True
             drafts.append(d)
-        if action == "analyze" and not force_drafts:
+        if historical is not None and not historical_confirmed(
+            request, ctx, historical
+        ):
+            return {
+                "result": clarification_result(
+                    {
+                        "issues": [{"field": "shares", "code": "custom_required"}],
+                        "splitContext": historical,
+                    },
+                    request,
+                    ctx,
+                )
+            }
+        if (action == "analyze" or using_history) and not force_drafts:
             # Payer/members apply to the request; item amount/note/date stay editable.
             common_issues = []
             mapping = {
