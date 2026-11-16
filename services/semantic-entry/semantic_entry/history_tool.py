@@ -28,16 +28,35 @@ HISTORY_TRIGGER = re.compile(
 )
 
 
-def references_history(request: JSON) -> bool:
+def history_text(request: JSON) -> str:
+    return "\n".join(
+        [request.get("text", ""), *[t["answer"] for t in request.get("history", [])]]
+    )
+
+
+def explicit_history_split(request: JSON) -> bool:
+    separator = r"[\s，,。.!！?？:：、;；]*"
     return bool(
-        HISTORY_TRIGGER.search(
-            "\n".join(
-                [
-                    request.get("text", ""),
-                    *[t["answer"] for t in request.get("history", [])],
-                ]
-            )
+        re.search(
+            r"(?:"
+            + HISTORY_TRIGGER.pattern
+            + r")"
+            + separator
+            + r"(?:分|攤|split|share)|"
+            r"(?:分攤|split|share)"
+            + separator
+            + r"(?:跟|和|與|照|同|like|same\s+as)?"
+            + separator
+            + r"(?:上次|之前|last\s+time)",
+            history_text(request),
+            re.IGNORECASE,
         )
+    )
+
+
+def references_history(request: JSON) -> bool:
+    return explicit_history_split(request) or bool(
+        HISTORY_TRIGGER.search(history_text(request))
     )
 
 
@@ -72,9 +91,9 @@ def sanitize_rows(value: object) -> list[JSON]:
         rows.append(
             {
                 "ts": row["ts"],
-                "amount": row["amount"],
+                "amount": int(row["amount"]),
                 "scope": "household",
-                "shares_json": dict(shares),
+                "shares_json": {email: int(value) for email, value in shares.items()},
             }
         )
     return rows

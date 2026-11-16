@@ -6,22 +6,19 @@ from datetime import datetime
 from typing import Any
 
 from .contracts import JSON, safe_integer
-from .history_tool import HISTORY_TRIGGER, sanitize_rows
+from .history_tool import (
+    HISTORY_TRIGGER,
+    explicit_history_split,
+    history_text,
+    sanitize_rows,
+)
 from .normalize import equal_shares, resolve_member, split_shares
 
 
 def history_applies(items: list[JSON], request: JSON, queries: int) -> bool:
     if queries:
         return True
-    text = "\n".join(
-        [request.get("text", ""), *[t["answer"] for t in request.get("history", [])]]
-    )
-    explicit = re.search(
-        r"上次(?:一樣|相同)\s*(?:分|攤)|(?:同|照)上次\s*(?:分|攤)|"
-        r"(?:分攤|split|share)\s*(?:跟|和|與|照|同|like|same\s+as)?\s*(?:上次|last\s+time)",
-        text,
-        re.IGNORECASE,
-    )
+    text = history_text(request)
     # A bare terminal reference in a shared expense still needs a lookup; a reference
     # to a purchase (e.g. 跟上次一樣買咖啡) must preserve the current extraction.
     shared = any(
@@ -30,7 +27,7 @@ def history_applies(items: list[JSON], request: JSON, queries: int) -> bool:
     bare = re.search(
         r"(?:" + HISTORY_TRIGGER.pattern + r")\s*[。.!！?？]*$", text, re.IGNORECASE
     )
-    return bool(explicit or shared and bare)
+    return bool(explicit_history_split(request) or shared and bare)
 
 
 def prepare_history(
@@ -165,7 +162,16 @@ def historical_shares(
     if ratio is not None:
         if not safe_integer(amount, 1):
             return None, "invalid"
+        if (
+            not isinstance(ratio, dict)
+            or not ratio
+            or any(not safe_integer(value) for value in ratio.values())
+        ):
+            return None, "invalid"
+        ratio = {email: int(value) for email, value in ratio.items()}
         total = sum(ratio.values())
+        if not total:
+            return None, "invalid"
         if any(int(amount) * value % total for value in ratio.values()):
             return None, "custom_required"
         # Historical shares permit zero; model-supplied ratio weights still require >0.

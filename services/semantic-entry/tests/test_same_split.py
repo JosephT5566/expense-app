@@ -158,3 +158,85 @@ def test_invalid_latest_row_cannot_make_an_older_row_the_latest_match():
         [row(amount=101, shares={A: 70.5, B: 30.5}), row(ts="2026-02-27T16:00:00Z")],
     )
     assert items[0]["shares"] == {} and confirmation is None
+
+
+@pytest.mark.parametrize("number", [int, float])
+def test_large_three_person_ratio_never_rounds(number):
+    from semantic_entry.same_split import prepare_history
+
+    ctx = deepcopy(CONTEXT)
+    c = "c@example.test"
+    ctx["members"].append({"id": "c", "name": "丙", "email": c})
+    items, confirmation = prepare_history(
+        [raw(8_589_934_588, ["a", "b", "c"])],
+        [
+            row(
+                number(8_589_934_592),
+                {
+                    A: number(4_294_967_295),
+                    B: number(2_147_483_649),
+                    c: number(2_147_483_648),
+                },
+            )
+        ],
+        ctx,
+    )
+    assert items[0]["shares"] == {}
+    assert confirmation is None
+
+
+@pytest.mark.parametrize("number", [int, float])
+def test_history_boundary_canonicalizes_every_number(number):
+    from semantic_entry.history_tool import sanitize_rows
+
+    clean = sanitize_rows([row(number(100), {A: number(70), B: number(30)})])[0]
+    assert type(clean["amount"]) is int
+    assert all(type(v) is int for v in clean["shares_json"].values())
+
+
+@pytest.mark.parametrize("bad", [-1, 0.5, "70", True, float("nan")])
+@pytest.mark.parametrize("field", ["amount", "share"])
+def test_history_boundary_rejects_invalid_numbers(bad, field):
+    from semantic_entry.history_tool import sanitize_rows
+
+    candidate = row(shares={A: 70, B: 30})
+    if field == "amount":
+        candidate["amount"] = bad
+    else:
+        candidate["shares_json"][A] = bad
+    assert sanitize_rows([candidate]) == []
+
+
+@pytest.mark.parametrize("members", [["a", "b"], ["b", "a"]])
+def test_exact_member_set_skips_newer_valid_superset(members):
+    from semantic_entry.same_split import prepare_history
+
+    ctx = deepcopy(CONTEXT)
+    c = "c@example.test"
+    ctx["members"].append({"id": "c", "name": "丙", "email": c})
+    items, confirmation = prepare_history(
+        [raw(200, members)],
+        [
+            row(300, {A: 100, B: 100, c: 100}),
+            row(100, {A: 70, B: 30}, ts="2026-02-27T16:00:00Z"),
+        ],
+        ctx,
+    )
+    assert items[0]["shares"] == {A: 140, B: 60}
+    assert confirmation is not None
+    assert confirmation["historicalRelation"] == {"splitRatio": {A: 70, B: 30}}
+
+
+def test_exact_member_set_skips_newer_valid_subset():
+    from semantic_entry.same_split import prepare_history
+
+    ctx = deepcopy(CONTEXT)
+    c = "c@example.test"
+    ctx["members"].append({"id": "c", "name": "丙", "email": c})
+    items, confirmation = prepare_history(
+        [raw(200, ["c", "b", "a"])],
+        [row(), row(100, {A: 70, B: 20, c: 10}, ts="2026-02-27T16:00:00Z")],
+        ctx,
+    )
+    assert items[0]["shares"] == {A: 140, B: 40, c: 20}
+    assert confirmation is not None

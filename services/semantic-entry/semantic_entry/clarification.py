@@ -342,7 +342,8 @@ def apply_answers(
                     (
                         o
                         for number, o in enumerate(expected["options"], 1)
-                        if turn["answer"] in (str(number), o["label"])
+                        if not o["id"].startswith("history:")
+                        and turn["answer"] in (str(number), o["label"])
                     ),
                     None,
                 )
@@ -477,6 +478,9 @@ def historical_confirmed(request: JSON, context: JSON, split: JSON) -> bool:
                     and turn["answer"] == option["label"]
                 ):
                     return True
-            elif turn["answer"] in (str(number), option["label"]):
+            elif not option["id"].startswith("history:") and turn["answer"] in (
+                str(number),
+                option["label"],
+            ):
                 return True
     return False

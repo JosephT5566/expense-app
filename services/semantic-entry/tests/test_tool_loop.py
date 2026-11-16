@@ -604,13 +604,19 @@ async def test_revise_can_use_existing_draft_members_without_inventing_new_ones(
 
 
 @pytest.mark.parametrize("image", [False, True])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "跟上次一樣買咖啡100，我自己付，不分攤",
+        "跟上次一樣的咖啡100，我自己付，不分攤",
+    ],
+)
 async def test_generic_history_wording_without_tool_preserves_personal_behavior(
-    setup, image
+    setup, image, text
 ):
     from conftest import RAW
 
     deps, adapter = setup
-    text = "跟上次一樣買咖啡100，我自己付，不分攤"
     request, run = {**REQUEST, "text": text}, invoke
     adapter.find_recent_household_splits = AsyncMock(
         side_effect=AssertionError("no lookup")
@@ -670,3 +676,140 @@ async def test_generic_purchase_history_keeps_explicit_current_equal_split(setup
     assert result["status"] == "created"
     assert adapter.persist_expense.call_args.args[2]["shares_json"] == {A: 50, B: 50}
     adapter.find_recent_household_splits.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["text", "image", "revise"])
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "跟之前一樣分",
+        "跟之前一樣分攤",
+        "跟之前一樣，分攤！",
+        "跟上次一樣，分！",
+        "照上次分攤",
+        "分攤跟之前一樣",
+    ],
+)
+@pytest.mark.parametrize("in_history", [False, True])
+async def test_explicit_history_without_tool_cannot_trust_model_shares(
+    mode, phrase, in_history
+):
+    deps, adapter, _ = make_setup()
+    adapter.find_recent_household_splits = AsyncMock(return_value=[])
+    text = "甲和乙午餐100" + ("" if in_history else phrase)
+    request = {**REQUEST, "text": text}
+    if in_history:
+        request["history"] = [{"question": "如何分攤？", "answer": phrase}]
+    item = raw()
+    item["shares"] = {A: 70, B: 30}
+    receipt = receipt_raw((100,))
+    receipt["drafts"][0]["shares"] = {A: 70, B: 30}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json=text_response(item))
+        )
+    ) as client:
+        deps.extract_entry = Provider(client, "synthetic-key")
+        run = invoke
+        if mode != "text":
+            deps.extract_drafts = DraftProvider(
+                "synthetic-key", client=fake_client(sdk_response(receipt))
+            )
+            run = invoke_v3
+            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            if mode == "revise":
+                request.pop("images")
+                request.update(action="revise", drafts=[client_draft()])
+        result = await run(request, "t", deps)
+    assert result["status"] == "needs_input" or (
+        result["status"] == "drafts"
+        and all(d["status"] == "incomplete" for d in result["drafts"])
+    )
+    adapter.find_recent_household_splits.assert_not_awaited()
+    adapter.persist_expense.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+
+
+@pytest.mark.parametrize("mode", ["text", "image"])
+async def test_float_history_cannot_offer_rounded_relationship_or_write(mode):
+    deps, adapter, _ = make_setup()
+    c = "c@example.test"
+    adapter.load_context.return_value["members"].append(
+        {"id": "c", "name": "丙", "email": c}
+    )
+    adapter.find_recent_household_splits = AsyncMock(
+        return_value=[
+            row(
+                8_589_934_592.0,
+                {A: 4_294_967_295.0, B: 2_147_483_649.0, c: 2_147_483_648.0},
+            )
+        ]
+    )
+    item = raw(8_589_934_588, ["a", "b", "c"])
+    receipt = receipt_raw((8_589_934_588,))
+    receipt["drafts"][0]["splitMemberEmails"]["value"] = ["a", "b", "c"]
+    replies = [function_response(), text_response(item)]
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json=replies.pop(0))
+        )
+    ) as client:
+        request, run = (
+            {**REQUEST, "text": "甲和乙和丙午餐8589934588跟上次一樣分"},
+            invoke,
+        )
+        deps.extract_entry = Provider(client, "synthetic-key")
+        if mode == "image":
+            sdk = fake_client()
+            sdk.aio.models.generate_content.side_effect = [
+                types.GenerateContentResponse.model_validate(function_response()),
+                sdk_response(receipt),
+            ]
+            deps.extract_drafts = DraftProvider("synthetic-key", client=sdk)
+            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            run = invoke_v3
+        result = await run(request, "t", deps)
+    assert result["status"] == "needs_input"
+    assert not any(o["id"].startswith("history:") for o in result.get("options", []))
+    adapter.persist_expense.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
+
+
+@pytest.mark.parametrize("answer_kind", ["number", "label", "structured"])
+async def test_receipt_changed_relation_requires_fresh_structured_choice(answer_kind):
+    deps, adapter, _ = make_setup()
+    adapter.find_recent_household_splits = AsyncMock(
+        return_value=[row(shares={A: 70, B: 30})]
+    )
+    sdk = fake_client()
+    deps.extract_drafts = DraftProvider("synthetic-key", client=sdk)
+    request = {**IMAGE_REQUEST, "text": TEXT}
+
+    def supply():
+        sdk.aio.models.generate_content.side_effect = [
+            types.GenerateContentResponse.model_validate(function_response()),
+            sdk_response(receipt_raw((100, 200))),
+        ]
+
+    supply()
+    first = await invoke_v3(request, "t", deps)
+    assert first["status"] == "needs_input"
+    option = next(o for o in first["options"] if o["id"].startswith("history:"))
+    turn = {
+        "question": first["question"],
+        "answer": "2" if answer_kind == "number" else option["label"],
+    }
+    if answer_kind == "structured":
+        turn.update(questionId=first["questionId"], optionId=option["id"])
+    adapter.find_recent_household_splits.return_value = [row(102, {A: 71, B: 31})]
+    supply()
+    result = await invoke_v3({**request, "history": [turn]}, "t", deps)
+    if answer_kind == "structured":
+        assert result["status"] == "rejected"
+        assert {"field": "history", "code": "invalid"} in result["issues"]
+    else:
+        assert result["status"] == "needs_input"
+        fresh = next(o for o in result["options"] if o["id"].startswith("history:"))
+        assert fresh["id"] != option["id"]
+    adapter.persist_expense.assert_not_awaited()
+    adapter.persist_expenses.assert_not_awaited()
