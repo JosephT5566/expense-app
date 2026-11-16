@@ -180,6 +180,23 @@ class SupabaseAdapter:
         except (ValueError, TypeError):
             raise SemanticError(502, "database_invalid") from None
 
+    async def find_recent_household_splits(self) -> list[JSON]:
+        if not self.verified:
+            raise SemanticError(401, "unauthorized")
+        data = await self.call(
+            "GET",
+            "/rest/v1/expenses",
+            params={
+                "select": "ts,amount,scope,shares_json",
+                "scope": "eq.household",
+                "order": "ts.desc",
+                "limit": "10",
+            },
+        )
+        if not isinstance(data, list) or any(not isinstance(r, dict) for r in data):
+            raise SemanticError(502, "database_invalid")
+        return data
+
     async def consume_quota(self) -> bool:
         data = await self.call(
             "POST", "/rest/v1/rpc/consume_semantic_entry_quota", body={}

@@ -11,6 +11,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from .contracts import JSON
 from .normalize import equal_shares, resolve_member, split_shares
+from .same_split import historical_shares
 
 QUESTIONS = {
     "amount": "這筆支出的台幣總金額是多少？請提供 1 到 9,999,999,999 元之間的整數。",
@@ -103,6 +104,16 @@ def split_options(split: JSON, context: JSON) -> list[JSON]:
                                 "label": label({caller: own, other: amount - own}),
                             }
                         )
+    historical = split.get("historicalShares")
+    if historical is not None:
+        binding = json.dumps([historical, split["historicalRelation"]], sort_keys=True)
+        options.insert(
+            1,
+            {
+                "id": "history:" + str(uuid5(NAMESPACE_URL, binding)),
+                "label": "沿用上次分攤：" + label(historical, 70),
+            },
+        )
     options.append({"id": "custom", "label": "我來指定每人金額"})
     return [{**o, "label": o["label"][:80]} for o in options[:4]]
 
@@ -268,7 +279,9 @@ def split_context(raw: JSON, context: JSON, question: str = "") -> JSON | None:
     return {"amount": int(amount), "emails": sorted(emails), "difference": difference}
 
 
-def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, bool]:
+def apply_answers(
+    raw: JSON, request: JSON, context: JSON, *, historical: JSON | None = None
+) -> tuple[JSON, bool, bool]:
     """Validate option IDs against fresh options; apply trusted IDs without model guessing.
 
     UUIDs bind a question to its request, turn and current option list, without a
@@ -283,6 +296,8 @@ def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, 
             (field, None) for field in ENTITY_FIELDS
         ]
         original_split = split_context(result, context, turn["question"])
+        if historical is not None:
+            candidates.append(("shares", historical))
         if original_split is not None:
             candidates.append(("shares", original_split))
         # Monetary data can be restated by a client, but participants must come
@@ -406,7 +421,13 @@ def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, 
                     splitDifference=None,
                     splitRatio=None,
                 )
-                if identifier in ("custom", "equal"):
+                if identifier.startswith("history:"):
+                    assert historical is not None
+                    shares, code = historical_shares(
+                        historical["historicalRelation"], amount, emails, context
+                    )
+                    result["shares"] = shares if not code else {}
+                elif identifier in ("custom", "equal"):
                     if (
                         isinstance(amount, (int, float))
                         and math.isfinite(amount)
@@ -440,3 +461,22 @@ def apply_answers(raw: JSON, request: JSON, context: JSON) -> tuple[JSON, bool, 
     ):
         result["categoryId"] = options[0]["id"]
     return result, True, custom
+
+
+def historical_confirmed(request: JSON, context: JSON, split: JSON) -> bool:
+    """Only an answer to the freshly rebuilt monetary question confirms a relation."""
+    for index, turn in enumerate(request.get("history", [])):
+        expected = make_question("shares", request, context, turn=index, split=split)
+        if turn["question"] != expected["question"]:
+            continue
+        for number, option in enumerate(expected["options"], 1):
+            if "optionId" in turn:
+                if (
+                    turn.get("questionId") == expected["questionId"]
+                    and turn["optionId"] == option["id"]
+                    and turn["answer"] == option["label"]
+                ):
+                    return True
+            elif turn["answer"] in (str(number), option["label"]):
+                return True
+    return False

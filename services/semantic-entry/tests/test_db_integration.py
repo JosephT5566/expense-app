@@ -579,3 +579,33 @@ async def test_invalid_custom_shares_rollback(db, batch, shares):
         params={"request_id": f"eq.{identifier}"},
     )
     assert ledger.json() == []
+
+
+async def test_adapter_recent_household_reads_visible_rows_only(db):
+    """Disposable fixture RLS coverage; does not establish production policy behavior."""
+    household = {
+        **payload(),
+        "scope": "household",
+        "is_settled": False,
+        "amount": 100,
+        "shares_json": {"a@example.test": 50, "b@example.test": 50},
+        "ts": "2026-03-03T16:00:00.000Z",
+    }
+    created = await create(db, "a", str(uuid4()), household)
+    created.raise_for_status()
+    await create(
+        db,
+        "b",
+        str(uuid4()),
+        {**payload("b@example.test"), "ts": "2026-03-04T16:00:00.000Z"},
+    )
+    client, adapter = batch_adapter_client(db)
+    async with client:
+        adapter.verified = {"id": "a", "email": "a@example.test"}
+        rows = await adapter.find_recent_household_splits()
+    assert 1 <= len(rows) <= 10
+    assert all(
+        r["scope"] == "household" and set(r) == {"ts", "amount", "scope", "shares_json"}
+        for r in rows
+    )
+    assert any(r["ts"].startswith("2026-03-03") for r in rows)
