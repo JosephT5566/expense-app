@@ -8,13 +8,15 @@ from typing import Protocol, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
-from .clarification import apply_answers, clarification_result
+from .clarification import apply_answers, clarification_result, historical_confirmed
 from .contracts import JSON, parse_request
 from .errors import SemanticError, error_details, log_failure
+from .history_tool import HistoryTool, references_history
 from .images import ImageStore
 from .normalize import normalize_extraction, parse_extraction
 from .prompt import PROMPT_VERSION
 from .provider_stream import AnalysisCallback
+from .same_split import history_applies, prepare_history
 
 
 class Adapter(Protocol):
@@ -29,6 +31,7 @@ class Adapter(Protocol):
     async def persist_expenses(
         self, request_id: str, input_hash: str, expenses: list[JSON]
     ) -> JSON: ...
+    async def find_recent_household_splits(self) -> list[JSON]: ...
     async def consume_quota(self) -> bool: ...
     async def persist_expense(
         self, request_id: str, input_hash: str, expense: JSON
@@ -220,6 +223,11 @@ async def invoke(
             int((time.monotonic() - start) * 1000),
         )
         raise
+    history_tool = (
+        HistoryTool(adapter.find_recent_household_splits)
+        if references_history(request)
+        else None
+    )
     digest = input_hash(request)
     active_node = "authenticate"
 
@@ -301,7 +309,17 @@ async def invoke(
         text = (
             conversation_payload(request) if request.get("history") else request["text"]
         )
-        if on_analysis is not None and deps.stream_entry is not None:
+        if history_tool is not None and hasattr(deps.extract_entry, "with_tool"):
+            return {
+                "extraction": await deps.extract_entry.with_tool(
+                    text, state["context"], history_tool
+                )
+            }
+        if (
+            history_tool is None
+            and on_analysis is not None
+            and deps.stream_entry is not None
+        ):
             return {
                 "extraction": await deps.stream_entry(
                     text, state["context"], on_analysis
@@ -328,7 +346,21 @@ async def invoke(
                     "issues": [{"field": "extraction", "code": "invalid"}],
                 },
             }
-        raw, trusted, custom = apply_answers(raw, request, state["context"])
+        historical = None
+        using_history = history_tool is not None and history_applies(
+            [raw], request, history_tool.queries
+        )
+        if using_history:
+            assert history_tool is not None
+            # Entity answers are applied before selecting the exact historical member set.
+            adjusted, _, _ = apply_answers(raw, request, state["context"])
+            items, historical = prepare_history(
+                [adjusted], history_tool.rows, state["context"], request
+            )
+            raw = items[0]
+        raw, trusted, custom = apply_answers(
+            raw, request, state["context"], historical=historical
+        )
         validation: JSON = (
             normalize_extraction(raw, state["context"])
             if trusted
@@ -337,6 +369,21 @@ async def invoke(
                 "issues": [{"field": "history", "code": "invalid"}],
             }
         )
+        if using_history and trusted:
+            for issue in validation.get("issues", []):
+                if issue["field"] == "shares" and issue["code"] == "invalid":
+                    issue["code"] = "custom_required"
+            if historical is not None and not historical_confirmed(
+                request, state["context"], historical
+            ):
+                validation = {
+                    "status": "rejected",
+                    "issues": [
+                        *validation.get("issues", []),
+                        {"field": "shares", "code": "custom_required"},
+                    ],
+                    "splitContext": historical,
+                }
         result = {"validation": validation}
         if custom and validation["status"] == "valid":
             result["validation"] = {"status": "drafts"}
@@ -422,7 +469,7 @@ async def invoke(
             "persist" if state["validation"]["status"] == "valid" else "emit_result"
         ),
     )
-    # No checkpointer, state persistence, tools or externally enabled payload tracing.
+    # No checkpointer, persistent state or externally enabled payload tracing.
     try:
         with tracing_context(enabled=False):
             final = await graph.compile().ainvoke({}, config={"callbacks": []})

@@ -1,4 +1,4 @@
-"""Gemini Developer API adapter, with bounded single-call extraction."""
+"""Gemini Developer API adapter, with bounded extraction and optional read-only history lookup."""
 
 import asyncio
 import re
@@ -13,6 +13,7 @@ from .contracts import (
     safe_integer,
 )
 from .errors import SemanticError
+from .history_tool import TOOL_SCHEMA, HistoryTool, bounded_tool_loop
 from .prompt import PROVIDER_SCHEMA, system_prompt
 from .provider_stream import AnalysisCallback, AnalysisDecoder, iter_sse_data
 
@@ -218,6 +219,57 @@ class Provider:
                     "exceptionType": type(error).__name__,
                 },
             ) from None
+
+    async def with_tool(self, text: str, context: JSON, tool: HistoryTool) -> JSON:
+        usage: JSON = {}
+
+        async def call(final: bool, exchange: list[JSON]) -> JSON:
+            body = self.request_body(text, context)
+            if not final:
+                body["generationConfig"].pop("responseFormat")
+                body["tools"] = [{"functionDeclarations": [TOOL_SCHEMA]}]
+            body["contents"].extend(exchange)
+            response = await self.client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent",
+                headers={"x-goog-api-key": self.api_key},
+                json=body,
+            )
+            if not response.is_success:
+                raise await self.http_error(response)
+            data = load_json(response.content)
+            for key in (
+                "promptTokenCount",
+                "candidatesTokenCount",
+                "thoughtsTokenCount",
+            ):
+                value = (data.get("usageMetadata") or {}).get(
+                    key, 0 if key == "thoughtsTokenCount" else None
+                )
+                usage[key] = (
+                    usage.get(key, 0) + value
+                    if safe_integer(value) and usage.get(key, 0) is not None
+                    else None
+                )
+            candidate = self.candidate(data)
+            if not candidate or candidate.get("finishReason") != "STOP":
+                raise ValueError("Incomplete output")
+            return candidate
+
+        def parse(candidate: JSON) -> JSON:
+            return parse_provider_envelope(load_provider_json(self.text(candidate)))
+
+        try:
+            async with asyncio.timeout(self.deadline):
+                envelope = await bounded_tool_loop(call, parse, tool)
+                if envelope is None:
+                    return {"raw": {}, "model": self.model, "historyBlocked": True}
+                return self.result(envelope, usage)
+        except (TimeoutError, httpx.TimeoutException):
+            raise SemanticError(504, "provider_timeout") from None
+        except httpx.HTTPError:
+            raise SemanticError(502, "provider_error") from None
+        except (ValueError, TypeError, AttributeError, KeyError, UnicodeError):
+            raise SemanticError(502, "provider_invalid") from None
 
     async def stream(
         self, text: str, context: JSON, on_analysis: AnalysisCallback

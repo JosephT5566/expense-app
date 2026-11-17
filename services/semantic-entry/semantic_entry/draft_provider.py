@@ -11,6 +11,7 @@ from google.genai import errors, types
 from .contracts import JSON, load_provider_json, safe_integer
 from .drafts import parse_raw_extraction
 from .errors import SemanticError
+from .history_tool import TOOL_SCHEMA, HistoryTool, bounded_tool_loop
 from .prompt import RECEIPT_SCHEMA, receipt_system_prompt
 from .provider import DEFAULT_MODEL, MODEL, Provider
 
@@ -32,6 +33,14 @@ class DraftProvider:
         self.revise_deadline = revise_deadline
 
     async def __call__(self, input: JSON, context: JSON) -> JSON:
+        return await self._extract(input, context)
+
+    async def with_tool(self, input: JSON, context: JSON, tool: HistoryTool) -> JSON:
+        return await self._extract(input, context, tool)
+
+    async def _extract(
+        self, input: JSON, context: JSON, tool: HistoryTool | None = None
+    ) -> JSON:
         if not self.api_key or not MODEL.fullmatch(self.model):
             raise SemanticError(502, "provider_configuration")
         revise = input["mode"] == "revise"
@@ -80,21 +89,70 @@ class DraftProvider:
             async with asyncio.timeout(deadline):
                 if self.client is None:
                     self.client = genai.Client(api_key=self.api_key)
-                response = await self.client.aio.models.generate_content(
-                    model=self.model,
-                    contents=[types.Content(role="user", parts=parts)],
-                    config=config,
+                usage: JSON = {}
+
+                async def call(final: bool, exchange: list[JSON]) -> JSON:
+                    request_config = config.model_copy(deep=True)
+                    if tool is not None and not final:
+                        request_config.response_mime_type = None
+                        request_config.response_json_schema = None
+                        request_config.tools = [
+                            types.Tool(
+                                function_declarations=[
+                                    types.FunctionDeclaration.model_validate(
+                                        TOOL_SCHEMA
+                                    )
+                                ]
+                            )
+                        ]
+                    response = await self.client.aio.models.generate_content(
+                        model=self.model,
+                        contents=[
+                            types.Content(role="user", parts=parts),
+                            *[types.Content.model_validate(c) for c in exchange],
+                        ],
+                        config=request_config,
+                    )
+                    envelope = response.model_dump(
+                        mode="json", by_alias=True, exclude_none=True
+                    )
+                    for key in (
+                        "promptTokenCount",
+                        "candidatesTokenCount",
+                        "thoughtsTokenCount",
+                    ):
+                        value = envelope.get("usageMetadata", {}).get(
+                            key, 0 if key == "thoughtsTokenCount" else None
+                        )
+                        usage[key] = (
+                            usage.get(key, 0) + value
+                            if safe_integer(value) and usage.get(key, 0) is not None
+                            else None
+                        )
+                    candidate = Provider.candidate(envelope)
+                    if not candidate or candidate.get("finishReason") != "STOP":
+                        raise ValueError("Incomplete output")
+                    return candidate
+
+                def parse(candidate: JSON) -> JSON:
+                    try:
+                        return parse_raw_extraction(
+                            load_provider_json(Provider.text(candidate)), len(images)
+                        )
+                    except SemanticError:
+                        raise ValueError("Invalid extraction") from None
+
+                raw = (
+                    await bounded_tool_loop(call, parse, tool)
+                    if tool is not None
+                    else parse(await call(True, []))
                 )
-                envelope = response.model_dump(
-                    mode="json", by_alias=True, exclude_none=True
-                )
-                candidate = Provider.candidate(envelope)
-                if not candidate or candidate.get("finishReason") != "STOP":
-                    raise ValueError("Incomplete output")
-                raw = parse_raw_extraction(
-                    load_provider_json(Provider.text(candidate)), len(images)
-                )
-                usage = envelope.get("usageMetadata") or {}
+                if raw is None:
+                    return {
+                        "raw": {"drafts": [], "nonReceiptImages": []},
+                        "model": self.model,
+                        "historyBlocked": True,
+                    }
                 output = usage.get("candidatesTokenCount")
                 thoughts = usage.get("thoughtsTokenCount", 0)
                 return {

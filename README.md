@@ -83,7 +83,7 @@ Documentation ownership stays with the existing files: setup, commands, and CI h
 
 Report findings as `repository-verified`, `operator-reported`, or `unverified` according to the evidence available. Client types, comments, and mocked responses do not prove deployed Supabase policies or receipt-service behavior. Keep historical check outputs in task artifacts and distinguish them from checks run for the current change.
 
-Issue-first development (raw issue, enhancement, `ai-ready` approval, implementation PR, independent review) is described in [Agent workflow](docs/agent-workflow.md). This is a local coding-agent workflow. No issue-to-PR agent automation is configured. The synthetic semantic-entry harness below evaluates local rules separately from live model quality.
+Issue-first development (raw issue, enhancement, `ai-ready` approval, implementation PR, independent review) is described in [Agent workflow](docs/agent-workflow.md). This is a local coding-agent workflow. No issue-to-PR agent automation is configured. The synthetic semantic-entry harness below evaluates local rules separately from live model quality. Historical household splits use a bounded read-only tool loop in text and receipt extraction, with backend matching and non-equal confirmation through existing options; see [behavior and limits](docs/database.md#historical-household-splits). Ordinary text streaming keeps its current behavior; history-triggered text uses non-streaming extraction within the same SSE result contract.
 
 ## Project documentation
 
