@@ -546,7 +546,7 @@
 							type="button"
 							variant="outline"
 							class={classNames(
-								'h-auto min-w-0 flex flex-col gap-1 p-1.5',
+								'h-auto min-w-0 flex flex-col gap-1 px-1 py-1.5',
 								'bg-white text-secondary shadow-sm',
 								'data-[selected=true]:text-primary data-[selected=true]:ring-2'
 							)}
@@ -557,7 +557,7 @@
 								<Icon icon={cat.icon} class="size-8" width={32} height={32} />
 							</div>
 							<div
-								class="w-full text-center text-xs leading-tight break-words whitespace-normal"
+								class="w-full text-center text-[11px] leading-tight whitespace-nowrap"
 							>
 								{cat.name}
 							</div>
