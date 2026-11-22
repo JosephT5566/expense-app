@@ -216,12 +216,12 @@
 	const sharesTotal = $derived(Object.values(shares).reduce((a, v) => a + (Number(v) || 0), 0));
 	const sharesValid = $derived(Number(expenseData.amount || 0) === sharesTotal);
 
-	// 轉為卡片資料並分頁（每頁 8 個）
+	// 轉為卡片資料並分頁（每頁 10 個，5 欄 × 2 列）
 	const categoryCards = derived([expenseOptions, categoryIconMap], ([opts, iconMap]) =>
 		opts.map((o) => ({ id: o.value, name: o.label, icon: iconMap[o.value] }))
 	);
 	const categoryPages = derived(categoryCards, (cards): CategoryCard[][] => {
-		const pageSize = 8;
+		const pageSize = 10;
 		const pages: CategoryCard[][] = [];
 		for (let i = 0; i < cards.length; i += pageSize) {
 			pages.push(cards.slice(i, i + pageSize));
@@ -540,23 +540,27 @@
 			</RadioGroup.Root>
 		{:else if $expenseOptions.length > 0}
 			{#snippet children(page: unknown, i: number)}
-				<div class="grid grid-cols-4 gap-3" aria-label={`Category page ${i + 1}`}>
+				<div class="grid grid-cols-5 gap-2" aria-label={`Category page ${i + 1}`}>
 					{#each page as CategoryCard[] as cat (cat.id)}
 						<Button
 							type="button"
 							variant="outline"
 							class={classNames(
-								'h-auto flex flex-col gap-1 p-2',
+								'h-auto min-w-0 flex flex-col gap-1 px-1 py-1.5',
 								'bg-white text-secondary shadow-sm',
 								'data-[selected=true]:text-primary data-[selected=true]:ring-2'
 							)}
 							data-selected={expenseData.category_id === cat.id}
 							onclick={() => (expenseData.category_id = cat.id)}
 						>
-							<div class="size-12 grid place-items-center rounded-lg">
+							<div class="size-10 grid place-items-center rounded-lg">
 								<Icon icon={cat.icon} class="size-8" width={32} height={32} />
 							</div>
-							<div class="text-xs truncate max-w-16">{cat.name}</div>
+							<div
+								class="w-full text-center text-[11px] leading-tight whitespace-nowrap"
+							>
+								{cat.name}
+							</div>
 							{#if aiDraft?.categoryId.value === cat.id && aiDraft.categoryId.state === 'recognized' && ['image', 'text'].includes(aiDraft.categoryId.source)}<span
 									class="text-xs">建議</span
 								>{/if}
