@@ -1,9 +1,13 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { user } from '$lib/stores/session.store';
 
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { attempts, chat, imagePreviews } from './conversation.svelte';
+
+afterEach(() => {
+	vi.useRealTimers();
+});
 
 const first = { id: 'first-account', email: 'first@example.test' };
 beforeEach(() => {
@@ -32,6 +36,7 @@ it.each(['switch', 'logout'])(
 		chat.lookupControllers.push(lookup);
 		chat.lookingUp.set('request', 'query');
 		chat.lookupErrors.set('request', 'connection');
+		chat.draftEditorRequested = true;
 		chat.text = '午餐100';
 		chat.history = [{ question: '誰付款？', answer: '我' }];
 		chat.conversation.push({ role: 'user', text: '午餐100', imageIds: ['preview'] });
@@ -68,6 +73,7 @@ it.each(['switch', 'logout'])(
 		expect(chat.focusedId).toBeNull();
 		expect(chat.attempt).toBeNull();
 		expect(chat.session).toBeNull();
+		expect(chat.draftEditorRequested).toBe(false);
 		expect(attempts.size).toBe(0);
 		expect(imagePreviews.size).toBe(0);
 		expect(revoke).toHaveBeenCalledWith(url);
@@ -94,4 +100,41 @@ it('updates composer calculations as a background clarification response arrives
 	expect(chat.canCompose).toBe(false);
 	chat.reply = '我付款';
 	expect(chat.composerCount).toBe(3);
+});
+
+it('refreshes the Taiwan draft date across midnight without changing retained retry payloads', () => {
+	vi.useFakeTimers();
+	vi.setSystemTime(new Date('2026-11-25T15:59:59Z'));
+	chat.refreshToday();
+	expect(chat.draftContext.today).toBe('2026-11-25');
+	chat.attempt = {
+		action: 'analyze',
+		requestId: 'retry',
+		text: '午餐100',
+		referenceDate: chat.draftContext.today,
+		accountId: first.id
+	};
+	attempts.set('retry', chat.attempt);
+	chat.retainedCommit = {
+		action: 'commit',
+		requestId: 'commit-retry',
+		drafts: [],
+		referenceDate: chat.draftContext.today,
+		accountId: first.id
+	};
+
+	vi.advanceTimersByTime(1000);
+	chat.refreshToday();
+	expect(chat.draftContext.today).toBe('2026-11-26');
+	expect(chat.attempt.referenceDate).toBe('2026-11-25');
+	expect(attempts.get('retry')?.referenceDate).toBe('2026-11-25');
+	expect(chat.retainedCommit.referenceDate).toBe('2026-11-25');
+});
+
+it('retains a background draft editor request until the mounted page consumes it', () => {
+	chat.draftEditorRequested = true;
+	user.set({ ...first });
+	expect(chat.draftEditorRequested).toBe(true);
+	chat.draftEditorRequested = false;
+	expect(chat.draftEditorRequested).toBe(false);
 });

@@ -23,13 +23,18 @@ export const imagePreviews = new SvelteMap<string, string>();
 export const attempts = new SvelteMap<string, SemanticRequestV3 & { accountId: string }>();
 let text = $state('');
 let session = $state<DraftSession | null>(null);
+let draftEditorRequested = $state(false);
+let today = $state(toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)));
+function refreshToday() {
+	today = toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000));
+}
 let revised = $state(false);
 let draftHeading = $state('');
 let draftAnalysis = $state('');
 let draftRejected = $state(false);
 let serverDraftIssues = $state<Record<string, DraftIssue[]>>({});
 const draftContext = $derived({
-	today: toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)),
+	today,
 	categoryIds: new Set(categories.current.map((option) => option.value)),
 	allowedEmails: members.current,
 	currentUserEmail: currentUser.current?.email ?? ''
@@ -139,6 +144,13 @@ const composerHint = $derived(
 			}[phase]
 );
 export const chat = {
+	refreshToday,
+	get draftEditorRequested() {
+		return draftEditorRequested;
+	},
+	set draftEditorRequested(value: boolean) {
+		draftEditorRequested = value;
+	},
 	get text() {
 		return text;
 	},
@@ -409,6 +421,8 @@ if (browser) {
 		accountId = next;
 		text = '';
 		session = null;
+		draftEditorRequested = false;
+		refreshToday();
 		revised = false;
 		draftHeading = '';
 		draftAnalysis = '';

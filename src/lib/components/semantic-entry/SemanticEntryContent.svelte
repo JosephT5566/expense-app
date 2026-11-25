@@ -22,7 +22,7 @@
 	import { user } from '$lib/stores/session.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
 	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
-	import { getTaiwanMonthKey, toISODateOnly } from '$lib/utils/dates';
+	import { getTaiwanMonthKey } from '$lib/utils/dates';
 	import {
 		submitSemanticEntry,
 		getSemanticEntryStatus,
@@ -65,6 +65,7 @@
 		editingDrafts = true;
 	}
 	function receiveDrafts(result: Extract<SemanticResponseV3, { status: 'drafts' }>) {
+		chat.refreshToday();
 		chat.session = fromServerDrafts(result.drafts);
 		chat.serverDraftIssues = {};
 		if (chat.draftRejected) {
@@ -81,7 +82,7 @@
 		chat.attempt = null;
 		chat.phase = 'drafts';
 		if (chat.clarification?.purpose === 'split' && chat.selectedOption === 'custom') {
-			onEditDrafts();
+			chat.draftEditorRequested = true;
 		}
 	}
 
@@ -191,6 +192,7 @@
 		imagePreviews.clear();
 		chat.conversation = [];
 		chat.session = null;
+		chat.draftEditorRequested = false;
 		chat.retainedCommit = null;
 		editingDrafts = false;
 		chat.revised = false;
@@ -645,9 +647,17 @@
 			}
 		});
 	});
+	$effect(() => {
+		if (chat.draftEditorRequested) {
+			untrack(() => {
+				chat.draftEditorRequested = false;
+				onEditDrafts();
+			});
+		}
+	});
 	onDestroy(() => {
 		destroyed = true;
-		trayOpen = false;
+		closeTray();
 		editingDrafts = false;
 		closeToast();
 		conversationElement = undefined;
@@ -663,6 +673,7 @@
 		}
 	}
 	function newOperation(clear = true) {
+		chat.refreshToday();
 		const failedReply =
 			!clear && chat.failedAttempt?.action === 'analyze' && chat.failedAttempt.history?.length
 				? chat.failedAttempt
@@ -846,6 +857,7 @@
 		return '解析服務無法完成';
 	}
 	async function executeDraft(action: 'revise' | 'commit', retry = false) {
+		chat.refreshToday();
 		if (
 			!$user ||
 			(!chat.session && !retry) ||
@@ -1092,6 +1104,7 @@
 		}
 	}
 	async function execute(retryId?: string) {
+		chat.refreshToday();
 		if (chat.phase === 'drafts' && !retryId) {
 			await executeDraft('revise');
 			return;
@@ -1162,9 +1175,7 @@
 				const previous = chat.phase === 'needs_input' ? chat.attempt : reusable;
 				const identity = {
 					requestId: previous?.requestId ?? freshRequestId(),
-					referenceDate:
-						previous?.referenceDate ??
-						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000))
+					referenceDate: previous?.referenceDate ?? chat.draftContext.today
 				};
 				if (chat.count > 500) {
 					return;
