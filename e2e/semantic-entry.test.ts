@@ -4043,6 +4043,8 @@ const conversationRecord = (
 	fields: Partial<PersistedConversation> = {}
 ): PersistedConversation => ({
 	v: 1,
+	conversationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+	revision: 0,
 	startedAt: Date.parse('2026-10-01T04:00:00Z'),
 	updatedAt: Date.parse('2026-10-01T04:00:00Z'),
 	completed: false,
@@ -4209,3 +4211,49 @@ test('restored image uses an accessible placeholder and makes no image request',
 	expect(imageRequests).toEqual([]);
 	await expect(page.locator('img[alt="附加圖片"]')).toHaveCount(0);
 });
+
+for (const response of ['needs_input', 'drafts', 'rejected'] as const) {
+	test(`restored resend handles ${response} and persists its result`, async ({ page }) => {
+		await seedConversation(page, conversationRecord());
+		const s = await setup(page, async (route, body) => {
+			if (!body) {
+				await statusJson(route, 'not_found');
+			} else if (body.history?.length) {
+				await route.fulfill({ json: created(body.requestId) });
+			} else {
+				await route.fulfill({
+					json:
+						response === 'drafts'
+							? draftResponse(body.requestId, [makeDraft(1), makeDraft(2)])
+							: {
+									status: response,
+									requestId: body.requestId,
+									...(response === 'needs_input' ? { question: '金額？' } : {}),
+									issues: [{ field: 'amount', code: 'missing' }]
+								}
+				});
+			}
+		});
+		await page.reload();
+		await reopen(page);
+		await page.getByRole('button', { name: '重新送出', exact: true }).click();
+		await expect.poll(() => s.posts.length).toBe(1);
+		expect(s.posts[0]).toEqual(conversationRecord().payload);
+		await expect
+			.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').phase)
+			.toBe(response);
+		if (response === 'needs_input') {
+			await expect(page.getByText('金額？', { exact: true })).toBeVisible();
+			await page.getByLabel('補充資訊', { exact: true }).fill('100元');
+			await page.getByRole('button', { name: '送出補充', exact: true }).click();
+			await expect.poll(() => s.posts.length).toBe(2);
+			expect(s.posts[1].history).toEqual([{ question: '金額？', answer: '100元' }]);
+			await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		} else if (response === 'drafts') {
+			await expect(draftBlock(page)).toBeVisible();
+			await page.reload();
+			await reopen(page);
+			await expect(draftBlock(page)).toBeVisible();
+		}
+	});
+}

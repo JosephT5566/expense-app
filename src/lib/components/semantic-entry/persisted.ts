@@ -25,6 +25,7 @@ export type ConversationPhase =
 	| 'error';
 export type ConversationTurn = {
 	role: 'user' | 'assistant';
+	requestId?: string;
 	text: string;
 	analysis?: string;
 	imageCount?: number;
@@ -37,6 +38,8 @@ export type ConversationTurn = {
 };
 export type PersistedConversation = {
 	v: 1;
+	conversationId: string;
+	revision: number;
 	startedAt: number;
 	updatedAt: number;
 	completed: boolean;
@@ -209,6 +212,10 @@ export function parseConversation(raw: unknown, now: number): PersistedConversat
 		) {
 			return null;
 		}
+		const conversationId = str(r.conversationId);
+		if (!uuid.test(conversationId)) {
+			return null;
+		}
 		const phase = r.phase;
 		if (
 			phase !== 'input' &&
@@ -294,6 +301,8 @@ export function parseConversation(raw: unknown, now: number): PersistedConversat
 		}
 		return {
 			v: 1,
+			conversationId,
+			revision: count(r.revision),
 			startedAt: num(r.startedAt),
 			updatedAt: num(r.updatedAt),
 			completed: bool(r.completed),
@@ -309,7 +318,11 @@ export function parseConversation(raw: unknown, now: number): PersistedConversat
 				if (t.role !== 'user' && t.role !== 'assistant') {
 					throw new Error('Invalid role');
 				}
+				if ('requestId' in t && !uuid.test(str(t.requestId))) {
+					throw new Error('Invalid result request id');
+				}
 				return {
+					...('requestId' in t ? { requestId: str(t.requestId) } : {}),
 					role: t.role,
 					text: str(t.text),
 					...('analysis' in t ? { analysis: str(t.analysis) } : {}),
@@ -387,7 +400,7 @@ export function loadConversation(
 	} catch {
 		/* Invalid JSON is discarded. */
 	}
-	if (!parsed) {
+	if (!parsed && storage.getItem(conversationKey(owner)) === raw) {
 		removeConversation(owner, storage);
 	}
 	return parsed;
@@ -395,14 +408,42 @@ export function loadConversation(
 export function saveConversation(
 	owner: string,
 	value: PersistedConversation,
-	storage: ConversationStorage = globalThis.localStorage
-) {
-	const clean = parseConversation(value, Date.now());
-	if (clean) {
-		storage.setItem(conversationKey(owner), JSON.stringify(clean));
-	} else {
-		removeConversation(owner, storage);
+	storage: ConversationStorage = globalThis.localStorage,
+	expected?: Pick<PersistedConversation, 'conversationId' | 'revision'> | null
+): PersistedConversation | null {
+	const key = conversationKey(owner);
+	const raw = storage.getItem(key);
+	let stored = null;
+	try {
+		stored = raw === null ? null : parseConversation(JSON.parse(raw), Date.now());
+	} catch {
+		/* Malformed storage cannot authorize an existing tab to overwrite it. */
 	}
+	if (
+		expected !== undefined &&
+		(expected === null
+			? raw !== null
+			: !stored ||
+				stored.conversationId !== expected.conversationId ||
+				stored.revision !== expected.revision)
+	) {
+		return null;
+	}
+	const clean = parseConversation(value, Date.now());
+	if (!clean) {
+		if (
+			stored?.conversationId === value.conversationId &&
+			stored.revision === value.revision &&
+			storage.getItem(key) === raw
+		) {
+			storage.removeItem(key);
+		}
+		return null;
+	}
+	clean.revision =
+		(stored?.conversationId === clean.conversationId ? stored.revision : clean.revision) + 1;
+	storage.setItem(key, JSON.stringify(clean));
+	return clean;
 }
 // #84 will supply signed GET URLs. Object paths are never used as image URLs.
 export function restoredImageUrl(path: string): null {

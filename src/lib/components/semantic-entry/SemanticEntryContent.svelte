@@ -79,7 +79,12 @@
 		chat.draftHeading = `找到 ${chat.drafts.length} 筆，${result.reason === 'multiple' ? '因為有多筆' : '有資料需要補齊'}，還沒記帳。`;
 		if (!chat.conversation.some((entry) => entry.drafts)) {
 			chat.draftAnalysis = chat.analysis;
-			chat.conversation.push({ role: 'assistant', text: '', drafts: true });
+			chat.conversation.push({
+				role: 'assistant',
+				text: '',
+				drafts: true,
+				requestId: result.requestId
+			});
 		}
 		chat.analysis = '';
 		chat.text = '';
@@ -515,6 +520,7 @@
 				chat.conversation.push({
 					role: 'assistant',
 					text: note,
+					requestId: id,
 					expenses: completed.expenses
 				});
 				return 'completed';
@@ -754,6 +760,7 @@
 				role: 'assistant',
 				text: chat.message,
 				analysis: chat.analysis,
+				requestId: chat.lastRequestId ?? undefined,
 				expenses: result.expenses
 			});
 			clearImages();
@@ -1075,15 +1082,16 @@
 		if (chat.readOnly || !id || !attempts.has(id)) {
 			return;
 		}
+		const restoredResend = chat.resendAvailable;
 		chat.attempt = attempts.get(id) ?? null;
 		chat.focusedId = id;
 		if (chat.attempt?.action === 'commit') {
 			await executeDraft('commit', true);
 		} else {
-			await execute(id);
+			await execute(id, restoredResend);
 		}
 	}
-	async function execute(retryId?: string) {
+	async function execute(retryId?: string, restoredResend = false) {
 		chat.refreshToday();
 		if (chat.phase === 'drafts' && !retryId) {
 			await executeDraft('revise');
@@ -1329,7 +1337,7 @@
 				}
 				if (result.status === 'created') {
 					await accept(result, version, owner);
-				} else if (hadUncertainty) {
+				} else if (hadUncertainty && !restoredResend) {
 					chat.phase = 'uncertain';
 					chat.message = '本次解析未完成寫入，但先前請求結果仍待確認。';
 				} else {
@@ -1394,7 +1402,6 @@
 </script>
 
 <svelte:window
-	onpagehide={() => chat.flush()}
 	onkeydown={(event) => {
 		if (
 			event.key === 'Escape' &&

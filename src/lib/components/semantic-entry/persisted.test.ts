@@ -13,6 +13,8 @@ const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const now = 1_800_000_000_000;
 export const record = (): PersistedConversation => ({
 	v: 1,
+	conversationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+	revision: 0,
 	startedAt: now,
 	updatedAt: now,
 	completed: false,
@@ -50,7 +52,7 @@ describe('conversation persistence', () => {
 		vi.useFakeTimers().setSystemTime(now);
 		const s = storage();
 		saveConversation(id, record(), s);
-		expect(loadConversation(id, now, s)).toEqual(record());
+		expect(loadConversation(id, now, s)).toEqual({ ...record(), revision: 1 });
 	});
 	it('expires at exactly 24 hours from first submission, not last update', () => {
 		vi.useFakeTimers().setSystemTime(now);
@@ -68,7 +70,7 @@ describe('conversation persistence', () => {
 		saveConversation('other', record(), s);
 		removeConversation(id, s);
 		expect(loadConversation(id, now, s)).toBeNull();
-		expect(loadConversation('other', now, s)).toEqual(record());
+		expect(loadConversation('other', now, s)).toEqual({ ...record(), revision: 1 });
 	});
 	it('drops unknown fields and never writes blob previews or preview IDs', () => {
 		vi.useFakeTimers().setSystemTime(now);
@@ -143,7 +145,7 @@ it('round trips editable drafts, merged groups, and recognized/null/missing dist
 	};
 	const s = storage();
 	saveConversation(id, r, s);
-	expect(loadConversation(id, now, s)).toEqual(r);
+	expect(loadConversation(id, now, s)).toEqual({ ...r, revision: 1 });
 });
 
 it.each(['processing', 'persisting', 'uncertain', 'error'] as const)(
@@ -160,3 +162,43 @@ it.each(['processing', 'persisting', 'uncertain', 'error'] as const)(
 		expect(loadConversation(id, now, s)).not.toBeNull();
 	}
 );
+
+it('rejects stale saves after another tab updates, replaces or removes the record', () => {
+	vi.useFakeTimers().setSystemTime(now);
+	const s = storage();
+	const first = saveConversation(id, record(), s)!;
+	const newer = saveConversation(id, { ...first, text: 'newer' }, s, first)!;
+	expect(saveConversation(id, first, s, first)).toBeNull();
+	expect(loadConversation(id, now, s)).toEqual(newer);
+	removeConversation(id, s);
+	expect(saveConversation(id, newer, s, newer)).toBeNull();
+	const replacement = saveConversation(
+		id,
+		{
+			...record(),
+			conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+		},
+		s,
+		null
+	)!;
+	expect(saveConversation(id, newer, s, newer)).toBeNull();
+	expect(loadConversation(id, now, s)).toEqual(replacement);
+});
+it('does not delete a replacement encountered during expired-record cleanup', () => {
+	vi.useFakeTimers().setSystemTime(now + CONVERSATION_TTL_MS);
+	const s = storage();
+	const expired = JSON.stringify(record());
+	const replacement = JSON.stringify({
+		...record(),
+		startedAt: Date.now(),
+		updatedAt: Date.now()
+	});
+	s.setItem(conversationKey(id), replacement);
+	let reads = 0;
+	const racingStorage = {
+		...s,
+		getItem: (key: string) => (++reads === 1 ? expired : s.getItem(key))
+	};
+	expect(loadConversation(id, Date.now(), racingStorage)).toBeNull();
+	expect(s.getItem(conversationKey(id))).toBe(replacement);
+});

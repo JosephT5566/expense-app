@@ -1,7 +1,10 @@
 import {
+	conversationKey,
+	parseConversation,
 	loadConversation,
 	saveConversation,
 	removeConversation,
+	type ConversationPhase,
 	type ConversationTurn,
 	type PersistedConversation
 } from './persisted';
@@ -65,17 +68,7 @@ const drafts = $derived(
 			)
 		: []
 );
-let phase = $state<
-	| 'input'
-	| 'drafts'
-	| 'needs_input'
-	| 'processing'
-	| 'persisting'
-	| 'created'
-	| 'rejected'
-	| 'uncertain'
-	| 'error'
->('input');
+let phase = $state<ConversationPhase>('input');
 let attempt = $state<(SemanticRequestV3 & { accountId: string }) | null>(null);
 let history = $state<ClarificationTurn[]>([]);
 let question = $state('');
@@ -99,6 +92,9 @@ let issues = $state<IssueV3[]>([]);
 let message = $state('');
 let analysis = $state('');
 let conversation = $state<(ConversationTurn & { imageIds?: string[] })[]>([]);
+let conversationId = $state<string | null>(null);
+let persistedBase: PersistedConversation | null = null;
+let persistenceInvalidated = false;
 let startedAt = $state<number | null>(null);
 let lastPayload = $state<SemanticRequestV3 | null>(null);
 let lastRequestId = $state<string | null>(null);
@@ -186,6 +182,9 @@ export const chat = {
 		}
 		restoredRequestId = null;
 		startedAt = null;
+		conversationId = null;
+		persistedBase = null;
+		persistenceInvalidated = false;
 		lastPayload = null;
 		lastRequestId = null;
 		completed = false;
@@ -260,6 +259,7 @@ export const chat = {
 		attempt = value;
 		if (value) {
 			startedAt ??= Date.now();
+			conversationId ??= crypto.randomUUID();
 			lastPayload = value;
 			lastRequestId = value.requestId;
 			resendAvailable = false;
@@ -305,6 +305,7 @@ export const chat = {
 		focusedId = value;
 		if (value) {
 			startedAt ??= Date.now();
+			conversationId ??= crypto.randomUUID();
 		}
 	},
 	get pendingItems() {
@@ -453,77 +454,83 @@ export const chat = {
 	}
 };
 
+function resetAccount(next: string | undefined, removePrevious = true) {
+	revision++;
+	controller?.abort();
+	lookupEpoch++;
+	lookupControllers.forEach((controller) => controller.abort());
+	lookupControllers = [];
+	lookingUp.clear();
+	lookupErrors.clear();
+	for (const [id, retained] of attempts) {
+		if (retained.accountId !== next) {
+			attempts.delete(id);
+		}
+	}
+	imagePreviews.forEach((url) => URL.revokeObjectURL(url));
+	imagePreviews.clear();
+	selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+	if (removePrevious && accountId) {
+		try {
+			removeConversation(accountId);
+		} catch {
+			/* Storage unavailable. */
+		}
+	}
+	restoredRequestId = null;
+	startedAt = null;
+	conversationId = null;
+	persistedBase = null;
+	persistenceInvalidated = false;
+	lastPayload = null;
+	lastRequestId = null;
+	completed = false;
+	checking = false;
+	resendAvailable = false;
+	accountId = next;
+	text = '';
+	session = null;
+	draftEditorRequested = false;
+	refreshToday();
+	revised = false;
+	draftHeading = '';
+	draftAnalysis = '';
+	draftRejected = false;
+	serverDraftIssues = {};
+	phase = 'input';
+	attempt = null;
+	history = [];
+	question = '';
+	clarification = null;
+	selectedOption = '';
+	reply = '';
+	focusedId = null;
+	pendingItems = [];
+	failedAttempt = null;
+	retainedCommit = null;
+	seenPersisting = false;
+	recovering = false;
+	savedExpense = null;
+	issues = [];
+	message = '';
+	analysis = '';
+	conversation = [];
+	selectedImages = [];
+	imageError = '';
+	converting = false;
+	uploading = false;
+	controller = undefined;
+	if (next) {
+		restoreConversation(next);
+	}
+}
+
 // Account cleanup also runs while the chat page is unmounted.
 if (browser) {
 	user.subscribe((value) => {
 		const next = value?.id;
-		if (next === accountId) {
-			return;
-		}
-		revision++;
-		controller?.abort();
-		lookupEpoch++;
-		lookupControllers.forEach((controller) => controller.abort());
-		lookupControllers = [];
-		lookingUp.clear();
-		lookupErrors.clear();
-		for (const [id, retained] of attempts) {
-			if (retained.accountId !== next) {
-				attempts.delete(id);
-			}
-		}
-		imagePreviews.forEach((url) => URL.revokeObjectURL(url));
-		imagePreviews.clear();
-		selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
-		if (accountId) {
-			try {
-				removeConversation(accountId);
-			} catch {
-				/* Storage unavailable. */
-			}
-		}
-		restoredRequestId = null;
-		startedAt = null;
-		lastPayload = null;
-		lastRequestId = null;
-		completed = false;
-		checking = false;
-		resendAvailable = false;
-		accountId = next;
-		text = '';
-		session = null;
-		draftEditorRequested = false;
-		refreshToday();
-		revised = false;
-		draftHeading = '';
-		draftAnalysis = '';
-		draftRejected = false;
-		serverDraftIssues = {};
-		phase = 'input';
-		attempt = null;
-		history = [];
-		question = '';
-		clarification = null;
-		selectedOption = '';
-		reply = '';
-		focusedId = null;
-		pendingItems = [];
-		failedAttempt = null;
-		retainedCommit = null;
-		seenPersisting = false;
-		recovering = false;
-		savedExpense = null;
-		issues = [];
-		message = '';
-		analysis = '';
-		conversation = [];
-		selectedImages = [];
-		imageError = '';
-		converting = false;
-		uploading = false;
-		controller = undefined;
-		if (next) {
-			restoreConversation(next);
+		if (next !== accountId) {
+			resetAccount(next);
 		}
 	});
 	$effect.root(() => {
@@ -531,28 +538,49 @@ if (browser) {
 			const snapshot = snapshotConversation();
 			const owner = accountId;
 			const timer = setTimeout(() => {
-				if (owner && owner === accountId && snapshot && snapshot.startedAt === startedAt) {
-					try {
-						saveConversation(owner, snapshot);
-					} catch {
-						/* Keep runtime state usable. */
-					}
+				if (
+					owner &&
+					owner === accountId &&
+					snapshot &&
+					!persistenceInvalidated &&
+					snapshot.conversationId === conversationId
+				) {
+					persistSnapshot(owner, snapshot);
 				}
 			}, 100);
 			return () => clearTimeout(timer);
 		});
 	});
 	if (typeof window !== 'undefined') {
-		window.addEventListener('pagehide', persistCurrent);
+		window.addEventListener('pagehide', () => {
+			persistCurrent();
+			revision++;
+			lookupEpoch++;
+			controller?.abort();
+			lookupControllers.forEach((controller) => controller.abort());
+			analysis = '';
+		});
+		window.addEventListener('storage', (event) => {
+			if (!accountId || (event.key !== conversationKey(accountId) && event.key !== null)) {
+				return;
+			}
+			if (processing || uploading || converting || checking || lookingUp.size > 0) {
+				persistenceInvalidated = true;
+			} else {
+				resetAccount(accountId, false);
+			}
+		});
 	}
 }
 
 function snapshotConversation(): PersistedConversation | null {
-	if (startedAt === null || uploading || !lastPayload) {
+	if (startedAt === null || !conversationId || uploading || checking || !lastPayload) {
 		return null;
 	}
 	return {
 		v: 1,
+		conversationId,
+		revision: persistedBase?.revision ?? 0,
 		startedAt,
 		updatedAt: Date.now(),
 		completed,
@@ -595,18 +623,35 @@ function snapshotConversation(): PersistedConversation | null {
 	};
 }
 function persistCurrent() {
-	if (!accountId) {
+	if (!accountId || persistenceInvalidated) {
 		return;
 	}
 	const snapshot = snapshotConversation();
 	if (snapshot) {
-		try {
-			saveConversation(accountId, snapshot);
-		} catch {
-			/* Storage unavailable. */
-		}
+		persistSnapshot(accountId, snapshot);
 	}
 }
+function persistSnapshot(owner: string, snapshot: PersistedConversation) {
+	const clean = parseConversation(snapshot, Date.now());
+	if (!clean) {
+		return;
+	}
+	// Restoring unchanged state must not start a storage-event write loop between tabs.
+	const content = (value: PersistedConversation) =>
+		JSON.stringify({ ...value, updatedAt: 0, revision: 0 });
+	if (persistedBase && content(clean) === content(persistedBase)) {
+		return;
+	}
+	try {
+		const saved = saveConversation(owner, clean, globalThis.localStorage, persistedBase);
+		if (saved) {
+			persistedBase = saved;
+		}
+	} catch {
+		/* Storage unavailable. */
+	}
+}
+
 function restoreConversation(owner: string) {
 	let saved;
 	try {
@@ -617,6 +662,8 @@ function restoreConversation(owner: string) {
 	if (!saved) {
 		return;
 	}
+	persistedBase = saved;
+	conversationId = saved.conversationId;
 	startedAt = saved.startedAt;
 	lastPayload = saved.payload;
 	lastRequestId = saved.requestId;
@@ -671,10 +718,13 @@ async function lookupRestored() {
 			session = null;
 			clarification = null;
 			analysis = '';
-			conversation = conversation.filter((turn) => !turn.drafts && !turn.expenses);
+			conversation = conversation.filter(
+				(turn) => !turn.drafts && !(turn.expenses && turn.requestId === id)
+			);
 			conversation.push({
 				role: 'assistant',
 				text: '已完成，請開新對話',
+				requestId: id,
 				expenses: result.expenses
 			});
 			message = '';

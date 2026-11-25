@@ -10,6 +10,7 @@ const storage = vi.hoisted(() => {
 		clear: () => data.clear()
 	};
 	vi.stubGlobal('localStorage', storage);
+	vi.stubGlobal('window', new EventTarget());
 	return storage;
 });
 vi.mock('$lib/data/semantic-entry.fetcher', () => ({ getSemanticEntryStatus: vi.fn() }));
@@ -162,6 +163,8 @@ const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 function saved(phase: PersistedConversation['phase'] = 'processing'): PersistedConversation {
 	return {
 		v: 1,
+		conversationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+		revision: 0,
 		startedAt: Date.now(),
 		updatedAt: Date.now(),
 		completed: false,
@@ -290,4 +293,99 @@ it('restores the full text clarification history and current question', () => {
 	expect(chat.clarification).toEqual(clarification);
 	expect(chat.canCompose).toBe(true);
 	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});
+
+it('keeps earlier completed results when the last request is verified after reload', async () => {
+	user.set(null);
+	const earlierId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+	const earlier = {
+		role: 'assistant' as const,
+		text: '第一筆',
+		requestId: earlierId,
+		expenses: []
+	};
+	saveConversation(
+		first.id,
+		{
+			...saved('created'),
+			conversation: [earlier, { role: 'assistant', text: '第二筆', requestId, expenses: [] }]
+		},
+		storage
+	);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue({ expenses: [], replayed: true });
+	user.set(first);
+	await vi.waitFor(() => expect(chat.completed).toBe(true));
+	expect(chat.conversation).toHaveLength(2);
+	expect(chat.conversation[0]).toEqual(earlier);
+	expect(chat.conversation[1].requestId).toBe(requestId);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).conversation).toHaveLength(2);
+});
+
+function storageChanged() {
+	window.dispatchEvent(Object.assign(new Event('storage'), { key: conversationKey(first.id) }));
+}
+it('adopts another tab replacement and resets on deletion without resurrecting it', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.phase = 'error';
+	chat.flush();
+	const replacement = {
+		...saved('error'),
+		conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+		text: 'other tab'
+	};
+	saveConversation(first.id, replacement, storage);
+	storageChanged();
+	expect(chat.text).toBe('other tab');
+	const raw = storage.getItem(conversationKey(first.id));
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBe(raw);
+	storage.removeItem(conversationKey(first.id));
+	storageChanged();
+	expect(chat.conversation).toEqual([]);
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBeNull();
+});
+it('does not overwrite a deletion while an in-flight tab waits for its response', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.phase = 'processing';
+	chat.flush();
+	storage.removeItem(conversationKey(first.id));
+	storageChanged();
+	expect(chat.phase).toBe('processing');
+	chat.phase = 'needs_input';
+	chat.question = '金額？';
+	chat.clarification = { status: 'needs_input', requestId, question: '金額？', issues: [] };
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBeNull();
+});
+it('flushes before pagehide clears analysis and invalidates interrupted callbacks', async () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.analysis = '暫時摘要';
+	chat.phase = 'processing';
+	chat.controller = new AbortController();
+	const revision = chat.revision;
+	window.dispatchEvent(new Event('pagehide'));
+	expect(chat.analysis).toBe('');
+	expect(chat.controller.signal.aborted).toBe(true);
+	expect(chat.revision).toBeGreaterThan(revision);
+	expect(storage.getItem(conversationKey(first.id))).not.toContain('暫時摘要');
+});
+
+it('ignores a lookup response delivered after pagehide', async () => {
+	user.set(null);
+	saveConversation(first.id, saved(), storage);
+	let finish: (value: { expenses: []; replayed: true }) => void = () => {};
+	vi.mocked(getSemanticEntryStatus).mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+	);
+	user.set(first);
+	expect(chat.checking).toBe(true);
+	window.dispatchEvent(new Event('pagehide'));
+	finish({ expenses: [], replayed: true });
+	await Promise.resolve();
+	expect(chat.completed).toBe(false);
+	expect(chat.conversation).toEqual(saved().conversation);
 });
