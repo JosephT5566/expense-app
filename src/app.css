@@ -2,7 +2,7 @@
 /* @plugin 'daisyui'; */
 
 :root {
-	--nav-height: 72px;
+	--nav-height: calc(49px + env(safe-area-inset-bottom, 0px));
 }
 
 @theme {

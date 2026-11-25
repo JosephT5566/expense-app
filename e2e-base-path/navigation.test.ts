@@ -83,11 +83,29 @@ for (const { name, viewport } of [
 		});
 
 		test('AI entry page loads under the base path and returns home', async ({ page }) => {
+			const nav = page.getByRole('navigation', { name: '主要導覽' });
 			await page.goto('/expense-app/ai-entry');
-			await expectReady(page, page.getByRole('navigation', { name: '主要導覽' }));
+			await expectReady(page, nav);
+			await expectActive(nav, 'AI 記帳');
 			await expect(
 				page.getByRole('heading', { name: 'AI 記帳', exact: true, level: 2 })
 			).toBeVisible();
+			if (name === 'mobile') {
+				await page.locator('main').evaluate((element) => {
+					element.scrollTop = element.scrollHeight;
+				});
+				const composer = page.getByRole('textbox', { name: '記帳內容', exact: true });
+				await expect(composer).toBeVisible();
+				await expect
+					.poll(() =>
+						composer
+							.locator('..')
+							.evaluate((element) => element.getBoundingClientRect().bottom)
+					)
+					.toBeLessThanOrEqual(
+						await nav.evaluate((element) => element.getBoundingClientRect().top)
+					);
+			}
 			await page.getByRole('button', { name: '返回', exact: true }).click();
 			await expect(page).toHaveURL('/expense-app/');
 			await expectActive(page.getByRole('navigation', { name: '主要導覽' }), '新增');
@@ -114,6 +132,20 @@ for (const { name, viewport } of [
 				expect(box?.x).toBeLessThan(300);
 				expect(box?.height).toBeGreaterThan(400);
 			}
+			await expect(nav.getByRole('link')).toHaveCount(4);
+			for (const label of ['新增', 'AI 記帳', '統計', '更多功能']) {
+				const link = nav.getByRole('link', { name: label, exact: true });
+				await expect(link).toHaveAccessibleName(label);
+				if (name === 'mobile') {
+					await expect(link).toHaveText('');
+					await expect(link.getByText(label, { exact: true })).toBeHidden();
+					const box = await link.boundingBox();
+					expect(box?.width).toBeGreaterThanOrEqual(44);
+					expect(box?.height).toBeGreaterThanOrEqual(44);
+				} else {
+					await expect(link.getByText(label, { exact: true })).toBeVisible();
+				}
+			}
 			await page.evaluate(() => {
 				window.__navMarker = 'alive';
 			});
@@ -121,6 +153,7 @@ for (const { name, viewport } of [
 			expect(initialDocumentRequests).toBeGreaterThan(0);
 
 			for (const [label, pathname] of [
+				['AI 記帳', '/expense-app/ai-entry'],
 				['統計', '/expense-app/summary'],
 				['更多功能', '/expense-app/setting'],
 				['新增', '/expense-app/']
@@ -166,6 +199,9 @@ for (const { name, viewport } of [
 				await expect(setting).toHaveAttribute('aria-current', 'true');
 				await expect(setting).toHaveClass(/\bselected\b/);
 				await expect(nav.locator('a.selected')).toHaveCount(1);
+				const aiEntry = nav.getByRole('link', { name: 'AI 記帳', exact: true });
+				await expect(aiEntry).not.toHaveClass(/\bselected\b/);
+				await expect(aiEntry).not.toHaveAttribute('aria-current');
 				await expect(nav.getByRole('link', { name: '新增', exact: true })).not.toHaveClass(
 					/\bselected\b/
 				);

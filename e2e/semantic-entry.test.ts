@@ -1116,6 +1116,11 @@ test('AI entry button navigates to the chat page with one title and no mode swit
 		await route.fulfill({ json: created(body!.requestId) });
 	});
 	await expect(page).toHaveURL(`${basePath}/ai-entry`);
+	const nav = page.getByRole('navigation', { name: '主要導覽' });
+	await expect(nav).toBeVisible();
+	const aiEntry = nav.getByRole('link', { name: 'AI 記帳', exact: true });
+	await expect(aiEntry).toHaveAttribute('aria-current', 'page');
+	await expect(aiEntry).toHaveClass(/\bselected\b/);
 	await expect(chatHeading(page)).toHaveCount(1);
 	await expect(chatHeading(page)).toBeVisible();
 	await expect(page.getByRole('dialog', { name: 'AI 記帳' })).toHaveCount(0);
