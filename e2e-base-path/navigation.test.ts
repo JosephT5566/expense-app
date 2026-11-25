@@ -82,6 +82,17 @@ for (const { name, viewport } of [
 			await prepareNavigation(page, new URL(baseURL).origin);
 		});
 
+		test('AI entry page loads under the base path and returns home', async ({ page }) => {
+			await page.goto('/expense-app/ai-entry');
+			await expectReady(page, page.getByRole('navigation', { name: '主要導覽' }));
+			await expect(
+				page.getByRole('heading', { name: 'AI 記帳', exact: true, level: 2 })
+			).toBeVisible();
+			await page.getByRole('button', { name: '返回', exact: true }).click();
+			await expect(page).toHaveURL('/expense-app/');
+			await expectActive(page.getByRole('navigation', { name: '主要導覽' }), '新增');
+		});
+
 		test('base path navigation preserves the document and updates the active link', async ({
 			page
 		}) => {

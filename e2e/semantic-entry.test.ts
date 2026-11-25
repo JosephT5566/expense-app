@@ -19,6 +19,9 @@ const env = {
 	PUBLIC_SUPABASE_URL: process.env.PUBLIC_SUPABASE_URL ?? 'https://synthetic.supabase.co'
 };
 const endpoint = process.env.PUBLIC_SEMANTIC_ENTRY_URL ?? 'https://semantic.example.test';
+const chatPage = (page: Page) => page.getByRole('region', { name: 'AI 記帳', exact: true });
+const chatHeading = (page: Page) =>
+	page.getByRole('heading', { name: 'AI 記帳', exact: true, level: 2 });
 const basePath = process.env.E2E_BASE_PATH ?? '';
 const user = {
 	id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -250,7 +253,7 @@ test('one click automatically creates and patches store/cache without expense RE
 	expect(s.posts).toHaveLength(1);
 	expect(s.writes()).toBe(0);
 	await expect(page.getByRole('button', { name: '確認記帳' })).toHaveCount(0);
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
 	).toBeVisible();
@@ -358,7 +361,7 @@ test('replay refreshes edited data rather than applying its old snapshot', async
 	);
 	await submit(page);
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('已編輯午餐', { exact: true })
 	).toBeVisible();
@@ -379,7 +382,7 @@ test('replay removes a deleted expense from store and cache', async ({ page }) =
 	await expect.poll(() => cachedMonth(page, '2026-09')).toEqual([]);
 	await submit(page);
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
 	).toHaveCount(0);
@@ -389,7 +392,7 @@ test('replay removes a deleted expense from store and cache', async ({ page }) =
 	await expect.poll(() => cachedMonth(page, '2026-10')).toEqual([]);
 	await expect(page.getByText('語意午餐', { exact: true })).toHaveCount(0);
 });
-test('processing locks close, Escape and outside interaction until completion', async ({
+test('processing disables new conversation while Escape and outside clicks keep the page open', async ({
 	page
 }) => {
 	let release!: () => void;
@@ -402,20 +405,17 @@ test('processing locks close, Escape and outside interaction until completion', 
 	});
 	await submit(page);
 	await expect.poll(() => s.posts.length).toBe(1);
-	await expect(
-		page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
-	).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '新對話', exact: true })).toBeDisabled();
 	await page.keyboard.press('Escape');
-	// Bits UI debounces outside pointerdown by 10ms. Flush that callback while
-	// the request is still pending, before releasing the mocked response.
+	// Exercise outside interaction while the response is still pending.
 	await page.clock.install({ time: new Date('2026-10-01T12:00:00+08:00') });
 	await page.mouse.click(2, 2);
 	await page.clock.runFor(20);
-	await expect(page.getByRole('dialog')).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 	release();
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	await expect(chatPage(page)).toHaveCount(0);
 });
 test('switching accounts discards an old response and pending input', async ({ page }) => {
 	let release!: () => void;
@@ -468,7 +468,7 @@ test('replay refresh reads beyond the first five hundred rows', async ({ page })
 	);
 	await submit(page);
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('合成項目501', { exact: true })
 	).toBeVisible();
@@ -515,7 +515,7 @@ test('account switch during replay refresh never applies an old-account response
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	release();
 	await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
 	).toHaveCount(0);
@@ -602,10 +602,7 @@ for (const lifecycle of ['reload', 'navigate']) {
 			await page.goto(`http://localhost:4173${basePath}/summary`);
 			await page.goto(`http://localhost:4173${basePath}/`);
 		}
-		await page
-			.locator('[data-date="2026-10-01"]')
-			.getByRole('button', { name: 'AI 記帳', exact: true })
-			.click();
+		await reopen(page);
 		await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
 		await expect(page.getByLabel('記帳內容')).toHaveValue('');
 		await expect(page.getByLabel('記帳內容')).toBeEditable();
@@ -703,9 +700,7 @@ test('clarification supplements the same request and automatically writes withou
 	expect(s.posts[1]).toEqual({ ...s.posts[0], history: [{ question, answer: '100元' }] });
 	expect(s.writes()).toBe(0);
 });
-test('closing a clarification discards conversation and uses a new request ID', async ({
-	page
-}) => {
+test('new conversation discards clarification and uses a new request ID', async ({ page }) => {
 	const s = await setup(page, async (route, body) =>
 		route.fulfill({
 			json: {
@@ -719,11 +714,12 @@ test('closing a clarification discards conversation and uses a new request ID', 
 	await submit(page);
 	await expect(page.getByLabel('補充資訊')).toBeVisible();
 	await page.getByLabel('補充資訊').fill('未送出回答');
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await page
-		.locator('[data-date="2026-10-01"]')
-		.getByRole('button', { name: 'AI 記帳', exact: true })
-		.click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	await expect(page).toHaveURL(`${basePath}/`);
+	await reopen(page);
+	await expect(page.getByLabel('補充資訊')).toHaveValue('未送出回答');
+	await expect(page.getByRole('status').filter({ hasText: '金額是多少？' })).toBeVisible();
+	await page.getByRole('button', { name: '新對話', exact: true }).click();
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	await expect(page.getByLabel('補充資訊')).toHaveCount(0);
 	await page.getByLabel('記帳內容').fill('新的午餐');
@@ -781,7 +777,7 @@ test('interrupted stream retains only allowed metadata and retry freezes the ful
 	expect(s.posts[2]).toEqual(s.posts[1]);
 });
 
-test('live chunked SSE shows analysis then announces writing and locks the modal before returning the saved row', async ({
+test('live chunked SSE shows analysis then announces writing and locks new conversation before returning the saved row', async ({
 	page
 }) => {
 	const { createServer } = await import('node:http');
@@ -860,16 +856,12 @@ test('live chunked SSE shows analysis then announces writing and locks the modal
 		releaseAnalysis();
 		await expect(page.getByLabel('Gemini 分析摘要')).toHaveText('辨識午餐🍜，準備驗證資料。');
 		await expect(page.getByText('正在記帳，請稍候…', { exact: true })).toBeVisible();
-		await expect(
-			page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
-		).toHaveCount(0);
+		await expect(page.getByRole('button', { name: '新對話', exact: true })).toBeDisabled();
 		await page.keyboard.press('Escape');
-		await expect(page.getByRole('dialog')).toBeVisible();
+		await expect(chatPage(page)).toBeVisible();
 		release();
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
-		await expect(
-			page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })
-		).toBeVisible();
+		await expect(page.getByRole('button', { name: '新對話', exact: true })).toBeEnabled();
 	} finally {
 		releaseAnalysis();
 		release();
@@ -1099,7 +1091,7 @@ test('chat composer stays visible and shows a hint for the current phase', async
 		});
 	});
 	try {
-		const composer = page.getByRole('dialog').locator('textarea');
+		const composer = chatPage(page).locator('textarea');
 		await expect(composer).toHaveCount(1);
 		await expect(
 			page.getByText('資訊完整後會直接記帳；多筆或不完整時會先列出草稿。', { exact: true })
@@ -1117,11 +1109,16 @@ test('chat composer stays visible and shows a hint for the current phase', async
 	}
 });
 
-test('AI dialog has one visible title and no mode switch', async ({ page }) => {
+test('AI entry button navigates to the chat page with one title and no mode switch', async ({
+	page
+}) => {
 	await setup(page, async (route, body) => {
 		await route.fulfill({ json: created(body!.requestId) });
 	});
-	await expect(page.getByRole('dialog')).toHaveAccessibleName('AI 記帳');
+	await expect(page).toHaveURL(`${basePath}/ai-entry`);
+	await expect(chatHeading(page)).toHaveCount(1);
+	await expect(chatHeading(page)).toBeVisible();
+	await expect(page.getByRole('dialog', { name: 'AI 記帳' })).toHaveCount(0);
 	await expect(page.getByRole('heading', { name: 'AI 記帳', exact: true })).toBeVisible();
 	await expect(page.getByRole('group', { name: 'AI 記帳模式' })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: '文字記帳', exact: true })).toHaveCount(0);
@@ -1136,7 +1133,7 @@ test('composer starts at one row, grows to six rows, and has no camera button', 
 	await setup(page, async (route, body) => {
 		await route.fulfill({ json: created(body!.requestId) });
 	});
-	const dialog = page.getByRole('dialog');
+	const dialog = chatPage(page);
 	await expect(dialog.getByRole('button', { name: '拍照', exact: true })).toHaveCount(0);
 	await expect(dialog.locator('input[type="file"][capture]')).toHaveCount(0);
 	await expect(dialog.getByRole('button', { name: '附加圖片', exact: true })).toBeVisible();
@@ -1343,7 +1340,7 @@ test('image and text upload once then create a summary and update home without c
 	expect(await pending(page)).toBeNull();
 	expect(s.writes()).toBe(0);
 	await testInfo.attach('image-created-aria', {
-		body: await page.getByRole('dialog').ariaSnapshot(),
+		body: await chatPage(page).ariaSnapshot(),
 		contentType: 'text/yaml'
 	});
 	await page.screenshot({ path: testInfo.outputPath('image-created.png') });
@@ -1354,7 +1351,7 @@ test('image and text upload once then create a summary and update home without c
 	expect(s.posts[1].requestId).not.toBe(s.posts[0].requestId);
 	expect(s.posts[1].images).toBeUndefined();
 	await expect(summary).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	await expect(
 		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
 	).toBeVisible();
@@ -1539,7 +1536,7 @@ test('image drafts show incomplete issues, foreign currency and disabled commit'
 		'補充只更新草稿，不會重新讀取圖片。'
 	);
 	await testInfo.attach('drafts-aria', {
-		body: await page.getByRole('dialog').ariaSnapshot(),
+		body: await chatPage(page).ariaSnapshot(),
 		contentType: 'text/yaml'
 	});
 	await page.screenshot({ path: testInfo.outputPath('drafts.png') });
@@ -1666,11 +1663,11 @@ test('commit creates all rows with ClientDraft payload and removes draft control
 	}
 	expect(await pending(page)).toBeNull();
 	await testInfo.attach('commit-aria', {
-		body: await page.getByRole('dialog').ariaSnapshot(),
+		body: await chatPage(page).ariaSnapshot(),
 		contentType: 'text/yaml'
 	});
 	await page.screenshot({ path: testInfo.outputPath('commit.png') });
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	for (const row of batchRows) {
 		await expect(
 			page.locator('section[data-date="2026-10-01"]').getByText(row.note, { exact: true })
@@ -1781,11 +1778,8 @@ for (const action of ['retry', 'close'] as const) {
 		} else {
 			await page.keyboard.press('Escape');
 			await expect(pendingTray(page)).toHaveCount(0);
-			await page
-				.getByRole('dialog')
-				.getByRole('button', { name: 'Close', exact: true })
-				.click();
-			await expect(page.getByRole('dialog')).toHaveCount(0);
+			await page.getByRole('button', { name: '返回', exact: true }).click();
+			await expect(chatPage(page)).toHaveCount(0);
 			expect((await pendingItems(page))[0].requestId).toBe(s.posts[1].requestId);
 			await page
 				.locator('section[data-date="2026-10-01"]')
@@ -1805,7 +1799,7 @@ for (const action of ['retry', 'close'] as const) {
 	});
 }
 
-test('commit retry after close that replays a rejection clears the pending item', async ({
+test('commit retry after navigation that replays a rejection clears the pending item', async ({
 	page
 }) => {
 	let commits = 0;
@@ -1832,8 +1826,8 @@ test('commit retry after close that replays a rejection clears the pending item'
 	await expect(pendingTray(page)).toBeVisible();
 	await page.keyboard.press('Escape');
 	await expect(pendingTray(page)).toHaveCount(0);
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	await expect(chatPage(page)).toHaveCount(0);
 	await page
 		.locator('section[data-date="2026-10-01"]')
 		.getByRole('button', { name: 'AI 記帳', exact: true })
@@ -1842,7 +1836,7 @@ test('commit retry after close that replays a rejection clears the pending item'
 	await expect(page.getByText('未記帳：3 筆都沒有寫入', { exact: true })).toBeVisible();
 	expect(s.posts[2]).toEqual(s.posts[1]);
 	await expect(page.getByText('結果待確認', { exact: true })).toHaveCount(0);
-	await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
+	await expect(chatPage(page).locator('textarea')).toBeEditable();
 	await expect(pendingBadge(page)).toHaveCount(0);
 	expect(await pending(page)).toBeNull();
 	expect(s.writes()).toBe(0);
@@ -2065,7 +2059,7 @@ test('automatic merge can be removed and all closure paths preserve changes', as
 	await openDraftEditor(page);
 	// No changes this time: closing must not append a second edit acknowledgement.
 	const confirmation = page.getByRole('alertdialog', { name: '要關閉編輯草稿嗎？', exact: true });
-	const aiDialog = page.getByRole('dialog', { name: 'AI 記帳', exact: true });
+	const aiDialog = page.locator('section[aria-labelledby="ai-entry-title"]');
 	await outsideClickUntilConfirm(page, confirmation);
 	await expect(editDialog(page)).toBeVisible();
 	await expect(aiDialog).toBeVisible();
@@ -2090,7 +2084,7 @@ test('outside close confirmation preserves draft changes without closing AI entr
 	await outsideClickUntilConfirm(page, confirmation);
 	await confirmation.getByRole('button', { name: '關閉', exact: true }).click();
 	await expect(editDialog(page)).toHaveCount(0);
-	await expect(page.getByRole('dialog', { name: 'AI 記帳', exact: true })).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 	await expect(draftBlock(page).getByRole('listitem')).toHaveCount(1);
 	await expect(draftBlock(page)).toContainText('合成帳目2');
 	await expect(draftBlock(page)).not.toContainText('合成帳目1');
@@ -2316,7 +2310,7 @@ test('legacy create and edit dialogs retain amount, date, manual shares and dele
 	await setup(page, async (route, body) => route.fulfill({ json: created(body!.requestId) }), [
 		row
 	]);
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	const day = page.locator('[data-date="2026-10-01"]');
 	await day.getByRole('button', { name: '新增項目', exact: true }).click();
 	const createPanel = page.getByRole('dialog', { name: '新增項目', exact: true });
@@ -2353,10 +2347,15 @@ async function seedPending(page: Page, value: unknown) {
 	});
 }
 async function reopen(page: Page) {
+	if (new URL(page.url()).pathname === `${basePath}/ai-entry`) {
+		await expect(chatHeading(page)).toBeVisible();
+		return;
+	}
 	await page
 		.locator('section[data-date="2026-10-01"]')
 		.getByRole('button', { name: 'AI 記帳', exact: true })
 		.click();
+	await expect(chatHeading(page)).toBeVisible();
 }
 
 test('legacy pending migrates to expired metadata without querying and allows a fresh request', async ({
@@ -2509,13 +2508,16 @@ for (const outcome of ['not_found', 'failure', 'completed'] as const) {
 	});
 }
 
-test('same page close preserves the full pending analyze retry; reload keeps query only', async ({
+test('in-app navigation preserves the full pending analyze retry; reload keeps query only', async ({
 	page
 }) => {
 	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	// SvelteKit navigation can finish after click resolves; do not reopen the outgoing page.
+	await expect(page.getByRole('textbox', { name: 'Expense date' })).toBeVisible();
+	await expect(chatHeading(page)).toHaveCount(0);
 	await reopen(page);
 	await trayAction(page, '重試同一請求');
 	await expect.poll(() => s.posts.length).toBe(2);
@@ -2919,16 +2921,16 @@ for (const revise of ['failed', 'changed'] as const) {
 	});
 }
 
-test('account switch while the dialog is closed leaves only lookup for the pending item', async ({
+test('account switch while the page is unmounted leaves only lookup for the pending item', async ({
 	page
 }) => {
 	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	const original = await pending(page);
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
-	await expect(page.getByRole('dialog')).toHaveCount(0);
-	// The header avatar initial shows which account the store holds while the dialog is closed.
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	await expect(chatPage(page)).toHaveCount(0);
+	// The header avatar initial shows which account the store holds while the page is unmounted.
 	const avatar = page.locator('header .rounded-full').last();
 	await expect(avatar).toHaveText('S');
 	const switchAccount = (other: boolean) =>
@@ -3020,13 +3022,13 @@ for (const lifecycle of ['pagehide', 'account-switch'] as const) {
 			await trayAction(page, recovery === 'query' ? '查詢結果' : '重試同一請求');
 			await expect.poll(() => started).toBe(true);
 			if (recovery === 'retry') {
-				await expect(page.getByRole('dialog').locator('textarea')).toBeDisabled();
+				await expect(chatPage(page).locator('textarea')).toBeDisabled();
 			} else {
 				// A tray lookup runs beside the conversation and does not lock the composer.
 				await expect(
 					trayRows(page).first().getByRole('button', { name: '查詢結果', exact: true })
 				).toHaveAttribute('aria-busy', 'true');
-				await expect(page.getByRole('dialog').locator('textarea')).toBeEditable();
+				await expect(chatPage(page).locator('textarea')).toBeEditable();
 			}
 			if (lifecycle === 'pagehide') {
 				await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
@@ -3172,7 +3174,7 @@ for (const close of ['escape', 'dismiss'] as const) {
 		if (close === 'escape') {
 			await page.keyboard.press('Escape');
 			await expect(pendingTray(page)).toHaveCount(0);
-			await expect(page.getByRole('dialog')).toBeVisible();
+			await expect(chatPage(page)).toBeVisible();
 		} else {
 			await page.getByRole('button', { name: '關閉已過期項目', exact: true }).click();
 			await expect(pendingTray(page)).toHaveCount(0);
@@ -3244,31 +3246,33 @@ test('tray rows show Taipei time, kind, snippet and close only the popover', asy
 	const dismiss = trayRows(page).nth(3).getByRole('button', { name: '關閉已過期項目' });
 	await expect(dismiss).toHaveAttribute('title', '關閉已過期項目');
 	expect((await dismiss.boundingBox())!.height).toBeGreaterThanOrEqual(36);
-	// Outside click inside the AI dialog closes only the popover and clears seen expired items.
+	// Outside click inside the AI page closes only the popover and clears seen expired items.
 	await page.getByLabel('記帳內容').click();
 	await expect(pendingTray(page)).toHaveCount(0);
-	await expect(page.getByRole('dialog')).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 	expect((await pendingItems(page)).map((item) => item.requestId)).toEqual([
 		pendingId(1),
 		pendingId(2),
 		pendingId(3)
 	]);
-	// Outside click on the scrim also closes only the popover.
+	// Outside click near the page edge also closes only the popover.
 	await pendingBadge(page).click();
 	await expect(pendingTray(page)).toBeVisible();
 	await page.mouse.click(2, 2);
 	await expect(pendingTray(page)).toHaveCount(0);
-	await expect(page.getByRole('dialog')).toBeVisible();
-	// The badge toggles the popover and Escape closes it before the AI dialog.
+	await expect(chatPage(page)).toBeVisible();
+	// The badge toggles the popover; Escape closes the popover and leaves the page open.
 	await pendingBadge(page).click();
 	await pendingBadge(page).click();
 	await expect(pendingTray(page)).toHaveCount(0);
 	await pendingBadge(page).click();
 	await page.keyboard.press('Escape');
 	await expect(pendingTray(page)).toHaveCount(0);
-	await expect(page.getByRole('dialog')).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 	await page.keyboard.press('Escape');
-	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(chatHeading(page)).toBeVisible();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	await expect(chatPage(page)).toHaveCount(0);
 	expect(s.posts).toHaveLength(0);
 });
 
@@ -3309,9 +3313,7 @@ test('limit toast stays in the dialog, restarts without stacking and closes', as
 	await expect(toast.getByRole('button')).toHaveCount(1);
 	await expect(toast.getByRole('button')).toHaveAccessibleName('關閉通知');
 	await expect(toast.getByRole('button')).toHaveAttribute('title', '關閉通知');
-	await expect(
-		page.getByRole('dialog').getByRole('status').filter({ hasText: '已有3筆' })
-	).toHaveCount(1);
+	await expect(chatPage(page).getByRole('status').filter({ hasText: '已有3筆' })).toHaveCount(1);
 	await page.clock.runFor(3_000);
 	await submit(page);
 	await expect(toast).toHaveCount(1);
@@ -3460,6 +3462,10 @@ for (const outcome of ['completed', 'not_found', 'failure'] as const) {
 			await expect(alert).toHaveCount(0);
 			await expect(pendingTray(page)).toBeVisible();
 			expect(await pendingItems(page)).toHaveLength(1);
+			// A separate Escape closes the tray without changing the pending item.
+			await page.keyboard.press('Escape');
+			await expect(pendingTray(page)).toHaveCount(0);
+			expect(await pendingItems(page)).toHaveLength(1);
 			await trayAction(page, '刪除這筆待確認');
 			await alert.getByRole('button', { name: '仍要刪除' }).click();
 			await expect(alert).toHaveCount(0);
@@ -3467,7 +3473,7 @@ for (const outcome of ['completed', 'not_found', 'failure'] as const) {
 			expect(await pendingItems(page)).toEqual([]);
 			await expect(page.getByLabel('記帳內容')).toBeEditable();
 		}
-		await expect(page.getByRole('dialog', { name: 'AI 記帳' })).toBeVisible();
+		await expect(chatPage(page)).toBeVisible();
 	});
 }
 
@@ -3609,10 +3615,7 @@ test('a late month refresh from a lookup does not drop an expense created meanwh
 	release();
 	await expect(pendingBadge(page)).toHaveCount(0);
 	expect(await pending(page)).toBeNull();
-	await page
-		.getByRole('dialog', { name: 'AI 記帳' })
-		.getByRole('button', { name: 'Close', exact: true })
-		.click();
+	await page.getByRole('button', { name: '返回', exact: true }).click();
 	const day = page.locator('section[data-date="2026-10-01"]');
 	await expect(day.getByText('新增早餐', { exact: true })).toBeVisible();
 	await expect(day.getByText('查詢午餐', { exact: true })).toBeVisible();
@@ -3898,3 +3901,109 @@ for (const image of [false, true]) {
 		expect(state.posts[1].history).toEqual(image ? undefined : [{ question, answer: '100元' }]);
 	});
 }
+
+test('empty new conversation leaves and returns without confirmation', async ({ page }) => {
+	const s = await setup(page, async (route) => route.abort());
+	await page.getByRole('button', { name: '新對話', exact: true }).click();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+	let confirmations = 0;
+	page.on('dialog', async (dialog) => {
+		confirmations++;
+		await dialog.dismiss();
+	});
+	await page.getByRole('button', { name: '返回', exact: true }).click();
+	await expect(page).toHaveURL(`${basePath}/`);
+	await expect(page.getByRole('alertdialog')).toHaveCount(0);
+	await reopen(page);
+	await expect(chatHeading(page)).toBeVisible();
+	await expect(page.getByLabel('記帳內容')).toHaveValue('');
+	expect(confirmations).toBe(0);
+	expect(s.posts).toHaveLength(0);
+});
+
+test('analysis response applies while unmounted and returning shows the conversation', async ({
+	page
+}) => {
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	const failed: string[] = [];
+	page.on('requestfailed', (request) => {
+		if (request.url().startsWith(endpoint)) {
+			failed.push(request.failure()?.errorText ?? 'failed');
+		}
+	});
+	const s = await setup(page, async (route, body) => {
+		await held;
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	try {
+		await submit(page);
+		await expect.poll(() => s.posts.length).toBe(1);
+		await page.getByRole('button', { name: '返回', exact: true }).click();
+		await expect(page).toHaveURL(`${basePath}/`);
+		await expect(chatHeading(page)).toHaveCount(0);
+		release();
+		// Observe the result applied to the expense store while the chat is unmounted.
+		await expect(
+			page.locator('section[data-date="2026-10-01"]').getByText(row.note, { exact: true })
+		).toBeVisible();
+		await reopen(page);
+		await expect(chatHeading(page)).toBeVisible();
+		await expect(page.getByLabel('你的訊息')).toHaveText('午餐100');
+		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+		await expect(chatPage(page)).toContainText('語意午餐 · NT$ 100');
+		expect(failed).toEqual([]);
+		expect(s.posts).toHaveLength(1);
+	} finally {
+		release();
+	}
+});
+
+test('status lookup applies while unmounted and returning shows completion', async ({ page }) => {
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let queries = 0;
+	const failed: string[] = [];
+	page.on('requestfailed', (request) => {
+		if (request.url().startsWith(endpoint) && request.method() === 'GET') {
+			failed.push(request.failure()?.errorText ?? 'failed');
+		}
+	});
+	const s = await setup(page, async (route, body) => {
+		if (body) {
+			await interrupted(route, body.requestId);
+			return;
+		}
+		queries++;
+		await held;
+		await route.fulfill({
+			json: {
+				status: 'completed',
+				requestId: route.request().url().split('/').at(-1),
+				expenses: [row],
+				replayed: true
+			}
+		});
+	});
+	try {
+		await submit(page);
+		await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+		s.setRows([row]);
+		await trayAction(page, '查詢結果');
+		await expect.poll(() => queries).toBe(1);
+		await page.getByRole('button', { name: '返回', exact: true }).click();
+		await expect(page).toHaveURL(`${basePath}/`);
+		release();
+		await expect.poll(() => pending(page)).toBeNull();
+		await reopen(page);
+		await expect(createdSummary(page)).toContainText('已記帳 1 筆');
+		await expect(pendingBadge(page)).toHaveCount(0);
+		expect(failed).toEqual([]);
+	} finally {
+		release();
+	}
+});

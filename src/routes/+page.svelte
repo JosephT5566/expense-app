@@ -16,7 +16,8 @@
 
 	import { loadMonthIntoStore } from '$lib/data/month-loader';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
-	import AIEntryDialog from '$lib/components/AIEntryDialog.svelte';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
 	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
 
 	import Logger from '$lib/utils/logger';
@@ -129,8 +130,6 @@
 		expenseId = e.id;
 		drawerOpen = true;
 	}
-
-	let aiDialogOpen = $state(false);
 
 	let approvingScheduledId = $state<string | null>(null);
 	let cancellingScheduledId = $state<string | null>(null);
@@ -348,7 +347,7 @@
 						onEdit={openEdit}
 						onOpenReceiptImport={() => {
 							navigateDate(date);
-							aiDialogOpen = true;
+							void goto(resolve('/ai-entry'));
 						}}
 						onApproveScheduled={approveScheduledExpense}
 						onCancelScheduled={cancelScheduledExpense}
@@ -374,5 +373,3 @@
 		/>
 	</Dialog.Content>
 </Dialog.Root>
-
-<AIEntryDialog bind:open={aiDialogOpen} />
