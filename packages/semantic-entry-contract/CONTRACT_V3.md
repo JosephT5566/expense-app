@@ -98,7 +98,7 @@ Cloud Run 設定 90s／1Gi；圖片 analyze 的服務 deadline 目前是 85s（�
 完成時為 `{status:"completed",requestId,expenses,replayed:true}`；
 查無快照為 `{status:"not_found",requestId}`，不代表已取消或未寫入。
 草稿與續談不是已完成 ledger 紀錄；status 不回傳草稿。查詢不呼叫模型或消耗 quota。
-瀏覽器只持久保存帳號範圍內的 requestId；payload、圖片預覽及草稿保留在 modal 記憶體。
+瀏覽器以帳號範圍內的 localStorage 保存 chat page 對話、history、當前 needs_input、草稿、完整重試 payload 與 GCS 物件路徑，自首次送出起保存 1 日（24 小時）；不保存 blob 預覽或未上傳的本機檔案。是否完成只由狀態 GET 判定，已完成對話唯讀。
 
 ## 操作與回應語意
 

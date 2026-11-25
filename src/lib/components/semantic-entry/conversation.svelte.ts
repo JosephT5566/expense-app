@@ -1,3 +1,14 @@
+import {
+	loadConversation,
+	saveConversation,
+	removeConversation,
+	type ConversationTurn,
+	type PersistedConversation
+} from './persisted';
+import { getSemanticEntryStatus } from '$lib/data/semantic-entry.fetcher';
+import * as pending from './pending';
+import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
+import { getTaiwanMonthKey } from '$lib/utils/dates';
 import { SvelteMap } from 'svelte/reactivity';
 import { browser } from '$app/environment';
 import { fromStore } from 'svelte/store';
@@ -87,19 +98,15 @@ const processing = $derived(phase === 'processing' || phase === 'persisting');
 let issues = $state<IssueV3[]>([]);
 let message = $state('');
 let analysis = $state('');
-let conversation = $state<
-	{
-		role: 'user' | 'assistant';
-		text: string;
-		analysis?: string;
-		imageIds?: string[];
-		expenses?: ExpenseRow[];
-		drafts?: boolean;
-		answer?: string;
-		options?: { id: string; label: string }[];
-		optionId?: string;
-	}[]
->([]);
+let conversation = $state<(ConversationTurn & { imageIds?: string[] })[]>([]);
+let startedAt = $state<number | null>(null);
+let lastPayload = $state<SemanticRequestV3 | null>(null);
+let lastRequestId = $state<string | null>(null);
+let completed = $state(false);
+let checking = $state(false);
+let resendAvailable = $state(false);
+let restoredRequestId = $state<string | null>(null);
+const readOnly = $derived(completed || checking);
 let selectedImages = $state<{ file: File; url: string }[]>([]);
 let imageError = $state('');
 let converting = $state(false);
@@ -111,39 +118,80 @@ const count = $derived([...text.trim()].length);
 const replyCount = $derived([...reply.trim()].length);
 const composingReply = $derived(phase === 'needs_input');
 const canCompose = $derived(
-	phase === 'input' ||
-		phase === 'drafts' ||
-		phase === 'uncertain' ||
-		(composingReply && clarification?.allowFreeText !== false)
+	!readOnly &&
+		(phase === 'input' ||
+			phase === 'drafts' ||
+			phase === 'uncertain' ||
+			(composingReply && clarification?.allowFreeText !== false))
 );
 const attachmentsDisabled = $derived(
 	!canCompose || !!session || composingReply || converting || selectedImages.length >= 4
 );
 const composerCount = $derived(composingReply ? replyCount : count);
 const composerHint = $derived(
-	composerCount > 500 && canCompose
-		? '訊息最多 500 字，請縮短後再送出。'
-		: {
-				drafts: text.trim()
-					? '補充只更新草稿，不會重新讀取圖片。'
-					: drafts.length > 0 && drafts.every(isComplete)
-						? '可以繼續補充，或按「全部記帳」。'
-						: revised
-							? '可以繼續打字補充，或按「進入編輯」。'
-							: '可以直接打字補充，例如「第三筆是午餐」。',
-				input: '資訊完整後會直接記帳；多筆或不完整時會先列出草稿。',
-				needs_input: attempt?.referenceDate
-					? `本次「今天」固定為 ${attempt.referenceDate}（台灣日期）。日期更正請填完整年月日。`
-					: '補充這筆支出的資訊，接續剛才的對話。',
-				processing: '正在解析，請等待助手回覆。',
-				persisting: '正在儲存這筆支出，請稍候。',
-				created: '已完成記帳，點選「新增另一筆」開始新對話。',
-				rejected: '請修改內容後重新送出。',
-				error: '請查看助手訊息，再修改內容或稍後重試。',
-				uncertain: '請先查詢結果或重試同一請求，避免重複記帳。'
-			}[phase]
+	readOnly
+		? checking
+			? '正在查詢先前請求結果。'
+			: '已完成，請開新對話'
+		: composerCount > 500 && canCompose
+			? '訊息最多 500 字，請縮短後再送出。'
+			: {
+					drafts: text.trim()
+						? '補充只更新草稿，不會重新讀取圖片。'
+						: drafts.length > 0 && drafts.every(isComplete)
+							? '可以繼續補充，或按「全部記帳」。'
+							: revised
+								? '可以繼續打字補充，或按「進入編輯」。'
+								: '可以直接打字補充，例如「第三筆是午餐」。',
+					input: '資訊完整後會直接記帳；多筆或不完整時會先列出草稿。',
+					needs_input: attempt?.referenceDate
+						? `本次「今天」固定為 ${attempt.referenceDate}（台灣日期）。日期更正請填完整年月日。`
+						: '補充這筆支出的資訊，接續剛才的對話。',
+					processing: '正在解析，請等待助手回覆。',
+					persisting: '正在儲存這筆支出，請稍候。',
+					created: '已完成記帳，點選「新增另一筆」開始新對話。',
+					rejected: '請修改內容後重新送出。',
+					error: '請查看助手訊息，再修改內容或稍後重試。',
+					uncertain: '請先查詢結果或重試同一請求，避免重複記帳。'
+				}[phase]
 );
 export const chat = {
+	get readOnly() {
+		return readOnly;
+	},
+	get completed() {
+		return completed;
+	},
+	get checking() {
+		return checking;
+	},
+	get resendAvailable() {
+		return resendAvailable;
+	},
+	get restoredRequestId() {
+		return restoredRequestId;
+	},
+	get lastRequestId() {
+		return lastRequestId;
+	},
+	lookupRestored,
+	flush: persistCurrent,
+	clearPersisted() {
+		if (accountId) {
+			try {
+				removeConversation(accountId);
+			} catch {
+				/* Storage unavailable. */
+			}
+		}
+		restoredRequestId = null;
+		startedAt = null;
+		lastPayload = null;
+		lastRequestId = null;
+		completed = false;
+		resendAvailable = false;
+		checking = false;
+	},
 	refreshToday,
 	get draftEditorRequested() {
 		return draftEditorRequested;
@@ -210,6 +258,12 @@ export const chat = {
 	},
 	set attempt(value: typeof attempt) {
 		attempt = value;
+		if (value) {
+			startedAt ??= Date.now();
+			lastPayload = value;
+			lastRequestId = value.requestId;
+			resendAvailable = false;
+		}
 	},
 	get history() {
 		return history;
@@ -249,6 +303,9 @@ export const chat = {
 	},
 	set focusedId(value: typeof focusedId) {
 		focusedId = value;
+		if (value) {
+			startedAt ??= Date.now();
+		}
 	},
 	get pendingItems() {
 		return pendingItems;
@@ -418,6 +475,20 @@ if (browser) {
 		imagePreviews.forEach((url) => URL.revokeObjectURL(url));
 		imagePreviews.clear();
 		selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+		if (accountId) {
+			try {
+				removeConversation(accountId);
+			} catch {
+				/* Storage unavailable. */
+			}
+		}
+		restoredRequestId = null;
+		startedAt = null;
+		lastPayload = null;
+		lastRequestId = null;
+		completed = false;
+		checking = false;
+		resendAvailable = false;
 		accountId = next;
 		text = '';
 		session = null;
@@ -451,5 +522,199 @@ if (browser) {
 		converting = false;
 		uploading = false;
 		controller = undefined;
+		if (next) {
+			restoreConversation(next);
+		}
 	});
+	$effect.root(() => {
+		$effect(() => {
+			const snapshot = snapshotConversation();
+			const owner = accountId;
+			const timer = setTimeout(() => {
+				if (owner && owner === accountId && snapshot && snapshot.startedAt === startedAt) {
+					try {
+						saveConversation(owner, snapshot);
+					} catch {
+						/* Keep runtime state usable. */
+					}
+				}
+			}, 100);
+			return () => clearTimeout(timer);
+		});
+	});
+	if (typeof window !== 'undefined') {
+		window.addEventListener('pagehide', persistCurrent);
+	}
+}
+
+function snapshotConversation(): PersistedConversation | null {
+	if (startedAt === null || uploading || !lastPayload) {
+		return null;
+	}
+	return {
+		v: 1,
+		startedAt,
+		updatedAt: Date.now(),
+		completed,
+		phase:
+			phase === 'input' && pendingItems.some((item) => item.requestId === lastRequestId)
+				? 'uncertain'
+				: phase === 'input' && conversation.at(-1)?.expenses
+					? 'created'
+					: phase,
+		requestId: lastRequestId,
+		payload: lastPayload,
+		conversation: $state.snapshot(conversation),
+		history: $state.snapshot(history),
+		clarification: $state.snapshot(clarification),
+		session: session
+			? $state.snapshot({
+					...session,
+					items: session.items.map((item) =>
+						serverDraftIssues[item.id] && !item.edited
+							? {
+									...item,
+									draft: {
+										...item.draft,
+										issues: serverDraftIssues[item.id],
+										status: 'incomplete' as const
+									}
+								}
+							: item
+					)
+				})
+			: null,
+		text,
+		question,
+		message,
+		analysis: '',
+		draftHeading,
+		draftAnalysis,
+		draftRejected,
+		revised
+	};
+}
+function persistCurrent() {
+	if (!accountId) {
+		return;
+	}
+	const snapshot = snapshotConversation();
+	if (snapshot) {
+		try {
+			saveConversation(accountId, snapshot);
+		} catch {
+			/* Storage unavailable. */
+		}
+	}
+}
+function restoreConversation(owner: string) {
+	let saved;
+	try {
+		saved = loadConversation(owner, Date.now());
+	} catch {
+		return;
+	}
+	if (!saved) {
+		return;
+	}
+	startedAt = saved.startedAt;
+	lastPayload = saved.payload;
+	lastRequestId = saved.requestId;
+	restoredRequestId = saved.requestId;
+	conversation = saved.conversation;
+	history = saved.history;
+	clarification = saved.clarification;
+	session = saved.session;
+	text = saved.text;
+	question = saved.question;
+	message = saved.message;
+	analysis = saved.analysis;
+	draftHeading = saved.draftHeading;
+	draftAnalysis = saved.draftAnalysis;
+	draftRejected = saved.draftRejected;
+	revised = saved.revised;
+	phase = saved.phase;
+	// A stored completion flag is a hint to query, never authority to mark completion.
+	if (saved.payload) {
+		attempt = { ...saved.payload, accountId: owner };
+		attempts.set(saved.payload.requestId, attempt);
+	}
+	if (
+		saved.completed ||
+		['processing', 'persisting', 'uncertain', 'created'].includes(saved.phase)
+	) {
+		focusedId = saved.requestId;
+		phase = 'uncertain';
+		void lookupRestored();
+	}
+}
+async function lookupRestored() {
+	const owner = accountId;
+	const id = lastRequestId;
+	const epoch = lookupEpoch;
+	if (!owner || !id || checking || completed) {
+		return;
+	}
+	const current = () => accountId === owner && lookupEpoch === epoch && lastRequestId === id;
+	const requestController = new AbortController();
+	lookupControllers.push(requestController);
+	checking = true;
+	resendAvailable = false;
+	try {
+		const result = await getSemanticEntryStatus(id, requestController.signal);
+		if (!current()) {
+			return;
+		}
+		if (result) {
+			completed = true;
+			phase = 'created';
+			session = null;
+			clarification = null;
+			analysis = '';
+			conversation = conversation.filter((turn) => !turn.drafts && !turn.expenses);
+			conversation.push({
+				role: 'assistant',
+				text: '已完成，請開新對話',
+				expenses: result.expenses
+			});
+			message = '';
+			savedExpense = null;
+			attempt = null;
+			focusedId = null;
+			attempts.delete(id);
+			try {
+				pendingItems = pending.remove(owner, id);
+			} catch {
+				/* Retry storage on next load. */
+			}
+			persistCurrent();
+			for (const month of new Set(result.expenses.map((row) => getTaiwanMonthKey(row.ts)))) {
+				await forceRefetchMonthlyExpenses(month, undefined, current);
+				if (!current()) {
+					return;
+				}
+			}
+		} else {
+			phase = 'uncertain';
+			message = '這筆請求沒有完成，可重新送出';
+			resendAvailable = !!lastPayload;
+			const items = pending.load(owner, Date.now());
+			const item = items.find((item) => item.requestId === id);
+			pendingItems =
+				item && pending.isPastWindow(item, Date.now())
+					? pending.markExpired(owner, id, Date.now())
+					: items;
+		}
+	} catch {
+		if (current() && !completed) {
+			phase = 'uncertain';
+			message = '無法查詢結果，請稍後再按「查詢結果」。';
+		}
+	} finally {
+		lookupControllers = lookupControllers.filter((entry) => entry !== requestController);
+		if (current()) {
+			checking = false;
+			persistCurrent();
+		}
+	}
 }

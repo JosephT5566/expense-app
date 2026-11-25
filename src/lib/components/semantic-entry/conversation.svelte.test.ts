@@ -1,6 +1,23 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { user } from '$lib/stores/session.store';
 
+const storage = vi.hoisted(() => {
+	const data = new Map<string, string>();
+	const storage = {
+		getItem: (key: string) => data.get(key) ?? null,
+		setItem: (key: string, value: string) => data.set(key, value),
+		removeItem: (key: string) => data.delete(key),
+		clear: () => data.clear()
+	};
+	vi.stubGlobal('localStorage', storage);
+	return storage;
+});
+vi.mock('$lib/data/semantic-entry.fetcher', () => ({ getSemanticEntryStatus: vi.fn() }));
+vi.mock('$lib/data/expenses.fetcher', () => ({
+	forceRefetchMonthlyExpenses: vi.fn().mockResolvedValue(true)
+}));
+import { getSemanticEntryStatus } from '$lib/data/semantic-entry.fetcher';
+import { saveConversation, conversationKey, type PersistedConversation } from './persisted';
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { attempts, chat, imagePreviews } from './conversation.svelte';
@@ -12,6 +29,8 @@ afterEach(() => {
 const first = { id: 'first-account', email: 'first@example.test' };
 beforeEach(() => {
 	user.set(null);
+	storage.clear();
+	vi.mocked(getSemanticEntryStatus).mockReset();
 	user.set(first);
 });
 
@@ -137,4 +156,138 @@ it('retains a background draft editor request until the mounted page consumes it
 	expect(chat.draftEditorRequested).toBe(true);
 	chat.draftEditorRequested = false;
 	expect(chat.draftEditorRequested).toBe(false);
+});
+
+const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+function saved(phase: PersistedConversation['phase'] = 'processing'): PersistedConversation {
+	return {
+		v: 1,
+		startedAt: Date.now(),
+		updatedAt: Date.now(),
+		completed: false,
+		phase,
+		requestId,
+		payload: { action: 'analyze', requestId, text: '午餐100' },
+		conversation: [{ role: 'user', text: '午餐100' }],
+		history: [],
+		clarification: null,
+		session: null,
+		text: '午餐100',
+		question: '',
+		message: '',
+		analysis: '',
+		draftHeading: '',
+		draftAnalysis: '',
+		draftRejected: false,
+		revised: false
+	};
+}
+it('restores and queries in-flight work without a mounted page, retaining the exact retry', async () => {
+	user.set(null);
+	saveConversation(first.id, saved(), storage);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue(null);
+	user.set(first);
+	await vi.waitFor(() => expect(chat.resendAvailable).toBe(true));
+	expect(chat.conversation[0].text).toBe('午餐100');
+	expect(attempts.get(requestId)).toEqual({ ...saved().payload, accountId: first.id });
+	expect(chat.message).toBe('這筆請求沒有完成，可重新送出');
+	expect(chat.completed).toBe(false);
+	user.set({ id: 'other', email: 'other@example.test' });
+	expect(storage.getItem(conversationKey(first.id))).toBeNull();
+	expect(chat.conversation).toEqual([]);
+});
+it('does not trust stored completion and only locks after the status GET completes', async () => {
+	user.set(null);
+	saveConversation(first.id, { ...saved(), completed: true }, storage);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue(null);
+	user.set(first);
+	await vi.waitFor(() => expect(chat.checking).toBe(false));
+	expect(chat.completed).toBe(false);
+	expect(chat.resendAvailable).toBe(true);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue({ expenses: [], replayed: true });
+	await chat.lookupRestored();
+	expect(chat.completed).toBe(true);
+	expect(chat.readOnly).toBe(true);
+	expect(chat.canCompose).toBe(false);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).completed).toBe(true);
+});
+it('retains a failed lookup and permits manual query', async () => {
+	user.set(null);
+	saveConversation(first.id, saved(), storage);
+	vi.mocked(getSemanticEntryStatus).mockRejectedValue(new Error('offline'));
+	user.set(first);
+	await vi.waitFor(() => expect(chat.checking).toBe(false));
+	expect(chat.phase).toBe('uncertain');
+	expect(chat.message).toContain('查詢結果');
+	expect(storage.getItem(conversationKey(first.id))).not.toBeNull();
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue(null);
+	await chat.lookupRestored();
+	expect(chat.resendAvailable).toBe(true);
+});
+
+it('starts the conversation TTL at image submission before upload finishes', () => {
+	vi.useFakeTimers().setSystemTime(1_800_000_000_000);
+	chat.focusedId = requestId;
+	vi.advanceTimersByTime(5000);
+	chat.attempt = {
+		action: 'analyze',
+		requestId,
+		images: [`uploads/${requestId}/receipt.png`],
+		accountId: first.id
+	};
+	chat.phase = 'processing';
+	chat.flush();
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).startedAt).toBe(
+		1_800_000_000_000
+	);
+});
+
+it('keeps live created results unlocked without querying status', () => {
+	chat.phase = 'created';
+	expect(chat.readOnly).toBe(false);
+	chat.phase = 'input';
+	expect(chat.canCompose).toBe(true);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});
+
+it('persists live image summaries as created so reload verifies completion', async () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.attempt = null;
+	chat.conversation = [{ role: 'assistant', text: '已新增', expenses: [] }];
+	chat.phase = 'input';
+	chat.flush();
+	expect(chat.canCompose).toBe(true);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).phase).toBe('created');
+});
+
+it('restores the full text clarification history and current question', () => {
+	const history = [{ question: '金額？', answer: '100元' }];
+	const clarification = {
+		status: 'needs_input' as const,
+		requestId,
+		question: '日期？',
+		issues: [{ field: 'date' as const, code: 'missing' as const }]
+	};
+	chat.attempt = { action: 'analyze', requestId, text: '午餐100', history, accountId: first.id };
+	chat.history = history;
+	chat.clarification = clarification;
+	chat.question = clarification.question;
+	chat.phase = 'needs_input';
+	chat.conversation = [
+		{ role: 'user', text: '午餐' },
+		{ role: 'assistant', text: '金額？', answer: '100元' },
+		{ role: 'user', text: '100元' }
+	];
+	chat.flush();
+	const raw = storage.getItem(conversationKey(first.id))!;
+	expect(JSON.parse(raw).question).toBe('日期？');
+	user.set(null);
+	storage.setItem(conversationKey(first.id), raw);
+	user.set(first);
+	expect(chat.history).toEqual(history);
+	expect(chat.attempt?.history).toEqual(history);
+	expect(chat.question).toBe('日期？');
+	expect(chat.clarification).toEqual(clarification);
+	expect(chat.canCompose).toBe(true);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
 });

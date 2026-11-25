@@ -6,6 +6,11 @@ import {
 	isComplete,
 	toClientDraft
 } from '../src/lib/components/semantic-entry/drafts';
+import {
+	conversationKey,
+	CONVERSATION_TTL_MS,
+	type PersistedConversation
+} from '../src/lib/components/semantic-entry/persisted';
 import * as pendingStore from '../src/lib/components/semantic-entry/pending';
 import {
 	SERVICE_TEXT_DEADLINE_MS,
@@ -173,7 +178,9 @@ async function setup(
 		.locator(`[data-date="${selectedDay}"]`)
 		.getByRole('button', { name: 'AI 記帳', exact: true })
 		.click();
-	await page.getByLabel('記帳內容').fill('午餐100');
+	if (await page.getByLabel('記帳內容', { exact: true }).isEnabled()) {
+		await page.getByLabel('記帳內容', { exact: true }).fill('午餐100');
+	}
 	return {
 		posts,
 		setRows: (next: (typeof row)[]) => {
@@ -246,7 +253,12 @@ test('one click automatically creates and patches store/cache without expense RE
 	page
 }) => {
 	const s = await setup(page, async (route, body) => {
-		await route.fulfill({ json: created(body!.requestId) });
+		if (!body) {
+			await statusJson(route, 'completed');
+			return;
+		}
+		s.setRows([row]);
+		await route.fulfill({ json: created(body.requestId) });
 	});
 	await submit(page);
 	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
@@ -316,7 +328,9 @@ test('uncertain retry keeps UUID and text; a new operation gets a new UUID', asy
 	await expect(pendingBadge(page)).toHaveCount(0);
 	expect(s.posts[1]).toEqual(s.posts[0]);
 	await page.getByRole('button', { name: '新增另一筆' }).click();
-	await page.getByLabel('記帳內容').fill('午餐100');
+	if (await page.getByLabel('記帳內容', { exact: true }).isEnabled()) {
+		await page.getByLabel('記帳內容', { exact: true }).fill('午餐100');
+	}
 	await submit(page);
 	await expect.poll(() => s.posts.length).toBe(3);
 	expect(s.posts[2].requestId).not.toBe(s.posts[0].requestId);
@@ -373,6 +387,10 @@ test('replay removes a deleted expense from store and cache', async ({ page }) =
 	const s = await setup(
 		page,
 		async (route, body) => {
+			if (!body) {
+				await statusJson(route, 'completed');
+				return;
+			}
 			s.setRows([]);
 			await route.fulfill({ json: created(body!.requestId, true) });
 		},
@@ -603,12 +621,9 @@ for (const lifecycle of ['reload', 'navigate']) {
 			await page.goto(`http://localhost:4173${basePath}/`);
 		}
 		await reopen(page);
-		await expect(pendingBadge(page)).toHaveAccessibleName('待確認 1 筆');
-		await expect(page.getByLabel('記帳內容')).toHaveValue('');
-		await expect(page.getByLabel('記帳內容')).toBeEditable();
-		await expandPending(page);
-		await expect(page.getByRole('button', { name: '重試同一請求' })).toHaveCount(0);
-		await trayAction(page, '查詢結果');
+		await expect(pendingBadge(page)).toHaveCount(0);
+		await expect(page.getByLabel('記帳內容')).toBeDisabled();
+		await expect(page.getByText('已完成，請開新對話').first()).toBeVisible();
 		await expect(createdSummary(page)).toContainText('已記帳 1 筆');
 		expect(await pending(page)).toBeNull();
 		expect(s.posts).toHaveLength(1);
@@ -1003,7 +1018,7 @@ test('chat preserves earlier messages and analysis without sending analysis in q
 });
 
 for (const action of ['account-switch', 'pagehide', 'status-query']) {
-	test(`analysis clears on ${action}`, async ({ page }) => {
+	test(`analysis lifecycle on ${action}`, async ({ page }) => {
 		const s = await setup(page, async (route, body) => {
 			if (!body) {
 				await route.fulfill({
@@ -1048,6 +1063,9 @@ for (const action of ['account-switch', 'pagehide', 'status-query']) {
 			await trayAction(page, '查詢結果');
 		}
 		await expect(page.getByLabel('Gemini 分析摘要')).toHaveCount(0);
+		if (action === 'pagehide') {
+			expect(await savedConversation(page)).not.toContain('本帳號的暫時摘要');
+		}
 	});
 }
 
@@ -1221,7 +1239,9 @@ test.describe('Taiwan conversation date baseline', () => {
 		expect(s.posts[0].referenceDate).toBe('2026-10-01');
 		expect(s.posts[1]).toEqual(s.posts[0]);
 		await page.getByRole('button', { name: '新增另一筆' }).click();
-		await page.getByLabel('記帳內容').fill('午餐100');
+		if (await page.getByLabel('記帳內容', { exact: true }).isEnabled()) {
+			await page.getByLabel('記帳內容', { exact: true }).fill('午餐100');
+		}
 		await submit(page);
 		await expect.poll(() => s.posts.length).toBe(3);
 		expect(s.posts[2].referenceDate).toBe('2026-10-02');
@@ -2513,10 +2533,10 @@ for (const outcome of ['not_found', 'failure', 'completed'] as const) {
 	});
 }
 
-test('in-app navigation preserves the full pending analyze retry; reload keeps query only', async ({
-	page
-}) => {
-	const s = await setup(page, async (route, body) => interrupted(route, body!.requestId));
+test('in-app navigation and reload preserve the full analyze retry payload', async ({ page }) => {
+	const s = await setup(page, async (route, body) =>
+		body ? interrupted(route, body.requestId) : statusJson(route, 'not_found')
+	);
 	await submit(page);
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await page.getByRole('button', { name: '返回', exact: true }).click();
@@ -2530,9 +2550,11 @@ test('in-app navigation preserves the full pending analyze retry; reload keeps q
 	await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
 	await page.reload();
 	await reopen(page);
-	await expandPending(page);
-	await expect(page.getByRole('button', { name: '重試同一請求', exact: true })).toHaveCount(0);
-	await expect(page.getByRole('button', { name: '查詢結果', exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toBeVisible();
+	await expect(pendingBadge(page)).toHaveCount(0);
+	await page.getByRole('button', { name: '重新送出', exact: true }).click();
+	await expect.poll(() => s.posts.length).toBe(3);
+	expect(s.posts[2]).toEqual(s.posts[0]);
 });
 
 for (const changed of [false, true]) {
@@ -3037,7 +3059,11 @@ for (const lifecycle of ['pagehide', 'account-switch'] as const) {
 			}
 			if (lifecycle === 'pagehide') {
 				await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
-				await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+				if (recovery === 'retry') {
+					await expect(page.getByText('處理中…', { exact: true })).toBeVisible();
+				} else {
+					await expect(page.getByText('結果待確認', { exact: true })).toBeVisible();
+				}
 				expect(await pending(page)).toBe(original);
 			} else {
 				const switchAccount = (other: boolean) =>
@@ -4011,4 +4037,175 @@ test('status lookup applies while unmounted and returning shows completion', asy
 	} finally {
 		release();
 	}
+});
+
+const conversationRecord = (
+	fields: Partial<PersistedConversation> = {}
+): PersistedConversation => ({
+	v: 1,
+	startedAt: Date.parse('2026-10-01T04:00:00Z'),
+	updatedAt: Date.parse('2026-10-01T04:00:00Z'),
+	completed: false,
+	phase: 'processing',
+	requestId: pendingId(80),
+	payload: { action: 'analyze', requestId: pendingId(80), text: '午餐100' },
+	conversation: [{ role: 'user', text: '午餐100' }],
+	history: [],
+	clarification: null,
+	session: null,
+	text: '午餐100',
+	question: '',
+	message: '',
+	analysis: '正在確認午餐',
+	draftHeading: '',
+	draftAnalysis: '',
+	draftRejected: false,
+	revised: false,
+	...fields
+});
+async function savedConversation(page: Page) {
+	return page.evaluate((key) => localStorage.getItem(key), conversationKey(user.id));
+}
+async function seedConversation(page: Page, record: PersistedConversation) {
+	await page.addInitScript(
+		({ key, record }) => {
+			if (!sessionStorage.getItem('seed-conversation')) {
+				localStorage.setItem(key, JSON.stringify(record));
+				sessionStorage.setItem('seed-conversation', '1');
+			}
+		},
+		{ key: conversationKey(user.id), record }
+	);
+}
+test('needs_input survives reload and continues with full clarification history', async ({
+	page
+}) => {
+	let queries = 0;
+	const s = await setup(page, async (route, body) => {
+		if (!body) {
+			queries++;
+			await statusJson(route, 'not_found');
+			return;
+		}
+		if ((body.history?.length ?? 0) < 2) {
+			await route.fulfill({
+				json: {
+					status: 'needs_input',
+					requestId: body.requestId,
+					question: body.history?.length ? '日期？' : '金額？',
+					issues: [{ field: 'amount', code: 'missing' }]
+				}
+			});
+		} else {
+			await route.fulfill({ json: created(body.requestId) });
+		}
+	});
+	await submit(page);
+	await page.getByLabel('補充資訊', { exact: true }).fill('100元');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect(page.getByText('日期？', { exact: true })).toBeVisible();
+	await expect
+		.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').question)
+		.toBe('日期？');
+	await page.reload();
+	await reopen(page);
+	await expect(page.getByText('日期？', { exact: true })).toBeVisible();
+	await expect(page.getByText('已回答：100元', { exact: true })).toBeVisible();
+	expect(queries).toBe(0);
+	await page.getByLabel('補充資訊', { exact: true }).fill('2026-10-01');
+	await page.getByRole('button', { name: '送出補充', exact: true }).click();
+	await expect.poll(() => s.posts.length).toBe(3);
+	expect(s.posts[2].history).toEqual([
+		{ question: '金額？', answer: '100元' },
+		{ question: '日期？', answer: '2026-10-01' }
+	]);
+});
+test('analysis in flight reload queries not_found and resends the exact saved payload without tray duplication', async ({
+	page
+}) => {
+	let posts = 0;
+	const s = await setup(page, async (route, body) => {
+		if (!body) {
+			await statusJson(route, 'not_found');
+		} else if (++posts === 1) {
+			/* Deliberately leave the first request in flight until reload. */
+		} else {
+			await route.fulfill({ json: created(body.requestId) });
+		}
+	});
+	await submit(page);
+	await expect.poll(() => s.posts.length).toBe(1);
+	await expect.poll(() => savedConversation(page)).not.toBeNull();
+	await page.reload();
+	await reopen(page);
+	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toBeVisible();
+	await expect(pendingBadge(page)).toHaveCount(0);
+	expect(s.posts).toHaveLength(1);
+	await page.getByRole('button', { name: '重新送出', exact: true }).click();
+	await expect.poll(() => s.posts.length).toBe(2);
+	expect(s.posts[1]).toEqual(s.posts[0]);
+});
+test('reload completed status locks the conversation and new conversation clears storage', async ({
+	page
+}) => {
+	await seedConversation(page, conversationRecord());
+	await setup(page, async (route) => statusJson(route, 'completed'), [row]);
+	await page.reload();
+	await reopen(page);
+	await expect(page.getByText('已完成，請開新對話').first()).toBeVisible();
+	await expect(page.getByLabel('記帳內容', { exact: true })).toBeDisabled();
+	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toHaveCount(0);
+	await expect(createdSummary(page)).toBeVisible();
+	await page.getByRole('button', { name: '新對話', exact: true }).click();
+	await expect(page.getByLabel('記帳內容', { exact: true })).toBeEnabled();
+	await expect.poll(() => savedConversation(page)).toBeNull();
+});
+test('account switch clears restored conversation and previous account storage', async ({
+	page
+}) => {
+	await seedConversation(page, conversationRecord());
+	const s = await setup(page, async (route) => statusJson(route, 'not_found'));
+	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toBeVisible();
+	await switchTo(page, s, true);
+	await expect(page.getByLabel('你的訊息', { exact: true })).toHaveCount(0);
+	await expect.poll(() => savedConversation(page)).toBeNull();
+	await switchTo(page, s, false);
+	await expect(page.getByLabel('你的訊息', { exact: true })).toHaveCount(0);
+});
+test('conversation older than 24 hours is dropped on load', async ({ page }) => {
+	const r = conversationRecord();
+	r.startedAt -= CONVERSATION_TTL_MS;
+	r.updatedAt = r.startedAt;
+	await seedConversation(page, r);
+	let queries = 0;
+	await setup(page, async (route) => {
+		queries++;
+		await statusJson(route, 'not_found');
+	});
+	await expect(page.getByLabel('你的訊息', { exact: true })).toHaveCount(0);
+	expect(await savedConversation(page)).toBeNull();
+	expect(queries).toBe(0);
+});
+test('restored image uses an accessible placeholder and makes no image request', async ({
+	page
+}) => {
+	await seedConversation(
+		page,
+		conversationRecord({
+			conversation: [{ role: 'user', text: '收據', imageCount: 1, imagePaths: [imagePath] }],
+			payload: { action: 'analyze', requestId: pendingId(80), images: [imagePath] }
+		})
+	);
+	const imageRequests: string[] = [];
+	page.on('request', (request) => {
+		if (request.url().includes('synthetic.png')) {
+			imageRequests.push(request.url());
+		}
+	});
+	await setup(page, async (route) => statusJson(route, 'not_found'));
+	await expect(
+		page.getByRole('img', { name: '收據圖片，圖片暫時無法顯示', exact: true })
+	).toBeVisible();
+	expect(imageRequests).toEqual([]);
+	await expect(page.locator('img[alt="附加圖片"]')).toHaveCount(0);
 });
