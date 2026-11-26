@@ -25,8 +25,6 @@ const env = {
 };
 const endpoint = process.env.PUBLIC_SEMANTIC_ENTRY_URL ?? 'https://semantic.example.test';
 const chatPage = (page: Page) => page.getByRole('region', { name: 'AI 記帳', exact: true });
-const chatHeading = (page: Page) =>
-	page.getByRole('heading', { name: 'AI 記帳', exact: true, level: 2 });
 const basePath = process.env.E2E_BASE_PATH ?? '';
 const user = {
 	id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
@@ -1186,7 +1184,7 @@ test('follow-up submission clears the composer while retaining the original requ
 		expect(s.posts[1].text).toBe('午餐100');
 		expect(s.posts[1].history).toEqual([{ question: '金額是多少？', answer: '100元' }]);
 		await expect
-			.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').text)
+			.poll(async () => JSON.parse((await savedConversation(page)) ?? '[]')[0]?.text)
 			.toBe('');
 		release();
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
@@ -1195,7 +1193,7 @@ test('follow-up submission clears the composer while retaining the original requ
 	}
 });
 
-test('AI entry navigation link navigates to the chat page with one title and no mode switch', async ({
+test('AI entry navigation link opens an accessible chat region without a visible title or mode switch', async ({
 	page
 }) => {
 	await setup(page, async (route, body) => {
@@ -1208,10 +1206,13 @@ test('AI entry navigation link navigates to the chat page with one title and no 
 	await expect(aiEntry).toHaveAttribute('aria-current', 'page');
 	await expect(aiEntry).toHaveClass(/\bselected\b/);
 	await expect(page.getByRole('button', { name: '返回', exact: true })).toHaveCount(0);
-	await expect(chatHeading(page)).toHaveCount(1);
-	await expect(chatHeading(page)).toBeVisible();
+	await expect(chatPage(page)).toHaveCount(1);
+	await expect(chatPage(page)).toBeVisible();
 	await expect(page.getByRole('dialog', { name: 'AI 記帳' })).toHaveCount(0);
-	await expect(page.getByRole('heading', { name: 'AI 記帳', exact: true })).toBeVisible();
+	await expect(chatPage(page)).toHaveAccessibleName('AI 記帳');
+	await expect(chatPage(page).getByRole('heading', { name: 'AI 記帳', exact: true })).toHaveCount(
+		0
+	);
 	await expect(page.getByRole('group', { name: 'AI 記帳模式' })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: '文字記帳', exact: true })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: '圖片分析', exact: true })).toHaveCount(0);
@@ -2168,7 +2169,7 @@ test('automatic merge can be removed and all closure paths preserve changes', as
 	await openDraftEditor(page);
 	// No changes this time: closing must not append a second edit acknowledgement.
 	const confirmation = page.getByRole('alertdialog', { name: '要關閉編輯草稿嗎？', exact: true });
-	const aiDialog = page.locator('section[aria-labelledby="ai-entry-title"]');
+	const aiDialog = chatPage(page);
 	await outsideClickUntilConfirm(page, confirmation);
 	await expect(editDialog(page)).toBeVisible();
 	await expect(aiDialog).toBeVisible();
@@ -2460,14 +2461,14 @@ async function seedPending(page: Page, value: unknown) {
 }
 async function reopen(page: Page) {
 	if (new URL(page.url()).pathname === `${basePath}/ai-entry`) {
-		await expect(chatHeading(page)).toBeVisible();
+		await expect(chatPage(page)).toBeVisible();
 		return;
 	}
 	await page
 		.getByRole('navigation', { name: '主要導覽' })
 		.getByRole('link', { name: 'AI 記帳', exact: true })
 		.click();
-	await expect(chatHeading(page)).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 }
 
 test('legacy pending migrates to expired metadata without querying and allows a fresh request', async ({
@@ -2632,7 +2633,7 @@ test('in-app navigation and reload preserve the full analyze retry payload', asy
 		.click();
 	// SvelteKit navigation can finish after click resolves; do not reopen the outgoing page.
 	await expect(page.getByRole('textbox', { name: 'Expense date' })).toBeVisible();
-	await expect(chatHeading(page)).toHaveCount(0);
+	await expect(chatPage(page)).toHaveCount(0);
 	await reopen(page);
 	await trayAction(page, '重試同一請求');
 	await expect.poll(() => s.posts.length).toBe(2);
@@ -3395,7 +3396,7 @@ test('tray rows show Taipei time, kind, snippet and close only the popover', asy
 	await expect(pendingTray(page)).toHaveCount(0);
 	await expect(chatPage(page)).toBeVisible();
 	await page.keyboard.press('Escape');
-	await expect(chatHeading(page)).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 	await page
 		.getByRole('navigation', { name: '主要導覽' })
 		.getByRole('link', { name: '新增', exact: true })
@@ -4049,7 +4050,7 @@ test('empty new conversation leaves and returns without confirmation', async ({ 
 	await expect(page).toHaveURL(`${basePath}/`);
 	await expect(page.getByRole('alertdialog')).toHaveCount(0);
 	await reopen(page);
-	await expect(chatHeading(page)).toBeVisible();
+	await expect(chatPage(page)).toBeVisible();
 	await expect(page.getByLabel('記帳內容')).toHaveValue('');
 	expect(confirmations).toBe(0);
 	expect(s.posts).toHaveLength(0);
@@ -4080,14 +4081,14 @@ test('analysis response applies while unmounted and returning shows the conversa
 			.getByRole('link', { name: '新增', exact: true })
 			.click();
 		await expect(page).toHaveURL(`${basePath}/`);
-		await expect(chatHeading(page)).toHaveCount(0);
+		await expect(chatPage(page)).toHaveCount(0);
 		release();
 		// Observe the result applied to the expense store while the chat is unmounted.
 		await expect(
 			page.locator('section[data-date="2026-10-01"]').getByText(row.note, { exact: true })
 		).toBeVisible();
 		await reopen(page);
-		await expect(chatHeading(page)).toBeVisible();
+		await expect(chatPage(page)).toBeVisible();
 		await expect(page.getByLabel('你的訊息')).toHaveText('午餐100');
 		await expect(page.getByText('已新增', { exact: true })).toBeVisible();
 		await expect(chatPage(page)).toContainText('語意午餐 · NT$ 100');
@@ -4181,7 +4182,7 @@ async function seedConversation(page: Page, record: PersistedConversation) {
 	await page.addInitScript(
 		({ key, record }) => {
 			if (!sessionStorage.getItem('seed-conversation')) {
-				localStorage.setItem(key, JSON.stringify(record));
+				localStorage.setItem(key, JSON.stringify([record]));
 				sessionStorage.setItem('seed-conversation', '1');
 			}
 		},
@@ -4216,7 +4217,7 @@ test('needs_input survives reload and continues with full clarification history'
 	await page.getByRole('button', { name: '送出補充', exact: true }).click();
 	await expect(page.getByText('日期？', { exact: true })).toBeVisible();
 	await expect
-		.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').question)
+		.poll(async () => JSON.parse((await savedConversation(page)) ?? '[]')[0]?.question)
 		.toBe('日期？');
 	await page.reload();
 	await reopen(page);
@@ -4256,7 +4257,7 @@ test('analysis in flight reload queries not_found and resends the exact saved pa
 	await expect.poll(() => s.posts.length).toBe(1);
 	await expect(chatPage(page).locator('textarea')).toHaveValue('');
 	await expect
-		.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').text)
+		.poll(async () => JSON.parse((await savedConversation(page)) ?? '[]')[0]?.text)
 		.toBe('');
 	await page.reload();
 	await expect(chatPage(page).locator('textarea')).toHaveValue('');
@@ -4284,7 +4285,7 @@ test('analysis in flight reload queries not_found and resends the exact saved pa
 	await expect.poll(() => s.posts.length).toBe(2);
 	expect(s.posts[1]).toEqual(s.posts[0]);
 });
-test('reload completed status locks the conversation and new conversation clears storage', async ({
+test('reload completed status locks the conversation and new conversation retains history', async ({
 	page
 }) => {
 	await seedConversation(page, conversationRecord());
@@ -4300,7 +4301,9 @@ test('reload completed status locks the conversation and new conversation clears
 	await expect(createdSummary(page)).toBeVisible();
 	await page.getByRole('button', { name: '新對話', exact: true }).click();
 	await expect(page.getByLabel('記帳內容', { exact: true })).toBeEnabled();
-	await expect.poll(() => savedConversation(page)).toBeNull();
+	await expect
+		.poll(async () => JSON.parse((await savedConversation(page)) ?? '[]').length)
+		.toBe(1);
 });
 test('account switch clears restored conversation and previous account storage', async ({
 	page
@@ -4384,7 +4387,7 @@ for (const response of ['needs_input', 'drafts', 'rejected'] as const) {
 			conversationStartedAt: new Date(record.startedAt).toISOString()
 		});
 		await expect
-			.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').phase)
+			.poll(async () => JSON.parse((await savedConversation(page)) ?? '[]')[0]?.phase)
 			.toBe(response);
 		if (response === 'needs_input') {
 			await expect(page.getByText('金額？', { exact: true })).toBeVisible();
@@ -4401,3 +4404,129 @@ for (const response of ['needs_input', 'drafts', 'rejected'] as const) {
 		}
 	});
 }
+
+test('conversation history has an empty state and stays on the chat route', async ({ page }) => {
+	await setup(page, async (route) => statusJson(route, 'not_found'));
+	await page.getByRole('button', { name: '對話紀錄', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '對話紀錄' });
+	await expect(panel.getByText('還沒有對話紀錄', { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(`${basePath}/ai-entry`);
+	await panel.getByRole('button', { name: '關閉', exact: true }).click();
+	await expect(panel).toHaveCount(0);
+	await expect(page.getByRole('button', { name: '對話紀錄', exact: true })).toBeFocused();
+});
+
+test('conversation history retains new conversations, lists newest first and resumes a selected thread', async ({
+	page
+}) => {
+	await setup(page, async (route, body) => {
+		await route.fulfill({
+			json: {
+				status: 'needs_input',
+				requestId: body!.requestId,
+				question: '金額？',
+				issues: [{ field: 'amount', code: 'missing' }]
+			}
+		});
+	});
+	await page.getByLabel('記帳內容', { exact: true }).fill('午餐');
+	await submit(page);
+	await expect(page.getByText('金額？', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '新對話', exact: true }).click();
+	await expect(page.getByLabel('記帳內容', { exact: true })).toHaveValue('');
+	await page.clock.setFixedTime(new Date('2026-10-01T12:01:00+08:00'));
+	await page.getByLabel('記帳內容', { exact: true }).fill('晚餐');
+	await submit(page);
+	await expect(page.getByText('金額？', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '新對話', exact: true }).click();
+	await page.getByRole('button', { name: '對話紀錄', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '對話紀錄' });
+	const rows = panel.getByRole('button').filter({ hasText: '進行中' });
+	await expect(rows).toHaveCount(2);
+	await expect(rows.nth(0)).toContainText('晚餐');
+	await expect(rows.nth(0)).toContainText('12:01');
+	await expect(rows.nth(1)).toContainText('午餐');
+	await rows.nth(1).click();
+	await expect(panel).toHaveCount(0);
+	await expect(page.getByLabel('你的訊息', { exact: true })).toHaveText('午餐');
+	await expect(page.getByLabel('補充資訊', { exact: true })).toBeEditable();
+	await expect(page.getByLabel('補充資訊', { exact: true })).toHaveValue('');
+});
+
+test('conversation history is disabled while analysis is running', async ({ page }) => {
+	let release!: () => void;
+	const gate = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await setup(page, async (route, body) => {
+		await gate;
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	await submit(page);
+	await expect(page.getByRole('button', { name: '對話紀錄', exact: true })).toBeDisabled();
+	await expect(page.getByRole('button', { name: '新對話', exact: true })).toBeDisabled();
+	release();
+	await expect(page.getByRole('button', { name: '對話紀錄', exact: true })).toBeEnabled();
+});
+
+test('conversation history opens a completed thread read-only without resending', async ({
+	page
+}) => {
+	const s = await setup(page, async (route, body) => {
+		await route.fulfill({ json: created(body!.requestId) });
+	});
+	await submit(page);
+	await expect(page.getByText('已新增', { exact: true })).toBeVisible();
+	await page.getByRole('button', { name: '新對話', exact: true }).click();
+	await page.getByRole('button', { name: '對話紀錄', exact: true }).click();
+	await page
+		.getByRole('dialog', { name: '對話紀錄' })
+		.getByRole('button', { name: /午餐100.*已完成/ })
+		.click();
+	await expect(page.getByLabel('記帳內容', { exact: true })).toBeDisabled();
+	expect(s.posts).toHaveLength(1);
+});
+
+test('conversation history marks a row expired while open and loads it read-only without requests', async ({
+	page
+}) => {
+	const now = Date.parse('2026-10-01T04:00:00Z');
+	await seedConversation(
+		page,
+		conversationRecord({
+			phase: 'input',
+			text: '',
+			analysis: '',
+			startedAt: now - CONVERSATION_TTL_MS + 60_000,
+			updatedAt: now - 60_000,
+			conversation: [
+				{ role: 'user', text: '', imageCount: 2, imagePaths: [imagePath, imagePath] }
+			]
+		})
+	);
+	let calls = 0;
+	await setup(
+		page,
+		async (route) => {
+			calls++;
+			await statusJson(route, 'not_found');
+		},
+		[],
+		undefined,
+		'install'
+	);
+	await page.getByRole('button', { name: '對話紀錄', exact: true }).click();
+	const panel = page.getByRole('dialog', { name: '對話紀錄' });
+	await expect(panel.getByRole('button', { name: /收據 2 張.*進行中/ })).toBeVisible();
+	await page.clock.fastForward(61_000);
+	const expired = panel.getByRole('button', { name: /收據 2 張.*已過期/ });
+	await expect(expired).toContainText('圖片可能已失效');
+	await expired.click();
+	await expect(panel).toHaveCount(0);
+	await expect(page.getByLabel('記帳內容', { exact: true })).toBeDisabled();
+	await expect(page.getByText('對話已過期，請開新對話', { exact: true })).toBeVisible();
+	await expect(
+		page.getByRole('img', { name: '收據圖片，圖片暫時無法顯示', exact: true })
+	).toHaveCount(2);
+	expect(calls).toBe(0);
+});

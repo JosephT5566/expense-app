@@ -1,5 +1,6 @@
 import {
 	conversationKey,
+	CONVERSATION_TTL_MS,
 	parseConversation,
 	loadConversation,
 	saveConversation,
@@ -99,10 +100,11 @@ let startedAt = $state<number | null>(null);
 let lastPayload = $state<SemanticRequestV3 | null>(null);
 let lastRequestId = $state<string | null>(null);
 let completed = $state(false);
+let expired = $state(false);
 let checking = $state(false);
 let resendAvailable = $state(false);
 let restoredRequestId = $state<string | null>(null);
-const readOnly = $derived(completed || checking);
+const readOnly = $derived(completed || expired || checking);
 let selectedImages = $state<{ file: File; url: string }[]>([]);
 let imageError = $state('');
 let converting = $state(false);
@@ -126,9 +128,11 @@ const attachmentsDisabled = $derived(
 const composerCount = $derived(composingReply ? replyCount : count);
 const composerHint = $derived(
 	readOnly
-		? checking
-			? '正在查詢先前請求結果。'
-			: '已完成，請開新對話'
+		? expired
+			? '對話已過期，請開新對話'
+			: checking
+				? '正在查詢先前請求結果。'
+				: '已完成，請開新對話'
 		: composerCount > 500 && canCompose
 			? '訊息最多 500 字，請縮短後再送出。'
 			: {
@@ -170,6 +174,32 @@ export const chat = {
 	get lastRequestId() {
 		return lastRequestId;
 	},
+	get switchingDisabled() {
+		return processing || uploading || converting || checking || lookingUp.size > 0;
+	},
+	selectConversation(owner: string, saved: PersistedConversation) {
+		if (owner !== accountId || this.switchingDisabled) {
+			return false;
+		}
+		persistCurrent();
+		let latest: PersistedConversation | null;
+		try {
+			latest = loadConversation(
+				owner,
+				Date.now(),
+				globalThis.localStorage,
+				saved.conversationId
+			);
+		} catch {
+			return false;
+		}
+		// Keep only the panel's already-loaded expired snapshot, without reviving it in storage.
+		if (!latest && Date.now() - saved.startedAt < CONVERSATION_TTL_MS) {
+			return false;
+		}
+		resetAccount(owner, false, latest ?? saved);
+		return true;
+	},
 	lookupRestored,
 	flush: persistCurrent,
 	clearPersisted() {
@@ -182,6 +212,7 @@ export const chat = {
 		lastPayload = null;
 		lastRequestId = null;
 		completed = false;
+		expired = false;
 		resendAvailable = false;
 		checking = false;
 	},
@@ -453,7 +484,11 @@ export const chat = {
 	}
 };
 
-function resetAccount(next: string | undefined, removePrevious = true, restoreId?: string) {
+function resetAccount(
+	next: string | undefined,
+	removePrevious = true,
+	restoreId?: string | PersistedConversation
+) {
 	revision++;
 	controller?.abort();
 	lookupEpoch++;
@@ -484,6 +519,7 @@ function resetAccount(next: string | undefined, removePrevious = true, restoreId
 	lastPayload = null;
 	lastRequestId = null;
 	completed = false;
+	expired = false;
 	checking = false;
 	resendAvailable = false;
 	accountId = next;
@@ -666,17 +702,20 @@ function persistSnapshot(owner: string, snapshot: PersistedConversation) {
 	}
 }
 
-function restoreConversation(owner: string, id?: string) {
+function restoreConversation(owner: string, id?: string | PersistedConversation) {
 	let saved;
 	try {
-		saved = loadConversation(owner, Date.now(), globalThis.localStorage, id);
+		saved =
+			typeof id === 'object'
+				? id
+				: loadConversation(owner, Date.now(), globalThis.localStorage, id);
 	} catch {
 		return;
 	}
 	if (!saved) {
 		return;
 	}
-	persistedBase = saved;
+	persistedBase = structuredClone($state.snapshot(saved));
 	conversationId = saved.conversationId;
 	startedAt = saved.startedAt;
 	lastPayload = saved.payload;
@@ -696,6 +735,17 @@ function restoreConversation(owner: string, id?: string) {
 	draftRejected = saved.draftRejected;
 	revised = saved.revised;
 	phase = saved.phase;
+	if (typeof id === 'object') {
+		expired = Date.now() - saved.startedAt >= CONVERSATION_TTL_MS;
+		completed = saved.completed || saved.phase === 'created';
+		if (expired || completed) {
+			text = '';
+			if (expired && ['processing', 'persisting'].includes(phase)) {
+				phase = 'input';
+			}
+			return;
+		}
+	}
 	// A stored completion flag is a hint to query, never authority to mark completion.
 	if (saved.payload) {
 		attempt = { ...saved.payload, accountId: owner };
@@ -714,7 +764,7 @@ async function lookupRestored() {
 	const owner = accountId;
 	const id = lastRequestId;
 	const epoch = lookupEpoch;
-	if (!owner || !id || checking || completed) {
+	if (!owner || !id || checking || completed || expired) {
 		return;
 	}
 	const current = () => accountId === owner && lookupEpoch === epoch && lastRequestId === id;

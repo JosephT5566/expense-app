@@ -490,3 +490,54 @@ it('keeps a new unsaved conversation writable when another tab saves a different
 	chat.flush();
 	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(2);
 });
+
+it('selects history only for the current owner while idle and retains the current record', () => {
+	const old = saved('input');
+	old.text = '';
+	saveConversation(first.id, old, storage);
+	expect(chat.selectConversation('other', old)).toBe(false);
+	chat.phase = 'processing';
+	expect(chat.selectConversation(first.id, old)).toBe(false);
+	chat.phase = 'input';
+	chat.converting = true;
+	expect(chat.selectConversation(first.id, old)).toBe(false);
+	chat.converting = false;
+	expect(chat.selectConversation(first.id, old)).toBe(true);
+	chat.conversation.push({ role: 'assistant', text: '保留補充' });
+	const another = {
+		...old,
+		conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+		conversation: [{ role: 'user' as const, text: '晚餐' }]
+	};
+	saveConversation(first.id, another, storage);
+	expect(chat.selectConversation(first.id, another)).toBe(true);
+	expect(chat.conversation[0].text).toBe('晚餐');
+	expect(
+		loadConversation(first.id, Date.now(), storage, old.conversationId)?.conversation.at(-1)
+			?.text
+	).toBe('保留補充');
+});
+
+it.each(['created', 'expired', 'expired-processing'] as const)(
+	'opens %s history read-only without a status request',
+	(kind) => {
+		const record = saved(kind === 'created' ? 'created' : 'input');
+		if (kind === 'created') {
+			saveConversation(first.id, record, storage);
+		}
+		if (kind !== 'created') {
+			if (kind === 'expired-processing') {
+				record.phase = 'processing';
+			}
+			record.startedAt -= 86_400_000;
+		}
+		expect(chat.selectConversation(first.id, record)).toBe(true);
+		expect(chat.readOnly).toBe(true);
+		expect(chat.text).toBe('');
+		expect(chat.resendAvailable).toBe(false);
+		expect(chat.switchingDisabled).toBe(false);
+		expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+		chat.clearPersisted();
+		expect(chat.readOnly).toBe(false);
+	}
+);
