@@ -16,6 +16,8 @@ import {
 	MAX_REQUEST_BYTES_V3,
 	parseUploadRequest,
 	parseUploadResponse,
+	parseReadImageResponse,
+	type ReadImageTarget,
 	type UploadRequest,
 	type UploadTarget,
 	type ExpenseRow,
@@ -35,7 +37,7 @@ export class SemanticEntryError extends Error {
 async function call(
 	path: string,
 	method: 'GET' | 'POST',
-	body?: SemanticRequestV3 | UploadRequest,
+	body?: SemanticRequestV3 | UploadRequest | { paths: string[] },
 	signal?: AbortSignal,
 	onPersisting?: () => void,
 	onAnalysis?: (delta: SemanticAnalysisDelta) => void
@@ -72,10 +74,9 @@ async function call(
 				...(body
 					? {
 							'Content-Type': 'application/json',
-							Accept:
-								path === '/uploads'
-									? 'application/json'
-									: 'text/event-stream; semantic-version=3'
+							Accept: path.startsWith('/uploads')
+								? 'application/json'
+								: 'text/event-stream; semantic-version=3'
 						}
 					: { Accept: 'application/json; semantic-version=3' })
 			},
@@ -83,9 +84,11 @@ async function call(
 			signal: AbortSignal.any([
 				signal ?? new AbortController().signal,
 				AbortSignal.timeout(
-					body && 'action' in body && body.action === 'analyze' && body.images
-						? SEMANTIC_IMAGE_TIMEOUT_MS
-						: SEMANTIC_TIMEOUT_MS
+					path === '/uploads/urls'
+						? 10000
+						: body && 'action' in body && body.action === 'analyze' && body.images
+							? SEMANTIC_IMAGE_TIMEOUT_MS
+							: SEMANTIC_TIMEOUT_MS
 				)
 			])
 		});
@@ -192,16 +195,16 @@ async function call(
 		const result = await response.json().catch(() => {
 			throw new SemanticEntryError(
 				'invalid_response',
-				isSubmission ? writing : path !== '/uploads',
+				isSubmission ? writing : !path.startsWith('/uploads'),
 				writing
 			);
 		});
-		if (!response.ok && (path === '/uploads' || response.status !== 422)) {
+		if (!response.ok && (path.startsWith('/uploads') || response.status !== 422)) {
 			throw new SemanticEntryError(
 				typeof result?.error?.code === 'string' ? result.error.code : 'service_error',
 				isSubmission
 					? writing
-					: path === '/uploads'
+					: path.startsWith('/uploads')
 						? false
 						: typeof result?.error?.uncertain === 'boolean'
 							? result.error.uncertain
@@ -216,7 +219,7 @@ async function call(
 		}
 		throw new SemanticEntryError(
 			'connection',
-			isSubmission ? writing : path !== '/uploads',
+			isSubmission ? writing : !path.startsWith('/uploads'),
 			writing
 		);
 	}
@@ -311,4 +314,67 @@ export async function uploadImage(
 	} catch {
 		throw new SemanticEntryError('image_upload', false);
 	}
+}
+
+export async function requestImageUrls(
+	paths: string[],
+	signal?: AbortSignal
+): Promise<ReadImageTarget[]> {
+	if (
+		paths.length < 1 ||
+		paths.length > 4 ||
+		new Set(paths).size !== paths.length ||
+		paths.some(
+			(path) =>
+				!/^uploads\/[^/]+\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(path) ||
+				path.includes('..')
+		)
+	) {
+		throw new SemanticEntryError('invalid_request', false);
+	}
+	const result = await call('/uploads/urls', 'POST', { paths }, signal);
+	try {
+		const images = parseReadImageResponse(result, paths.length).images;
+		if (images.some((image, index) => image.path !== paths[index])) {
+			throw new Error('Path mismatch');
+		}
+		return images;
+	} catch {
+		throw new SemanticEntryError('invalid_response', false);
+	}
+}
+
+// One missing object rejects a whole batch; recover its surviving paths individually.
+export async function restoredImageUrls(
+	paths: string[],
+	signal?: AbortSignal
+): Promise<Map<string, ReadImageTarget>> {
+	const unique = [...new Set(paths.filter(Boolean))];
+	const batches: string[][] = [];
+	for (let i = 0; i < unique.length; i += 4) {
+		batches.push(unique.slice(i, i + 4));
+	}
+	const images = await Promise.all(
+		batches.map(async (batch) => {
+			try {
+				return await requestImageUrls(batch, signal);
+			} catch (error) {
+				if (
+					!(error instanceof SemanticEntryError) ||
+					error.code !== 'image_not_found' ||
+					batch.length === 1 ||
+					signal?.aborted
+				) {
+					return [];
+				}
+				const results = await Promise.allSettled(
+					batch.map((path) => requestImageUrls([path], signal))
+				);
+				return results.flatMap((result) =>
+					result.status === 'fulfilled' ? result.value : []
+				);
+			}
+		})
+	);
+	return new Map(images.flat().map((image) => [image.path, image]));
 }
