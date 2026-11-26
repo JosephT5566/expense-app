@@ -11,7 +11,9 @@ import {
 } from '@jopie/semantic-entry-contract';
 import { toClientDraft, type DraftSession } from './drafts';
 export const CONVERSATION_TTL_MS = 86_400_000;
-export const conversationKey = (owner: string) => `jopie:semantic-conversation:${owner}`;
+export const MAX_CONVERSATIONS = 20;
+export const conversationKey = (owner: string) => `jopie:semantic-conversations:${owner}`;
+export const legacyConversationKey = (owner: string) => `jopie:semantic-conversation:${owner}`;
 type ConversationStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type ConversationPhase =
 	| 'input'
@@ -395,31 +397,127 @@ export function parseConversation(raw: unknown, now: number): PersistedConversat
 		return null;
 	}
 }
+export type ConversationSummary = {
+	id: string;
+	summary: string;
+	startedAt: number;
+	updatedAt: number;
+	status: '進行中' | '已完成' | '已過期';
+};
+export function summarizeConversation(
+	value: PersistedConversation,
+	now: number
+): ConversationSummary {
+	const first = value.conversation.find((turn) => turn.role === 'user');
+	return {
+		id: value.conversationId,
+		summary: first?.text.trim()
+			? [...first.text.trim()].slice(0, 50).join('')
+			: `收據 ${first?.imageCount ?? first?.imagePaths?.length ?? 0} 張`,
+		startedAt: value.startedAt,
+		updatedAt: value.updatedAt,
+		status:
+			now - value.startedAt >= CONVERSATION_TTL_MS
+				? '已過期'
+				: value.completed || value.phase === 'created'
+					? '已完成'
+					: '進行中'
+	};
+}
+
+// Use a new key so older tabs cannot parse and discard the migrated list.
+function readConversations(owner: string, now: number, storage: ConversationStorage) {
+	const key = conversationKey(owner);
+	const raw = storage.getItem(key);
+	const legacyRaw = raw === null ? storage.getItem(legacyConversationKey(owner)) : null;
+	const source = raw ?? legacyRaw;
+	let values: unknown[] = [];
+	let valid = source === null;
+	try {
+		if (source !== null) {
+			const decoded: unknown = JSON.parse(source);
+			values = Array.isArray(decoded) ? decoded : [decoded];
+			valid = true;
+		}
+	} catch {
+		/* Invalid JSON is discarded on load, but cannot authorize a guarded save. */
+	}
+	const entries = new Map<string, PersistedConversation>();
+	for (const value of values) {
+		const parsed = parseConversation(value, now);
+		if (parsed) {
+			const previous = entries.get(parsed.conversationId);
+			if (!previous || parsed.revision > previous.revision) {
+				entries.set(parsed.conversationId, parsed);
+			}
+		}
+	}
+	const conversations = [...entries.values()]
+		.sort((a, b) => b.startedAt - a.startedAt || b.updatedAt - a.updatedAt)
+		.slice(0, MAX_CONVERSATIONS)
+		.sort((a, b) => b.updatedAt - a.updatedAt || b.startedAt - a.startedAt);
+	return { raw, legacyRaw, valid, conversations };
+}
+function writeConversations(
+	owner: string,
+	conversations: PersistedConversation[],
+	storage: ConversationStorage,
+	expectedRaw: string | null,
+	legacyRaw: string | null
+) {
+	const key = conversationKey(owner);
+	// Recheck before cleanup/migration too, so an intervening replacement survives.
+	if (
+		storage.getItem(key) !== expectedRaw ||
+		(legacyRaw !== null && storage.getItem(legacyConversationKey(owner)) !== legacyRaw)
+	) {
+		return false;
+	}
+	const serialized = conversations.length ? JSON.stringify(conversations) : null;
+	if (serialized !== expectedRaw) {
+		if (serialized === null) {
+			storage.removeItem(key);
+		} else {
+			storage.setItem(key, serialized);
+		}
+	}
+	if (legacyRaw !== null && storage.getItem(legacyConversationKey(owner)) === legacyRaw) {
+		storage.removeItem(legacyConversationKey(owner));
+	}
+	return true;
+}
 export function removeConversation(
 	owner: string,
 	storage: ConversationStorage = globalThis.localStorage
 ) {
 	storage.removeItem(conversationKey(owner));
+	storage.removeItem(legacyConversationKey(owner));
 }
-export function loadConversation(
+function loadConversations(owner: string, now: number, storage: ConversationStorage) {
+	const { raw, legacyRaw, conversations } = readConversations(owner, now, storage);
+	writeConversations(owner, conversations, storage, raw, legacyRaw);
+	return conversations;
+}
+export function listConversations(
 	owner: string,
 	now: number,
 	storage: ConversationStorage = globalThis.localStorage
-) {
-	const raw = storage.getItem(conversationKey(owner));
-	if (raw === null) {
-		return null;
-	}
-	let parsed = null;
-	try {
-		parsed = parseConversation(JSON.parse(raw), now);
-	} catch {
-		/* Invalid JSON is discarded. */
-	}
-	if (!parsed && storage.getItem(conversationKey(owner)) === raw) {
-		removeConversation(owner, storage);
-	}
-	return parsed;
+): ConversationSummary[] {
+	return loadConversations(owner, now, storage).map((value) => summarizeConversation(value, now));
+}
+// Without an id, restore the most recently updated in-progress entry, then any latest entry.
+export function loadConversation(
+	owner: string,
+	now: number,
+	storage: ConversationStorage = globalThis.localStorage,
+	conversationId?: string
+): PersistedConversation | null {
+	const conversations = loadConversations(owner, now, storage);
+	return conversationId !== undefined
+		? (conversations.find((value) => value.conversationId === conversationId) ?? null)
+		: (conversations.find((value) => summarizeConversation(value, now).status === '進行中') ??
+				conversations[0] ??
+				null);
 }
 export function saveConversation(
 	owner: string,
@@ -427,38 +525,36 @@ export function saveConversation(
 	storage: ConversationStorage = globalThis.localStorage,
 	expected?: Pick<PersistedConversation, 'conversationId' | 'revision'> | null
 ): PersistedConversation | null {
-	const key = conversationKey(owner);
-	const raw = storage.getItem(key);
-	let stored = null;
-	try {
-		stored = raw === null ? null : parseConversation(JSON.parse(raw), Date.now());
-	} catch {
-		/* Malformed storage cannot authorize an existing tab to overwrite it. */
-	}
+	const now = Date.now();
+	const { raw, legacyRaw, valid, conversations } = readConversations(owner, now, storage);
+	const stored = conversations.find((entry) => entry.conversationId === value.conversationId);
 	if (
 		expected !== undefined &&
-		(expected === null
-			? raw !== null
-			: !stored ||
-				stored.conversationId !== expected.conversationId ||
-				stored.revision !== expected.revision)
+		(!valid ||
+			(expected === null
+				? !!stored
+				: expected.conversationId !== value.conversationId ||
+					!stored ||
+					stored.revision !== expected.revision))
 	) {
+		writeConversations(owner, conversations, storage, raw, legacyRaw);
 		return null;
 	}
-	const clean = parseConversation(value, Date.now());
+	const clean = parseConversation(value, now);
 	if (!clean) {
-		if (
-			stored?.conversationId === value.conversationId &&
-			stored.revision === value.revision &&
-			storage.getItem(key) === raw
-		) {
-			storage.removeItem(key);
-		}
+		writeConversations(owner, conversations, storage, raw, legacyRaw);
 		return null;
 	}
-	clean.revision =
-		(stored?.conversationId === clean.conversationId ? stored.revision : clean.revision) + 1;
-	storage.setItem(key, JSON.stringify(clean));
+	clean.revision = (stored?.revision ?? clean.revision) + 1;
+	const next = conversations
+		.filter((entry) => entry.conversationId !== clean.conversationId)
+		.concat(clean)
+		.sort((a, b) => b.startedAt - a.startedAt || b.updatedAt - a.updatedAt)
+		.slice(0, MAX_CONVERSATIONS)
+		.sort((a, b) => b.updatedAt - a.updatedAt || b.startedAt - a.startedAt);
+	if (!next.includes(clean) || !writeConversations(owner, next, storage, raw, legacyRaw)) {
+		return null;
+	}
 	return clean;
 }
 // #84 will supply signed GET URLs. Object paths are never used as image URLs.

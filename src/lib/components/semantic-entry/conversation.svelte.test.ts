@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { user } from '$lib/stores/session.store';
+import type { ExpenseRow } from '$lib/types/expense';
+import * as pending from './pending';
 
 const storage = vi.hoisted(() => {
 	const data = new Map<string, string>();
@@ -18,12 +20,19 @@ vi.mock('$lib/data/expenses.fetcher', () => ({
 	forceRefetchMonthlyExpenses: vi.fn().mockResolvedValue(true)
 }));
 import { getSemanticEntryStatus } from '$lib/data/semantic-entry.fetcher';
-import { saveConversation, conversationKey, type PersistedConversation } from './persisted';
+import {
+	saveConversation,
+	loadConversation,
+	listConversations,
+	conversationKey,
+	type PersistedConversation
+} from './persisted';
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { attempts, chat, imagePreviews } from './conversation.svelte';
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
 
@@ -219,14 +228,14 @@ it('does not trust stored completion and only locks after the status GET complet
 	expect(chat.selectedImages).toEqual([]);
 	expect(revoke).toHaveBeenCalledWith(url);
 	revoke.mockRestore();
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).text).toBe('');
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).payload).toEqual(
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].text).toBe('');
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].payload).toEqual(
 		saved().payload
 	);
 	expect(chat.completed).toBe(true);
 	expect(chat.readOnly).toBe(true);
 	expect(chat.canCompose).toBe(false);
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).completed).toBe(true);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].completed).toBe(true);
 });
 it('retains a failed lookup and permits manual query', async () => {
 	user.set(null);
@@ -254,7 +263,7 @@ it('starts the conversation TTL at image submission before upload finishes', () 
 	};
 	chat.phase = 'processing';
 	chat.flush();
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).startedAt).toBe(
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].startedAt).toBe(
 		1_800_000_000_000
 	);
 });
@@ -274,7 +283,7 @@ it('persists live image summaries as created so reload verifies completion', asy
 	chat.phase = 'input';
 	chat.flush();
 	expect(chat.canCompose).toBe(true);
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).phase).toBe('created');
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].phase).toBe('created');
 });
 
 it('restores the full text clarification history and current question', () => {
@@ -297,7 +306,7 @@ it('restores the full text clarification history and current question', () => {
 	];
 	chat.flush();
 	const raw = storage.getItem(conversationKey(first.id))!;
-	expect(JSON.parse(raw).question).toBe('日期？');
+	expect(JSON.parse(raw)[0].question).toBe('日期？');
 	user.set(null);
 	storage.setItem(conversationKey(first.id), raw);
 	user.set(first);
@@ -332,13 +341,13 @@ it('keeps earlier completed results when the last request is verified after relo
 	expect(chat.conversation).toHaveLength(2);
 	expect(chat.conversation[0]).toEqual(earlier);
 	expect(chat.conversation[1].requestId).toBe(requestId);
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).conversation).toHaveLength(2);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].conversation).toHaveLength(2);
 });
 
 function storageChanged() {
 	window.dispatchEvent(Object.assign(new Event('storage'), { key: conversationKey(first.id) }));
 }
-it('adopts another tab replacement and resets on deletion without resurrecting it', () => {
+it('ignores another conversation saved by a tab and resets on deletion without resurrecting it', () => {
 	chat.attempt = { ...saved().payload!, accountId: first.id };
 	chat.phase = 'error';
 	chat.flush();
@@ -349,7 +358,8 @@ it('adopts another tab replacement and resets on deletion without resurrecting i
 	};
 	saveConversation(first.id, replacement, storage);
 	storageChanged();
-	expect(chat.text).toBe('other tab');
+	expect(chat.text).toBe('');
+	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(2);
 	const raw = storage.getItem(conversationKey(first.id));
 	chat.flush();
 	expect(storage.getItem(conversationKey(first.id))).toBe(raw);
@@ -422,7 +432,7 @@ it.each(['processing', 'persisting'] as const)(
 		chat.reply = '100元';
 		chat.phase = phase;
 		chat.flush();
-		const snapshot = JSON.parse(storage.getItem(conversationKey(first.id))!);
+		const snapshot = JSON.parse(storage.getItem(conversationKey(first.id))!)[0];
 		expect(snapshot.text).toBe('');
 		expect(snapshot).not.toHaveProperty('reply');
 		expect(snapshot.payload).toMatchObject(payload);
@@ -435,5 +445,216 @@ it('preserves rejected text for editing in the persisted composer', () => {
 	chat.text = '午餐100';
 	chat.phase = 'rejected';
 	chat.flush();
-	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).text).toBe('午餐100');
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!)[0].text).toBe('午餐100');
+});
+
+it('keeps the previous submitted conversation when starting new, without adding empty entries', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.conversation = saved().conversation;
+	chat.phase = 'error';
+	chat.clearPersisted();
+	const previous = listConversations(first.id, Date.now(), storage)[0];
+	expect(previous.summary).toBe('午餐100');
+	chat.conversation = [];
+	chat.text = '';
+	chat.phase = 'input';
+	chat.clearPersisted();
+	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(1);
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.conversation = [{ role: 'user', text: '晚餐200' }];
+	chat.phase = 'error';
+	chat.flush();
+	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(2);
+	expect(loadConversation(first.id, Date.now(), storage, previous.id)?.conversation).toEqual(
+		saved().conversation
+	);
+});
+
+it('adopts an update to the same conversation from another idle tab', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.phase = 'error';
+	chat.flush();
+	const base = loadConversation(first.id, Date.now(), storage)!;
+	saveConversation(first.id, { ...base, text: 'updated in other tab' }, storage, base);
+	storageChanged();
+	expect(chat.text).toBe('updated in other tab');
+	const raw = storage.getItem(conversationKey(first.id));
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBe(raw);
+});
+
+it('keeps a new unsaved conversation writable when another tab saves a different entry', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.conversation = [{ role: 'user', text: 'new conversation' }];
+	chat.phase = 'processing';
+	saveConversation(first.id, saved('error'), storage, null);
+	storageChanged();
+	chat.phase = 'error';
+	chat.flush();
+	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(2);
+});
+
+it('selects history only for the current owner while idle and retains the current record', () => {
+	const old = saved('input');
+	old.text = '';
+	saveConversation(first.id, old, storage);
+	expect(chat.selectConversation('other', old)).toBe(false);
+	chat.phase = 'processing';
+	expect(chat.selectConversation(first.id, old)).toBe(false);
+	chat.phase = 'input';
+	chat.converting = true;
+	expect(chat.selectConversation(first.id, old)).toBe(false);
+	chat.converting = false;
+	expect(chat.selectConversation(first.id, old)).toBe(true);
+	chat.conversation.push({ role: 'assistant', text: '保留補充' });
+	const another = {
+		...old,
+		conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+		conversation: [{ role: 'user' as const, text: '晚餐' }]
+	};
+	saveConversation(first.id, another, storage);
+	expect(chat.selectConversation(first.id, another)).toBe(true);
+	expect(chat.conversation[0].text).toBe('晚餐');
+	expect(
+		loadConversation(first.id, Date.now(), storage, old.conversationId)?.conversation.at(-1)
+			?.text
+	).toBe('保留補充');
+});
+
+it.each(['created', 'expired', 'expired-processing'] as const)(
+	'opens %s history read-only without a status request',
+	(kind) => {
+		const record = saved(kind === 'created' ? 'created' : 'input');
+		if (kind === 'created') {
+			saveConversation(first.id, record, storage);
+		}
+		if (kind !== 'created') {
+			if (kind === 'expired-processing') {
+				record.phase = 'processing';
+			}
+			record.startedAt -= 86_400_000;
+		}
+		expect(chat.selectConversation(first.id, record)).toBe(true);
+		expect(chat.readOnly).toBe(true);
+		expect(chat.text).toBe('');
+		expect(chat.resendAvailable).toBe(false);
+		expect(chat.switchingDisabled).toBe(false);
+		expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+		chat.clearPersisted();
+		expect(chat.readOnly).toBe(false);
+	}
+);
+
+it('preserves unsent text and selected images when another tab updates history before any request', () => {
+	chat.text = '尚未送出的午餐';
+	const file = new File(['synthetic'], 'receipt.png');
+	const url = URL.createObjectURL(file);
+	chat.selectedImages = [{ file, url }];
+	const revoke = vi.spyOn(URL, 'revokeObjectURL');
+	saveConversation(first.id, saved('input'), storage);
+	storageChanged();
+	expect(chat.attempt).toBeNull();
+	expect(chat.text).toBe('尚未送出的午餐');
+	expect(chat.selectedImages).toEqual([{ file, url }]);
+	expect(revoke).not.toHaveBeenCalled();
+	expect(chat.flush()).toBe(true);
+	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(1);
+});
+
+it('retains unrelated account pending items while switching between stable threads', () => {
+	const one = saved('input');
+	const two = { ...one, conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+	saveConversation(first.id, one, storage);
+	saveConversation(first.id, two, storage);
+	const item: pending.PendingItem = {
+		requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+		submittedAt: Date.now(),
+		kind: 'analyze',
+		expiredAt: null
+	};
+	pending.save(first.id, [item], storage);
+	chat.pendingItems = [item];
+	for (const record of [one, two, one]) {
+		expect(chat.selectConversation(first.id, record)).toBe(true);
+		expect(chat.pendingItems).toEqual([item]);
+		expect(pending.activeCount(chat.pendingItems)).toBe(1);
+	}
+	user.set({ id: 'other', email: 'other@example.test' });
+	expect(chat.pendingItems).toEqual([]);
+});
+
+it.each(['quota', 'conflict'] as const)(
+	'keeps changed content and reports %s failure instead of switching or clearing',
+	(failure) => {
+		const one = saved('input');
+		const two = { ...one, conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+		saveConversation(first.id, one, storage);
+		saveConversation(first.id, two, storage);
+		expect(chat.selectConversation(first.id, one)).toBe(true);
+		chat.text = '未儲存的修改';
+		if (failure === 'quota') {
+			vi.spyOn(storage, 'setItem').mockImplementation(() => {
+				throw new DOMException('Quota exceeded', 'QuotaExceededError');
+			});
+		} else {
+			saveConversation(first.id, { ...one, text: '另一分頁的修改' }, storage);
+		}
+		const raw = storage.getItem(conversationKey(first.id));
+		expect(chat.flush()).toBe(false);
+		for (const action of [
+			() => chat.selectConversation(first.id, two),
+			() => chat.clearPersisted()
+		]) {
+			expect(action()).toBe(false);
+			expect(chat.text).toBe('未儲存的修改');
+			expect(chat.conversation).toEqual(one.conversation);
+			expect(chat.imageError).toContain('無法儲存對話');
+			expect(chat.lastRequestId).toBe(requestId);
+			expect(storage.getItem(conversationKey(first.id))).toBe(raw);
+		}
+	}
+);
+
+it('persists a live single-text result for completed history selection', () => {
+	const expense: ExpenseRow = {
+		id: '22222222-2222-4222-8222-222222222222',
+		note: '語意午餐',
+		amount: 100,
+		currency: 'TWD',
+		ts: '2026-10-01T04:00:00Z',
+		payer_email: first.email,
+		scope: 'personal',
+		shares_json: { [first.email]: 100 },
+		category_id: null,
+		meta: '',
+		created_at: '2026-10-01T04:00:00Z',
+		updated_at: '2026-10-01T04:00:00Z',
+		is_settled: false
+	};
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.conversation = saved().conversation;
+	chat.savedExpense = expense;
+	chat.phase = 'created';
+	expect(chat.flush()).toBe(true);
+	expect(chat.flush()).toBe(true);
+	const record = loadConversation(first.id, Date.now(), storage)!;
+	expect(record.conversation).toHaveLength(2);
+	expect(chat.selectConversation(first.id, record)).toBe(true);
+	expect(chat.completed).toBe(true);
+	expect(chat.conversation.at(-1)?.expenses).toEqual([expense]);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});
+
+it('allows leaving unchanged or expired content even when storage writes fail', () => {
+	vi.useFakeTimers();
+	const record = saved('input');
+	saveConversation(first.id, record, storage);
+	expect(chat.selectConversation(first.id, record)).toBe(true);
+	vi.spyOn(storage, 'setItem').mockImplementation(() => {
+		throw new DOMException('Quota exceeded', 'QuotaExceededError');
+	});
+	expect(chat.flush()).toBe(true);
+	chat.text = '過期後的修改';
+	vi.advanceTimersByTime(86_400_000);
+	expect(chat.clearPersisted()).toBe(true);
 });

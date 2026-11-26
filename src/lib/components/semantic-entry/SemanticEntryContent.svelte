@@ -1,5 +1,11 @@
 <script lang="ts">
-	import { restoredImageUrl } from './persisted';
+	import {
+		restoredImageUrl,
+		listConversations,
+		loadConversation,
+		summarizeConversation,
+		type PersistedConversation
+	} from './persisted';
 	import { chat, attempts, imagePreviews } from './conversation.svelte';
 
 	import { onDestroy, tick, untrack } from 'svelte';
@@ -8,6 +14,7 @@
 	import Paperclip from 'lucide-svelte/icons/paperclip';
 	import X from 'lucide-svelte/icons/x';
 	import TriangleAlert from 'lucide-svelte/icons/triangle-alert';
+	import * as Dialog from '$lib/components/shadcn/dialog';
 	import * as AlertDialog from '$lib/components/shadcn/alert-dialog';
 	import * as RadioGroup from '$lib/components/shadcn/radio-group';
 	import { Label } from '$lib/components/shadcn/label';
@@ -41,7 +48,67 @@
 		type IssueV3,
 		type SemanticRequestV3
 	} from '@jopie/semantic-entry-contract';
-	let { busy = $bindable(false) }: { busy?: boolean } = $props();
+
+	let historyOpen = $state(false);
+	let historyButton = $state<HTMLButtonElement | null>(null);
+	let historyOwner = $state<string>();
+	let historyRecords = $state<PersistedConversation[]>([]);
+	let historyNow = $state(Date.now());
+	const historyRows = $derived(
+		historyRecords.map((record) => ({
+			record,
+			...summarizeConversation(record, historyNow)
+		}))
+	);
+	const historyTime = new Intl.DateTimeFormat('zh-TW', {
+		timeZone: 'Asia/Taipei',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23'
+	});
+	function openHistory() {
+		if (chat.switchingDisabled || !chat.accountId) {
+			return;
+		}
+		chat.flush();
+		historyOwner = chat.accountId;
+		historyNow = Date.now();
+		try {
+			const owner = historyOwner;
+			historyRecords = listConversations(owner, historyNow).flatMap(({ id }) => {
+				const record = loadConversation(owner, historyNow, globalThis.localStorage, id);
+				return record ? [record] : [];
+			});
+		} catch {
+			historyRecords = [];
+		}
+		closeTray();
+		historyOpen = true;
+	}
+	$effect(() => {
+		if (historyOwner !== chat.accountId) {
+			historyOpen = false;
+			historyRecords = [];
+		}
+	});
+	$effect(() => {
+		if (!historyOpen) {
+			return;
+		}
+		const timer = setInterval(() => {
+			historyNow = Date.now();
+		}, 1000);
+		return () => clearInterval(timer);
+	});
+	function selectHistory(record: PersistedConversation) {
+		if (historyOwner && chat.selectConversation(historyOwner, record)) {
+			editingDrafts = false;
+			followLatest = true;
+			historyOpen = false;
+		}
+	}
 
 	let editingDrafts = $state(false);
 
@@ -117,10 +184,6 @@
 	let cancelButton = $state<HTMLButtonElement | null>(null);
 	let toast = $state(false);
 	let toastTimer: ReturnType<typeof setTimeout> | undefined;
-
-	$effect(() => {
-		busy = chat.processing || chat.converting;
-	});
 
 	let conversationElement = $state<HTMLDivElement>();
 	let followLatest = true;
@@ -673,14 +736,16 @@
 		trayElement = undefined;
 		cancelButton = null;
 	});
-	export function startNewConversation() {
-		if (!chat.processing && !chat.converting) {
+	function startNewConversation() {
+		if (!chat.switchingDisabled) {
 			closeTray();
 			newOperation();
 		}
 	}
 	function newOperation(clear = true) {
-		chat.clearPersisted();
+		if (!chat.clearPersisted()) {
+			return;
+		}
 		chat.refreshToday();
 		const failedReply =
 			!clear && chat.failedAttempt?.action === 'analyze' && chat.failedAttempt.history?.length
@@ -1434,9 +1499,67 @@
 />
 
 <div class="relative flex items-center gap-2">
-	<h2 id="ai-entry-title" class="text-lg font-semibold">AI 記帳</h2>
+	<Button
+		bind:ref={historyButton}
+		variant="outline"
+		disabled={chat.switchingDisabled}
+		onclick={openHistory}>對話紀錄</Button
+	>
 	{@render pendingHeader()}
+	<Button
+		class="ml-auto"
+		variant="outline"
+		disabled={chat.switchingDisabled}
+		onclick={startNewConversation}>新對話</Button
+	>
 </div>
+
+<Dialog.Root bind:open={historyOpen}>
+	<Dialog.Content
+		class="w-full max-w-full sm:max-w-xl"
+		showCloseButton={false}
+		onCloseAutoFocus={(event) => {
+			event.preventDefault();
+			historyButton?.focus();
+		}}
+	>
+		<Dialog.Header>
+			<Dialog.Title>對話紀錄</Dialog.Title>
+			<Dialog.Description
+				>只保存在此裝置，對話自開始起保留 24 小時。時間為台灣時間。</Dialog.Description
+			>
+		</Dialog.Header>
+		{#if chat.imageError}<p role="alert" class="text-sm">{chat.imageError}</p>{/if}
+		<div class="max-h-[65vh] space-y-2 overflow-y-auto">
+			{#each historyRows as item (item.id)}
+				<button
+					type="button"
+					class="w-full space-y-1 rounded-lg border p-3 text-left hover:bg-muted disabled:opacity-50"
+					disabled={chat.switchingDisabled}
+					onclick={() => selectHistory(item.record)}
+				>
+					<span class="block break-words font-medium">{item.summary}</span>
+					<span class="flex justify-between gap-2 text-xs text-muted-foreground"
+						><time datetime={new Date(item.updatedAt).toISOString()}
+							>{historyTime.format(item.updatedAt)}</time
+						><span>{item.status}</span></span
+					>
+					{#if item.status === '已過期'}<span class="block text-xs text-muted-foreground"
+							>對話已過期，可能無法續談，圖片可能已失效。僅供檢視。</span
+						>{/if}
+				</button>
+			{:else}
+				<p class="py-6 text-center text-muted-foreground">還沒有對話紀錄</p>
+			{/each}
+		</div>
+		<Button
+			variant="outline"
+			onclick={() => {
+				historyOpen = false;
+			}}>關閉</Button
+		>
+	</Dialog.Content>
+</Dialog.Root>
 
 <div class="relative flex h-[60vh] min-h-0 touch-manipulation flex-col gap-3">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable conversation needs keyboard access.) -->
@@ -1652,7 +1775,7 @@
 								size="sm"
 								variant="outline"
 								class="border-foreground text-foreground"
-								disabled={chat.checking}
+								disabled={chat.readOnly}
 								onclick={() => chat.lookupRestored()}>查詢結果</Button
 							>
 							{#if chat.resendAvailable || (chat.focusedId && attempts.has(chat.focusedId))}<Button

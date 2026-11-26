@@ -1,5 +1,6 @@
 import {
 	conversationKey,
+	CONVERSATION_TTL_MS,
 	parseConversation,
 	loadConversation,
 	saveConversation,
@@ -95,14 +96,16 @@ let conversation = $state<(ConversationTurn & { imageIds?: string[] })[]>([]);
 let conversationId = $state<string | null>(null);
 let persistedBase: PersistedConversation | null = null;
 let persistenceInvalidated = false;
+const persistenceError = '無法儲存對話，請檢查儲存空間或其他分頁後再試。';
 let startedAt = $state<number | null>(null);
 let lastPayload = $state<SemanticRequestV3 | null>(null);
 let lastRequestId = $state<string | null>(null);
 let completed = $state(false);
+let expired = $state(false);
 let checking = $state(false);
 let resendAvailable = $state(false);
 let restoredRequestId = $state<string | null>(null);
-const readOnly = $derived(completed || checking);
+const readOnly = $derived(completed || expired || checking);
 let selectedImages = $state<{ file: File; url: string }[]>([]);
 let imageError = $state('');
 let converting = $state(false);
@@ -126,9 +129,11 @@ const attachmentsDisabled = $derived(
 const composerCount = $derived(composingReply ? replyCount : count);
 const composerHint = $derived(
 	readOnly
-		? checking
-			? '正在查詢先前請求結果。'
-			: '已完成，請開新對話'
+		? expired
+			? '對話已過期，請開新對話'
+			: checking
+				? '正在查詢先前請求結果。'
+				: '已完成，請開新對話'
 		: composerCount > 500 && canCompose
 			? '訊息最多 500 字，請縮短後再送出。'
 			: {
@@ -170,15 +175,41 @@ export const chat = {
 	get lastRequestId() {
 		return lastRequestId;
 	},
+	get switchingDisabled() {
+		return processing || uploading || converting || checking || lookingUp.size > 0;
+	},
+	selectConversation(owner: string, saved: PersistedConversation) {
+		if (owner !== accountId || this.switchingDisabled) {
+			return false;
+		}
+		if (!persistCurrent()) {
+			imageError = persistenceError;
+			return false;
+		}
+		let latest: PersistedConversation | null;
+		try {
+			latest = loadConversation(
+				owner,
+				Date.now(),
+				globalThis.localStorage,
+				saved.conversationId
+			);
+		} catch {
+			return false;
+		}
+		// Keep only the panel's already-loaded expired snapshot, without reviving it in storage.
+		if (!latest && Date.now() - saved.startedAt < CONVERSATION_TTL_MS) {
+			return false;
+		}
+		resetAccount(owner, false, latest ?? saved);
+		return true;
+	},
 	lookupRestored,
 	flush: persistCurrent,
 	clearPersisted() {
-		if (accountId) {
-			try {
-				removeConversation(accountId);
-			} catch {
-				/* Storage unavailable. */
-			}
+		if (!persistCurrent()) {
+			imageError = persistenceError;
+			return false;
 		}
 		restoredRequestId = null;
 		startedAt = null;
@@ -188,8 +219,10 @@ export const chat = {
 		lastPayload = null;
 		lastRequestId = null;
 		completed = false;
+		expired = false;
 		resendAvailable = false;
 		checking = false;
+		return true;
 	},
 	refreshToday,
 	get draftEditorRequested() {
@@ -459,7 +492,11 @@ export const chat = {
 	}
 };
 
-function resetAccount(next: string | undefined, removePrevious = true) {
+function resetAccount(
+	next: string | undefined,
+	removePrevious = true,
+	restoreId?: string | PersistedConversation
+) {
 	revision++;
 	controller?.abort();
 	lookupEpoch++;
@@ -490,8 +527,12 @@ function resetAccount(next: string | undefined, removePrevious = true) {
 	lastPayload = null;
 	lastRequestId = null;
 	completed = false;
+	expired = false;
 	checking = false;
 	resendAvailable = false;
+	if (next !== accountId) {
+		pendingItems = [];
+	}
 	accountId = next;
 	text = '';
 	session = null;
@@ -510,7 +551,6 @@ function resetAccount(next: string | undefined, removePrevious = true) {
 	selectedOption = '';
 	reply = '';
 	focusedId = null;
-	pendingItems = [];
 	failedAttempt = null;
 	retainedCommit = null;
 	seenPersisting = false;
@@ -526,7 +566,7 @@ function resetAccount(next: string | undefined, removePrevious = true) {
 	uploading = false;
 	controller = undefined;
 	if (next) {
-		restoreConversation(next);
+		restoreConversation(next, restoreId);
 	}
 }
 
@@ -569,10 +609,26 @@ if (browser) {
 			if (!accountId || (event.key !== conversationKey(accountId) && event.key !== null)) {
 				return;
 			}
+			if (!conversationId) {
+				return;
+			}
+			try {
+				const saved = loadConversation(
+					accountId,
+					Date.now(),
+					globalThis.localStorage,
+					conversationId
+				);
+				if (saved?.revision === persistedBase?.revision) {
+					return;
+				}
+			} catch {
+				return;
+			}
 			if (processing || uploading || converting || checking || lookingUp.size > 0) {
 				persistenceInvalidated = true;
 			} else {
-				resetAccount(accountId, false);
+				resetAccount(accountId, false, conversationId);
 			}
 		});
 	}
@@ -597,7 +653,19 @@ function snapshotConversation(): PersistedConversation | null {
 					: phase,
 		requestId: lastRequestId,
 		payload: lastPayload,
-		conversation: $state.snapshot(conversation),
+		conversation: $state.snapshot(
+			savedExpense && phase === 'created'
+				? [
+						...conversation,
+						{
+							role: 'assistant' as const,
+							text: message,
+							requestId: lastRequestId ?? undefined,
+							expenses: [savedExpense]
+						}
+					]
+				: conversation
+		),
 		history: $state.snapshot(history),
 		clarification: $state.snapshot(clarification),
 		session: session
@@ -628,46 +696,52 @@ function snapshotConversation(): PersistedConversation | null {
 	};
 }
 function persistCurrent() {
-	if (!accountId || persistenceInvalidated) {
-		return;
+	if (!accountId) {
+		return true;
 	}
 	const snapshot = snapshotConversation();
-	if (snapshot) {
-		persistSnapshot(accountId, snapshot);
-	}
+	return snapshot ? persistSnapshot(accountId, snapshot) : true;
 }
 function persistSnapshot(owner: string, snapshot: PersistedConversation) {
 	const clean = parseConversation(snapshot, Date.now());
 	if (!clean) {
-		return;
+		return Date.now() - snapshot.startedAt >= CONVERSATION_TTL_MS;
 	}
 	// Restoring unchanged state must not start a storage-event write loop between tabs.
 	const content = (value: PersistedConversation) =>
 		JSON.stringify({ ...value, updatedAt: 0, revision: 0 });
 	if (persistedBase && content(clean) === content(persistedBase)) {
-		return;
+		return true;
+	}
+	if (persistenceInvalidated) {
+		return false;
 	}
 	try {
 		const saved = saveConversation(owner, clean, globalThis.localStorage, persistedBase);
 		if (saved) {
 			persistedBase = saved;
+			return true;
 		}
 	} catch {
 		/* Storage unavailable. */
 	}
+	return false;
 }
 
-function restoreConversation(owner: string) {
+function restoreConversation(owner: string, id?: string | PersistedConversation) {
 	let saved;
 	try {
-		saved = loadConversation(owner, Date.now());
+		saved =
+			typeof id === 'object'
+				? id
+				: loadConversation(owner, Date.now(), globalThis.localStorage, id);
 	} catch {
 		return;
 	}
 	if (!saved) {
 		return;
 	}
-	persistedBase = saved;
+	persistedBase = structuredClone($state.snapshot(saved));
 	conversationId = saved.conversationId;
 	startedAt = saved.startedAt;
 	lastPayload = saved.payload;
@@ -687,6 +761,17 @@ function restoreConversation(owner: string) {
 	draftRejected = saved.draftRejected;
 	revised = saved.revised;
 	phase = saved.phase;
+	if (typeof id === 'object') {
+		expired = Date.now() - saved.startedAt >= CONVERSATION_TTL_MS;
+		completed = saved.completed || saved.phase === 'created';
+		if (expired || completed) {
+			text = '';
+			if (expired && ['processing', 'persisting'].includes(phase)) {
+				phase = 'input';
+			}
+			return;
+		}
+	}
 	// A stored completion flag is a hint to query, never authority to mark completion.
 	if (saved.payload) {
 		attempt = { ...saved.payload, accountId: owner };
@@ -705,7 +790,7 @@ async function lookupRestored() {
 	const owner = accountId;
 	const id = lastRequestId;
 	const epoch = lookupEpoch;
-	if (!owner || !id || checking || completed) {
+	if (!owner || !id || checking || completed || expired) {
 		return;
 	}
 	const current = () => accountId === owner && lookupEpoch === epoch && lastRequestId === id;
