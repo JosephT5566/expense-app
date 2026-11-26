@@ -96,6 +96,7 @@ for (const body of [
 
 const clientDraftHashes = new Map();
 
+// Includes conversationStartedAt offset/calendar acceptance and rejection on all V3 actions.
 // V3 cases have independent expected acceptance/rejection in the Python fixture.
 for (const item of cases.v3) {
 	const parse = () =>
@@ -112,6 +113,9 @@ for (const item of cases.v3) {
 	} else {
 		const parsed = parse();
 		assert.deepEqual(parsed, item.parsed, item.name);
+		if (item.kind === 'request' && Object.hasOwn(item.raw, 'conversationStartedAt')) {
+			assert.equal(parsed.conversationStartedAt, item.raw.conversationStartedAt, item.name);
+		}
 		if (item.kind === 'request') {
 			assert.throws(() => parseRequest(item.raw));
 			for (const draft of parsed.drafts ?? []) {

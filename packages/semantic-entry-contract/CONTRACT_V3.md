@@ -11,9 +11,21 @@
 
 - `analyze`：純文字需要 `text`；圖片模式需要 `images`，可附 `text`（可空白）。
 - `revise`：需要 `text` 與 `drafts`。
-- `commit`：需要 `drafts`，不接受 `text`、`history` 或 `images`。
+- `commit`：需要 `drafts`，不接受 `text`、`history`、`images` 或 `conversationStartedAt`。
 - 文字／圖片 analyze 及 revise 可附 `history`，最多三組 `{question, answer, questionId?, optionId?}`。
   `optionId` 必須搭配 UUID `questionId`；選項答案以 label 填入 `answer`，後端依可信 context 重新驗證 id。
+
+文字／圖片 `analyze` 及 `revise` 可附 `conversationStartedAt`，有無 history 均可。
+此欄位為向下相容而可省略；目前已部署前端未傳送時，沿用既有行為，不套用對話 TTL。
+前端應傳入已保存對話的首次送出時間，補答、修訂或重試時不得重設。
+格式為有效的 RFC 3339 日期時間字串，須含秒與明確 offset（`Z` 或 `±HH:MM`），
+例如 `2026-11-26T03:00:00.000Z` 或 `2026-11-26T11:00:00+08:00`。
+年份限 0001–9999；可含小數秒，接受小寫 `t`／`z`，不接受閏秒、24:00 或省略 offset。
+驗證器保留原字串；格式、型別或日期不合法回 `400 invalid_request`。
+純驗證器不檢查時效。HTTP handler 以伺服器 UTC 時間比對，
+早於 now − 24 小時或晚於 now + 5 分鐘回 `400 conversation_expired`；兩端邊界均接受。
+此檢查在模型、圖片讀取、DB 寫入及 completed lookup 前執行，JSON／SSE POST 均適用。
+因此已完成但過期的 POST 重試也會被拒絕；仍可用狀態 GET 讀取完成快照，不受此 TTL 限制。
 
 文字會 trim 並做 NFC 正規化；text 最多 500 字元，history 問答上限為 300／500。
 `images` 是 1–4 個路徑字串，每個最多 1024 字元，不接受含 `..` 的路徑；
@@ -49,6 +61,7 @@ images（依序為 path／服務讀取的 generation）、drafts（預設 []）�
 草稿包含 draftId、可選 mergedFrom／originalAmount／shares，以及八欄的全部欄位資料；
 status／issues／updated 已被丟棄，不參與雜湊；requestId 也不參與。
 沒有 images／drafts 時沿用既有 input_hash 的 v1／v2／v3 分支。
+`conversationStartedAt` 是對話 metadata，不參與任何 v1／v2／v3／v4 fingerprint；既有 hash 保持不變。
 `graph_v3.py` 的圖片／草稿分支使用此函式；純文字 analyze 委派既有 graph。
 
 ## 批次 RPC
@@ -195,6 +208,7 @@ analyze 不接受重複路徑。服務先檢查 metadata，再依讀取的 gener
 | HTTP | code                 | 條件                                      |
 | ---- | -------------------- | ----------------------------------------- |
 | 400  | invalid_request      | 格式不符、非正整數大小或重複圖片路徑      |
+| 400  | conversation_expired | 對話早於 24 小時前或晚於 5 分鐘後         |
 | 400  | body_too_large       | 超過端點 body 限制                        |
 | 400  | image_limit          | 張數超限或合計超過 20 MiB                 |
 | 401  | unauthorized         | 缺少有效 Bearer／驗證失敗                 |

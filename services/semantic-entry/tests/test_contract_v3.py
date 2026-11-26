@@ -92,6 +92,48 @@ def vectors():
     }
     revise = {**REQUEST, "action": "revise", "drafts": [draft()]}
     commit = {"requestId": REQUEST_ID, "action": "commit", "drafts": [draft()]}
+    for name, request in (("text", analyze), ("image", image), ("revise", revise)):
+        for timestamp in (
+            "2026-11-26T03:00:00.000Z",
+            "2026-11-26T11:00:00+08:00",
+            "2026-11-25T23:00:00-04:00",
+            "2024-02-29t12:00:00.123456789z",
+            "0001-01-01T00:00:00Z",
+        ):
+            add(
+                f"conversation-valid-{name}-{timestamp}",
+                "request",
+                {**request, "conversationStartedAt": timestamp},
+            )
+        for timestamp in (
+            "2026-11-26T03:00:00",
+            123,
+            None,
+            True,
+            "2026-02-29T03:00:00Z",
+            "2026-04-31T03:00:00Z",
+            "0000-01-01T00:00:00Z",
+            "garbage",
+            "2026-11-26T24:00:00Z",
+            "2026-11-26T03:00:60Z",
+            "2026-11-26T03:00:00+24:00",
+            "2026-11-26T03:00:00+08:60",
+            "2026-11-26T03:00:00+0800",
+            "2026-11-26T03:00:00Z\n",
+            "2026-11-26T03:00Z",
+        ):
+            add(
+                f"conversation-invalid-{name}-{timestamp!r}",
+                "request",
+                {**request, "conversationStartedAt": timestamp},
+                invalid=True,
+            )
+    add(
+        "conversation-commit-forbidden",
+        "request",
+        {**commit, "conversationStartedAt": "2026-11-26T03:00:00Z"},
+        invalid=True,
+    )
     for request in (revise, commit):
         for index, d in enumerate(client_draft_variants()):
             add(
@@ -652,3 +694,21 @@ def test_v3_created_always_expenses_array():
                 metadata=None,
             )
         )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**REQUEST, "action": "analyze"},
+        {**REQUEST, "action": "analyze", "history": [{"question": "q", "answer": "a"}]},
+        {**REQUEST, "action": "analyze", "referenceDate": "2026-11-26"},
+        {"requestId": REQUEST_ID, "action": "analyze", "images": ["uploads/a/a.jpg"]},
+        {**REQUEST, "action": "revise", "drafts": [draft()]},
+    ],
+)
+def test_conversation_timestamp_preserved_but_excluded_from_hash(body):
+    images = [{"path": path, "generation": "17"} for path in body.get("images", [])]
+    for timestamp in ("2026-11-26T03:00:00.000Z", "2026-11-26T11:00:00+08:00"):
+        parsed = parse_request_v3({**body, "conversationStartedAt": timestamp})
+        assert parsed["conversationStartedAt"] == timestamp
+        assert input_hash_v4(parsed, images) == input_hash_v4(body, images)

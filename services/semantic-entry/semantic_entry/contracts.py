@@ -408,6 +408,19 @@ def parse_client_draft_v3(raw: Any) -> JSON:
     return result
 
 
+def conversation_started_at(value: Any) -> str:
+    s = string(value)
+    if not re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt]"
+        r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?"
+        r"(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])",
+        s,
+    ):
+        raise ValueError("Invalid conversation timestamp")
+    datetime.fromisoformat(s.replace("Z", "+00:00").replace("z", "+00:00"))
+    return s
+
+
 def parse_request_v3(raw: Any) -> JSON:
     r = object_(raw)
     action = r.get("action")
@@ -428,6 +441,7 @@ def parse_request_v3(raw: Any) -> JSON:
         ["requestId", "action", *required],
         [
             "referenceDate",
+            *(["conversationStartedAt"] if action != "commit" else []),
             *(
                 ["text", "history"]
                 if image
@@ -463,6 +477,10 @@ def parse_request_v3(raw: Any) -> JSON:
             ]
     if "referenceDate" in r:
         result["referenceDate"] = date_only(r["referenceDate"])
+    if "conversationStartedAt" in r:
+        result["conversationStartedAt"] = conversation_started_at(
+            r["conversationStartedAt"]
+        )
     if image:
 
         def path(raw: Any) -> str:

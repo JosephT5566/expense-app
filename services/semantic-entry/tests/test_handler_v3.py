@@ -1,5 +1,7 @@
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -272,3 +274,96 @@ async def test_v3_requires_action_even_for_legacy_shaped_body():
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "invalid_request"
     adapter.authenticate.assert_not_awaited()
+
+
+@pytest.mark.parametrize("kind", ["text", "image", "revise"])
+@pytest.mark.parametrize(
+    "accept",
+    [
+        "application/json; semantic-version=3",
+        "text/event-stream; semantic-version=3",
+    ],
+)
+@pytest.mark.parametrize(
+    "age,status",
+    [
+        (None, 200),
+        (timedelta(hours=1), 200),
+        (timedelta(hours=24), 200),
+        (timedelta(hours=24, seconds=1), 400),
+        (-timedelta(minutes=5), 200),
+        (-timedelta(minutes=5, seconds=1), 400),
+    ],
+)
+async def test_conversation_window(monkeypatch, kind, accept, age, status):
+    now = datetime(2026, 11, 26, 3, tzinfo=UTC)
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = now
+    monkeypatch.setattr("semantic_entry.handler.datetime", clock)
+    deps, adapter, store = make_setup()
+    body = (
+        IMAGE_REQUEST
+        if kind == "image"
+        else {**REQUEST, "action": "revise", "drafts": [client_draft()]}
+        if kind == "revise"
+        else {**REQUEST, "action": "analyze"}
+    )
+    body = {**body, "history": [{"question": "q", "answer": "a"}]}
+    if age is not None:
+        body["conversationStartedAt"] = (now - age).isoformat()
+    r = await response(deps, body, accept=accept)
+    assert r.status_code == status
+    if status == 400:
+        assert r.json() == {
+            "error": {"code": "conversation_expired", "uncertain": False}
+        }
+        deps.create_adapter.assert_not_called()
+        deps.extract_entry.assert_not_awaited()
+        deps.extract_drafts.assert_not_awaited()
+        assert store.calls == []
+        adapter.persist_expense.assert_not_awaited()
+        adapter.persist_expenses.assert_not_awaited()
+    else:
+        if "text/event-stream" in accept:
+            assert frames(r)[-1][0] == "result"
+        else:
+            parse_response_v3(r.json())
+        adapter.consume_quota.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "timestamp", [123, "2026-02-30T03:00:00Z", "2026-11-26T03:00:00"]
+)
+async def test_invalid_conversation_timestamp_is_invalid_request(timestamp):
+    deps, _, store = make_setup()
+    r = await response(
+        deps, {**REQUEST, "action": "analyze", "conversationStartedAt": timestamp}
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "invalid_request"
+    deps.create_adapter.assert_not_called()
+    assert store.calls == []
+
+
+async def test_expired_post_rejected_before_completed_lookup(monkeypatch):
+    clock = Mock(wraps=datetime)
+    clock.now.return_value = datetime(2026, 11, 26, 3, tzinfo=UTC)
+    monkeypatch.setattr("semantic_entry.handler.datetime", clock)
+    deps, adapter, _ = make_setup()
+    adapter.lookup_completed.return_value = {"expense": ROW, "replayed": True}
+    adapter.lookup_completed_v3.return_value = {"expenses": [ROW], "replayed": True}
+    r = await response(
+        deps,
+        {
+            **REQUEST,
+            "action": "analyze",
+            "conversationStartedAt": "2026-11-25T02:59:59Z",
+        },
+    )
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "conversation_expired"
+    adapter.lookup_completed.assert_not_awaited()
+    adapter.lookup_completed_v3.assert_not_awaited()
+    r = await response(deps, method="GET", path=f"/semantic-entry/{REQUEST_ID}")
+    assert r.status_code == 200
+    assert r.json()["status"] == "completed"
