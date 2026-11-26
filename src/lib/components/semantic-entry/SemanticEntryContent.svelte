@@ -1536,7 +1536,7 @@
 				</div>
 			{/if}
 		{/each}
-		{#if !chat.session || chat.processing || chat.analysis || chat.message}
+		{#if !chat.completed && (!chat.session || chat.processing || chat.analysis || chat.message)}
 			<div class="flex justify-start">
 				<div
 					class="max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2"

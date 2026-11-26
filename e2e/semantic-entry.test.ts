@@ -4182,6 +4182,7 @@ test('reload completed status locks the conversation and new conversation clears
 	await expect(page.getByLabel('記帳內容', { exact: true })).toBeDisabled();
 	await expect(page.getByLabel('記帳內容', { exact: true })).toHaveValue('');
 	await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
+	await expect(page.getByText('記帳助手', { exact: true })).toHaveCount(1);
 	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toHaveCount(0);
 	await expect(createdSummary(page)).toBeVisible();
 	await page.getByRole('button', { name: '新對話', exact: true }).click();
