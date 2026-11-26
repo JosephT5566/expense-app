@@ -34,6 +34,24 @@ async function prepareNavigation(page: Page, origin: string) {
 		}
 		return route.fulfill({ json: [] });
 	});
+	// Synthetic SVGs keep dimension checks independent of the Iconify CDN.
+	await page.route('https://api.iconify.design/solar.json*', (route) =>
+		route.fulfill({
+			json: {
+				prefix: 'solar',
+				width: 24,
+				height: 24,
+				icons: Object.fromEntries(
+					[
+						'document-add-bold-duotone',
+						'sparkles-bold-duotone',
+						'graph-up-bold-duotone',
+						'layers-minimalistic-bold-duotone'
+					].map((name) => [name, { body: '<path d="M0 0h24v24H0z"/>' }])
+				)
+			}
+		})
+	);
 	await page.routeWebSocket('**/*', (socket) => socket.close());
 	await page.addInitScript(
 		({ key, user }) => {
@@ -103,10 +121,12 @@ for (const { name, viewport } of [
 							.evaluate((element) => element.getBoundingClientRect().bottom)
 					)
 					.toBeLessThanOrEqual(
-						await nav.evaluate((element) => element.getBoundingClientRect().top)
+						await nav
+							.getByRole('link', { name: 'AI 記帳', exact: true })
+							.evaluate((element) => element.getBoundingClientRect().top)
 					);
 			}
-			await page.getByRole('button', { name: '返回', exact: true }).click();
+			await nav.getByRole('link', { name: '新增', exact: true }).click();
 			await expect(page).toHaveURL('/expense-app/');
 			await expectActive(page.getByRole('navigation', { name: '主要導覽' }), '新增');
 		});
@@ -136,6 +156,18 @@ for (const { name, viewport } of [
 			for (const label of ['新增', 'AI 記帳', '統計', '更多功能']) {
 				const link = nav.getByRole('link', { name: label, exact: true });
 				await expect(link).toHaveAccessibleName(label);
+				const ai = label === 'AI 記帳';
+				await expect(link).toHaveCSS('height', ai ? '56px' : '48px');
+				await expect(link.locator('svg')).toHaveCSS('width', ai ? '32px' : '24px');
+				await expect(link.locator('svg')).toHaveCSS('height', ai ? '32px' : '24px');
+				if (name === 'mobile') {
+					const bar = await nav.boundingBox();
+					const box = await link.boundingBox();
+					expect(bar!.height).toBe(49);
+					expect(box!.y).toBe(bar!.y + (ai ? -7 : 1));
+					await expect(link).toHaveCSS('width', '97.5px');
+				}
+
 				if (name === 'mobile') {
 					await expect(link).toHaveText('');
 					await expect(link.getByText(label, { exact: true })).toBeHidden();

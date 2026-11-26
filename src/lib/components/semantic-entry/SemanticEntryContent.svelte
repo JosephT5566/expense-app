@@ -1133,6 +1133,7 @@
 		let uploadContext: { requestId: string; referenceDate: string; text?: string } | undefined;
 		const filesToUpload = chat.selectedImages.map((image) => image.file);
 		const hadUncertainty = !!retryId;
+		const submittedText = chat.text || chat.attempt?.text || '';
 		const owner = $user.id;
 		const outgoingText = hadUncertainty
 			? '重試同一請求'
@@ -1189,7 +1190,7 @@
 											? { text: previous.text }
 											: {})
 									}
-								: { text: chat.text }),
+								: { text: previous?.text ?? chat.text }),
 							...(nextHistory.length &&
 							(!previous?.images ||
 								chat.optionQuestion ||
@@ -1203,8 +1204,8 @@
 						requestId: identity.requestId,
 						submittedAt: Date.now(),
 						kind: 'analyze',
-						...(pending.snippetOf(chat.text)
-							? { snippet: pending.snippetOf(chat.text) }
+						...(pending.snippetOf(chat.text || previous?.text || '')
+							? { snippet: pending.snippetOf(chat.text || previous?.text || '') }
 							: {}),
 						...(filesToUpload.length ? { imageCount: filesToUpload.length } : {}),
 						expiredAt: null
@@ -1226,7 +1227,6 @@
 					};
 				}
 				chat.focusedId = identity.requestId;
-				chat.reply = '';
 			} catch {
 				chat.message = '目前無法保留請求，請允許此網站儲存資料後再試。';
 				return;
@@ -1269,6 +1269,8 @@
 					}
 				: {})
 		});
+		chat.text = '';
+		chat.reply = '';
 		chat.selectedImages = [];
 		followLatest = true;
 		const version = ++chat.revision;
@@ -1369,6 +1371,7 @@
 							chat.issues = result.issues;
 						}
 						if (result.status !== 'drafts') {
+							chat.text = submittedText;
 							chat.phase = 'rejected';
 						}
 					}
@@ -1388,6 +1391,7 @@
 				retainAttempt();
 			}
 			if (!uncertain) {
+				chat.text = submittedText;
 				chat.failedAttempt = chat.attempt;
 				clearPending(owner);
 				chat.focusedId = null;

@@ -25,7 +25,11 @@
 					href={resolve(it.path)}
 					aria-current={match?.tab === it.key ? match.current : undefined}
 				>
-					<Icon icon={it.icon} width="24" height="24" />
+					<Icon
+						icon={it.icon}
+						width={it.key === 'ai-entry' ? 32 : 24}
+						height={it.key === 'ai-entry' ? 32 : 24}
+					/>
 					<span>{it.label}</span>
 				</a>
 			</li>

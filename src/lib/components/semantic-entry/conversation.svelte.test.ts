@@ -402,3 +402,37 @@ it('ignores a lookup response delivered after pagehide', async () => {
 	expect(chat.completed).toBe(false);
 	expect(chat.conversation).toEqual(saved().conversation);
 });
+
+it.each(['processing', 'persisting'] as const)(
+	'persists an empty composer during %s while retaining the submitted payload and history',
+	(phase: 'processing' | 'persisting') => {
+		const payload = {
+			action: 'analyze' as const,
+			requestId,
+			text: '午餐100',
+			history: [{ question: '金額？', answer: '100元' }]
+		};
+		chat.attempt = { ...payload, accountId: first.id };
+		chat.conversation = [
+			{ role: 'user', text: '午餐100' },
+			{ role: 'user', text: '100元' }
+		];
+		chat.text = '午餐100';
+		chat.reply = '100元';
+		chat.phase = phase;
+		chat.flush();
+		const snapshot = JSON.parse(storage.getItem(conversationKey(first.id))!);
+		expect(snapshot.text).toBe('');
+		expect(snapshot).not.toHaveProperty('reply');
+		expect(snapshot.payload).toMatchObject(payload);
+		expect(snapshot.conversation).toEqual(chat.conversation);
+	}
+);
+
+it('preserves rejected text for editing in the persisted composer', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.text = '午餐100';
+	chat.phase = 'rejected';
+	chat.flush();
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).text).toBe('午餐100');
+});

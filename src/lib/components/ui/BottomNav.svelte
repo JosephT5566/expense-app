@@ -16,18 +16,25 @@
 		'fixed bottom-0 inset-x-0 safe-bottom bg-white border-t border-black/10 z-20'
 	)}
 >
-	<ul class="grid grid-cols-4">
+	<ul class="grid grid-cols-4 h-12 items-end">
 		{#each items as it (it.key)}
 			<li>
 				<a
-					class="w-full h-12 min-h-11 min-w-11 flex items-center justify-center text-[var(--c-muted)]"
+					class={classNames(
+						'w-full min-h-11 min-w-11 flex items-center justify-center text-[var(--c-muted)]',
+						it.key === 'ai-entry' ? 'h-14 -mt-2' : 'h-12'
+					)}
 					class:selected={(match?.tab ?? 'add') === it.key}
 					href={resolve(it.path)}
 					aria-label={it.label}
 					title={it.label}
 					aria-current={match?.tab === it.key ? match.current : undefined}
 				>
-					<Icon icon={it.icon} width="24" height="24" />
+					<Icon
+						icon={it.icon}
+						width={it.key === 'ai-entry' ? 32 : 24}
+						height={it.key === 'ai-entry' ? 32 : 24}
+					/>
 				</a>
 			</li>
 		{/each}

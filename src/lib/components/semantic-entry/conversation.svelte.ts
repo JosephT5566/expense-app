@@ -617,7 +617,7 @@ function snapshotConversation(): PersistedConversation | null {
 					)
 				})
 			: null,
-		text,
+		text: processing ? '' : text,
 		question,
 		message,
 		analysis: '',
