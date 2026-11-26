@@ -125,7 +125,7 @@
 		<main
 			bind:this={mainEl}
 			class={classNames(
-				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[var(--nav-height)] overflow-auto',
+				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[calc(var(--nav-height)+8px)] overflow-auto',
 				'md:h-full md:pb-4 md:max-w-screen-md md:mx-auto'
 			)}
 		>

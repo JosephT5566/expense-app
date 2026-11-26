@@ -9,7 +9,7 @@ describe('navigation items', () => {
 				key: 'ai-entry',
 				label: 'AI 記帳',
 				path: '/ai-entry',
-				icon: 'solar:chat-round-dots-bold-duotone'
+				icon: 'solar:sparkles-bold-duotone'
 			},
 			{
 				key: 'summary',

@@ -16,8 +16,6 @@
 
 	import { loadMonthIntoStore } from '$lib/data/month-loader';
 	import RetrieveExpenseButton from '$lib/components/RetrieveExpenseButton.svelte';
-	import { goto } from '$app/navigation';
-	import { resolve } from '$app/paths';
 	import DailyCarouselCard from '$lib/components/DailyCarouselCard.svelte';
 
 	import Logger from '$lib/utils/logger';
@@ -345,10 +343,6 @@
 							openCreate();
 						}}
 						onEdit={openEdit}
-						onOpenReceiptImport={() => {
-							navigateDate(date);
-							void goto(resolve('/ai-entry'));
-						}}
 						onApproveScheduled={approveScheduledExpense}
 						onCancelScheduled={cancelScheduledExpense}
 					/>

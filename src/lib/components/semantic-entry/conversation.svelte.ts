@@ -617,7 +617,7 @@ function snapshotConversation(): PersistedConversation | null {
 					)
 				})
 			: null,
-		text,
+		text: processing ? '' : text,
 		question,
 		message,
 		analysis: '',
@@ -677,7 +677,8 @@ function restoreConversation(owner: string) {
 	history = saved.history;
 	clarification = saved.clarification;
 	session = saved.session;
-	text = saved.text;
+	// Snapshots saved before text was cleared on submit may still hold the submitted text.
+	text = ['processing', 'persisting'].includes(saved.phase) ? '' : saved.text;
 	question = saved.question;
 	message = saved.message;
 	analysis = saved.analysis;

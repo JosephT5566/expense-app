@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Sparkles, TreePalm } from 'lucide-svelte';
+	import { TreePalm } from 'lucide-svelte';
 
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import ScheduledExpenseCard from '$lib/components/ScheduledExpenseCard.svelte';
@@ -22,7 +22,6 @@
 		cancellingScheduledId = null,
 		onCreate,
 		onEdit,
-		onOpenReceiptImport,
 		onApproveScheduled,
 		onCancelScheduled
 	}: {
@@ -40,7 +39,6 @@
 		cancellingScheduledId?: string | null;
 		onCreate: () => void;
 		onEdit: (expense: ExpenseRow) => void;
-		onOpenReceiptImport: () => void;
 		onApproveScheduled: (id: string) => void;
 		onCancelScheduled: (id: string) => void;
 	} = $props();
@@ -99,14 +97,6 @@
 		<div class="mt-4 flex gap-2">
 			<Button class="grow font-bold shadow-sm" onclick={onCreate}>
 				{items.length === 0 ? '今日第一筆記帳' : '新增項目'}
-			</Button>
-			<Button
-				class="text-primary hover:bg-primary/5 border-primary/20"
-				variant="outline"
-				aria-label="AI 記帳"
-				onclick={onOpenReceiptImport}
-			>
-				<Sparkles class="w-5 h-5" />
 			</Button>
 		</div>
 	{/if}

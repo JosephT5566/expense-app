@@ -7,7 +7,7 @@ export const items: { key: Tab; label: string; path: NavPath; icon: string }[] =
 		key: 'ai-entry',
 		label: 'AI 記帳',
 		path: '/ai-entry',
-		icon: 'solar:chat-round-dots-bold-duotone'
+		icon: 'solar:sparkles-bold-duotone'
 	},
 	{ key: 'summary', label: '統計', path: '/summary', icon: 'solar:graph-up-bold-duotone' },
 	{
