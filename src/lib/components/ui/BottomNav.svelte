@@ -5,41 +5,20 @@
 	import { items, matchNavTab } from './nav-items';
 
 	const match = $derived(matchNavTab(page.route.id));
-	const activeIndex = $derived(
-		Math.max(
-			0,
-			items.findIndex((item) => item.key === (match?.tab ?? 'add'))
-		)
-	);
-	let pressed = $state<string | null>(null);
 </script>
 
 <nav aria-label="主要導覽" class="glass-nav fixed z-20 md:hidden">
-	<div
-		class="lens"
-		style:transform={`translateX(${activeIndex * 100}%)`}
-		aria-hidden="true"
-	></div>
-	<ul class="relative grid h-full grid-cols-4 items-center">
+	<ul class="grid h-full grid-cols-4 items-stretch gap-1 rounded-full p-1">
 		{#each items as it (it.key)}
-			<li>
+			<li class="min-w-0">
 				<a
-					class="flex h-16 min-h-11 min-w-11 w-full items-center justify-center"
+					class="flex h-full min-h-11 min-w-11 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-center text-xs leading-tight focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
 					class:selected={(match?.tab ?? 'add') === it.key}
 					href={resolve(it.path)}
-					aria-label={it.label}
-					title={it.label}
 					aria-current={match?.tab === it.key ? match.current : undefined}
-					onpointerdown={() => {
-						pressed = it.key;
-					}}
-					onanimationend={() => {
-						pressed = null;
-					}}
 				>
-					<span class:bounce={pressed === it.key}
-						><Icon icon={it.icon} width={28} height={28} /></span
-					>
+					<Icon icon={it.icon} width={22} height={22} aria-hidden="true" />
+					<span>{it.label}</span>
 				</a>
 			</li>
 		{/each}
@@ -48,85 +27,31 @@
 
 <style>
 	.glass-nav {
-		left: 16px;
-		right: 16px;
+		inset-inline: 14px;
 		bottom: calc(var(--safe-bottom) + 8px);
 		height: 64px;
+		border: 1px solid color-mix(in srgb, var(--c-text) 12%, var(--c-card));
 		border-radius: 32px;
-		border: 1px solid rgb(255 255 255 / 65%);
-		background: linear-gradient(
-			135deg,
-			color-mix(in srgb, var(--c-card) 82%, transparent),
-			color-mix(in srgb, var(--c-card) 60%, transparent)
-		);
-		-webkit-backdrop-filter: blur(28px) saturate(190%);
-		backdrop-filter: blur(28px) saturate(190%);
-		box-shadow:
-			inset 0 1px 0 rgb(255 255 255 / 85%),
-			0 8px 28px rgb(0 0 0 / 12%);
+		background: var(--c-card);
+		box-shadow: 0 3px 12px rgb(0 0 0 / 8%);
 	}
+
+	@supports ((backdrop-filter: blur(12px)) or (-webkit-backdrop-filter: blur(12px))) {
+		@media not (prefers-reduced-transparency: reduce) {
+			.glass-nav {
+				background: color-mix(in srgb, var(--c-card) 86%, transparent);
+				-webkit-backdrop-filter: blur(12px);
+				backdrop-filter: blur(12px);
+			}
+		}
+	}
+
 	a {
 		color: var(--c-text);
 	}
+
 	a.selected {
-		color: color-mix(in srgb, var(--c-primary) 94%, var(--c-text));
-	}
-	.lens {
-		position: absolute;
-		top: 6px;
-		left: 0;
-		width: 25%;
-		height: 50px;
-		border-radius: 28px;
-		background: linear-gradient(
-			color-mix(in srgb, var(--c-card) 85%, transparent),
-			color-mix(in srgb, var(--c-card) 35%, transparent)
-		);
-		box-shadow:
-			inset 0 1px 1px var(--c-card),
-			0 2px 8px rgb(0 0 0 / 7%);
-		transition: transform 480ms cubic-bezier(0.22, 1.35, 0.38, 1);
-		pointer-events: none;
-	}
-	.bounce {
-		animation: tap-bounce 260ms ease-out;
-	}
-	@keyframes tap-bounce {
-		0%,
-		100% {
-			transform: scale(1);
-		}
-		40% {
-			transform: scale(0.84);
-		}
-		70% {
-			transform: scale(1.08);
-		}
-	}
-	@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-		.glass-nav {
-			background: var(--c-card);
-		}
-		.lens {
-			background: var(--c-card);
-		}
-	}
-	@media (prefers-reduced-transparency: reduce) {
-		.glass-nav {
-			background: var(--c-card);
-			-webkit-backdrop-filter: none;
-			backdrop-filter: none;
-		}
-		.lens {
-			background: var(--c-card);
-		}
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.lens {
-			transition: none;
-		}
-		.bounce {
-			animation: none;
-		}
+		background: color-mix(in srgb, var(--c-primary) 22%, var(--c-card));
+		font-weight: 650;
 	}
 </style>

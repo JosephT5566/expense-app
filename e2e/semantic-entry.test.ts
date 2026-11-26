@@ -4661,3 +4661,77 @@ for (const failures of [0, 1, 2]) {
 		);
 	});
 }
+
+test('conversation history fits a narrow screen and keeps all status icons offline', async ({
+	page
+}, testInfo) => {
+	await page.setViewportSize({ width: 320, height: 568 });
+	const now = Date.parse('2026-10-01T04:00:00Z');
+	const titles = [
+		'下班後到超市買了牛奶、雞蛋和週末煮飯的蔬菜，另外還有一袋咖啡豆',
+		'午餐牛肉麵',
+		'早餐三明治和拿鐵'
+	];
+	const records = titles.map((text, index) =>
+		conversationRecord({
+			conversationId: pendingId(90 + index),
+			requestId: pendingId(90 + index),
+			payload: { action: 'analyze', requestId: pendingId(90 + index), text },
+			phase: 'input',
+			text,
+			conversation: [{ role: 'user', text }],
+			startedAt: index === 2 ? now - CONVERSATION_TTL_MS + 60_000 : now - 120_000,
+			updatedAt: now - index * 1000,
+			completed: index === 1
+		})
+	);
+	await page.addInitScript(
+		({ key, records }) => localStorage.setItem(key, JSON.stringify(records)),
+		{ key: conversationKey(user.id), records }
+	);
+	await setup(page, async (route) => statusJson(route, 'not_found'), [], undefined, 'install');
+	const opener = page.getByRole('button', { name: '對話紀錄', exact: true });
+	await expect(opener.locator('svg[aria-hidden="true"]')).toBeVisible();
+	await opener.click();
+	const panel = page.getByRole('dialog', { name: '對話紀錄' });
+	await expect(panel.getByRole('button', { name: /早餐三明治和拿鐵.*進行中/ })).toBeVisible();
+	await page.clock.fastForward(61_000);
+
+	for (const [index, status] of ['進行中', '已完成', '已過期'].entries()) {
+		const record = panel.getByRole('button', {
+			name: new RegExp(titles[index] + '.*' + status)
+		});
+		await expect(record.locator('svg[aria-hidden="true"]')).toBeVisible();
+	}
+	const assertFits = async () => {
+		await expect
+			.poll(() =>
+				panel.evaluate((element) => {
+					const box = element.getBoundingClientRect();
+					return Math.round(Math.min(box.left, innerWidth - box.right));
+				})
+			)
+			.toBeGreaterThanOrEqual(15);
+		await expect
+			.poll(() => panel.evaluate((element) => element.scrollWidth - element.clientWidth))
+			.toBe(0);
+	};
+	await assertFits();
+	await page.screenshot({
+		path: testInfo.outputPath('history-mobile.png'),
+		animations: 'disabled'
+	});
+	await testInfo.attach('history-mobile-aria', {
+		body: await panel.ariaSnapshot(),
+		contentType: 'text/yaml'
+	});
+	const close = panel.getByRole('button', { name: '關閉' });
+	await page.setViewportSize({ width: 667, height: 320 });
+	await assertFits();
+	const expired = panel.getByRole('button', { name: /早餐三明治和拿鐵.*已過期/ });
+	await expired.focus();
+	await expect(expired).toBeInViewport();
+	await expect(close).toBeInViewport();
+	await close.click();
+	await expect(opener).toBeFocused();
+});

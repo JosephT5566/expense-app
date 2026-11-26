@@ -172,13 +172,12 @@ for (const { name, viewport } of [
 				const link = nav.getByRole('link', { name: label, exact: true });
 				await expect(link).toHaveAccessibleName(label);
 				if (name === 'mobile') {
-					await expect(link).toHaveCSS('height', '64px');
-					await expect(link.locator('svg')).toHaveCSS('width', '28px');
-					await expect(link.locator('svg')).toHaveCSS('height', '28px');
+					await expect(link.locator('svg')).toHaveCSS('width', '22px');
+					await expect(link.locator('svg')).toHaveCSS('height', '22px');
 					const bar = await nav.boundingBox();
 					expect(bar!.height).toBe(64);
-					expect(bar!.x).toBeCloseTo(16, 0);
-					expect(viewport.width - bar!.x - bar!.width).toBeCloseTo(16, 0);
+					expect(bar!.x).toBeCloseTo(14, 0);
+					expect(viewport.width - bar!.x - bar!.width).toBeCloseTo(14, 0);
 					expect(viewport.height - bar!.y - bar!.height).toBeGreaterThanOrEqual(8);
 				} else {
 					const ai = label === 'AI 記帳';
@@ -186,8 +185,7 @@ for (const { name, viewport } of [
 				}
 
 				if (name === 'mobile') {
-					await expect(link).toHaveText('');
-					await expect(link.getByText(label, { exact: true })).toBeHidden();
+					await expect(link.getByText(label, { exact: true })).toBeVisible();
 					const box = await link.boundingBox();
 					expect(box?.width).toBeGreaterThanOrEqual(44);
 					expect(box?.height).toBeGreaterThanOrEqual(44);
