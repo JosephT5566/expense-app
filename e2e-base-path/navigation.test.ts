@@ -1,6 +1,12 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 
 test.use({ serviceWorkers: 'block' });
+const iconHosts = new Set(['api.iconify.design', 'api.simplesvg.com', 'api.unisvg.com']);
+test.beforeEach(async ({ page }) => {
+	page.on('request', (request) => {
+		expect(iconHosts.has(new URL(request.url()).hostname), request.url()).toBe(false);
+	});
+});
 
 const supabaseUrl = new URL(process.env.PUBLIC_SUPABASE_URL ?? 'https://synthetic.supabase.co');
 const user = {
@@ -34,24 +40,6 @@ async function prepareNavigation(page: Page, origin: string) {
 		}
 		return route.fulfill({ json: [] });
 	});
-	// Synthetic SVGs keep dimension checks independent of the Iconify CDN.
-	await page.route('https://api.iconify.design/solar.json*', (route) =>
-		route.fulfill({
-			json: {
-				prefix: 'solar',
-				width: 24,
-				height: 24,
-				icons: Object.fromEntries(
-					[
-						'document-add-bold-duotone',
-						'sparkles-bold-duotone',
-						'graph-up-bold-duotone',
-						'layers-minimalistic-bold-duotone'
-					].map((name) => [name, { body: '<path d="M0 0h24v24H0z"/>' }])
-				)
-			}
-		})
-	);
 	await page.routeWebSocket('**/*', (socket) => socket.close());
 	await page.addInitScript(
 		({ key, user }) => {
@@ -105,26 +93,50 @@ for (const { name, viewport } of [
 			await page.goto('/expense-app/ai-entry');
 			await expectReady(page, nav);
 			await expectActive(nav, 'AI 記帳');
-			await expect(
-				page.getByRole('heading', { name: 'AI 記帳', exact: true, level: 2 })
-			).toBeVisible();
+			await expect(page.getByRole('region', { name: 'AI 記帳', exact: true })).toBeVisible();
 			if (name === 'mobile') {
-				await page.locator('main').evaluate((element) => {
-					element.scrollTop = element.scrollHeight;
+				const composer = page
+					.getByRole('textbox', { name: '記帳內容', exact: true })
+					.locator('..');
+				const gap = async () =>
+					nav
+						.evaluate((element) => element.getBoundingClientRect().top)
+						.then(
+							async (top) =>
+								top -
+								(await composer.evaluate(
+									(element) => element.getBoundingClientRect().bottom
+								))
+						);
+				await expect.poll(gap).toBeGreaterThanOrEqual(0);
+				await expect.poll(gap).toBeLessThanOrEqual(12);
+				// Chromium cannot set env(safe-area-inset-bottom); simulate both consumers in test CSS only.
+				await page.addStyleTag({
+					content:
+						':root { --nav-height: calc(64px + 8px + 34px); } nav.glass-nav { bottom: 42px !important; }'
 				});
-				const composer = page.getByRole('textbox', { name: '記帳內容', exact: true });
-				await expect(composer).toBeVisible();
+				await expect.poll(gap).toBeGreaterThanOrEqual(0);
+				await expect.poll(gap).toBeLessThanOrEqual(12);
+				const list = page.getByRole('region', { name: '本次對話', exact: true });
+				await list.evaluate((element) => {
+					const long = document.createElement('p');
+					long.style.height = '3000px';
+					element.appendChild(long);
+					element.scrollTop = 500;
+				});
 				await expect
-					.poll(() =>
-						composer
-							.locator('..')
-							.evaluate((element) => element.getBoundingClientRect().bottom)
-					)
-					.toBeLessThanOrEqual(
-						await nav
-							.getByRole('link', { name: 'AI 記帳', exact: true })
-							.evaluate((element) => element.getBoundingClientRect().top)
-					);
+					.poll(() => list.evaluate((element) => element.scrollTop))
+					.toBeGreaterThan(0);
+				expect(await page.locator('main').evaluate((element) => element.scrollTop)).toBe(0);
+				await expect.poll(gap).toBeLessThanOrEqual(12);
+			}
+			if (name === 'desktop') {
+				const composerBottom = await page
+					.getByRole('textbox', { name: '記帳內容', exact: true })
+					.locator('..')
+					.evaluate((element) => element.getBoundingClientRect().bottom);
+				expect(viewport.height - composerBottom).toBeGreaterThanOrEqual(0);
+				expect(viewport.height - composerBottom).toBeLessThanOrEqual(28);
 			}
 			await nav.getByRole('link', { name: '新增', exact: true }).click();
 			await expect(page).toHaveURL('/expense-app/');
@@ -156,16 +168,18 @@ for (const { name, viewport } of [
 			for (const label of ['新增', 'AI 記帳', '統計', '更多功能']) {
 				const link = nav.getByRole('link', { name: label, exact: true });
 				await expect(link).toHaveAccessibleName(label);
-				const ai = label === 'AI 記帳';
-				await expect(link).toHaveCSS('height', ai ? '56px' : '48px');
-				await expect(link.locator('svg')).toHaveCSS('width', ai ? '32px' : '24px');
-				await expect(link.locator('svg')).toHaveCSS('height', ai ? '32px' : '24px');
 				if (name === 'mobile') {
+					await expect(link).toHaveCSS('height', '64px');
+					await expect(link.locator('svg')).toHaveCSS('width', '28px');
+					await expect(link.locator('svg')).toHaveCSS('height', '28px');
 					const bar = await nav.boundingBox();
-					const box = await link.boundingBox();
-					expect(bar!.height).toBe(49);
-					expect(box!.y).toBe(bar!.y + (ai ? -7 : 1));
-					await expect(link).toHaveCSS('width', '97.5px');
+					expect(bar!.height).toBe(64);
+					expect(bar!.x).toBeCloseTo(16, 0);
+					expect(viewport.width - bar!.x - bar!.width).toBeCloseTo(16, 0);
+					expect(viewport.height - bar!.y - bar!.height).toBeGreaterThanOrEqual(8);
+				} else {
+					const ai = label === 'AI 記帳';
+					await expect(link.locator('svg')).toHaveCSS('width', ai ? '32px' : '24px');
 				}
 
 				if (name === 'mobile') {
@@ -194,6 +208,14 @@ for (const { name, viewport } of [
 				await expect(page).toHaveURL((url) => url.pathname === pathname);
 				await expectReady(page, nav);
 				await expectActive(nav, label);
+				if (pathname === '/expense-app/setting') {
+					await expect(
+						page.getByRole('link', { name: '分帳', exact: true }).locator('svg')
+					).toBeVisible();
+					await expect(
+						page.getByRole('link', { name: '搜尋', exact: true }).locator('svg')
+					).toBeVisible();
+				}
 				expect(await page.evaluate(() => window.__navMarker)).toBe('alive');
 				expect(documentRequests).toBe(initialDocumentRequests);
 			}
