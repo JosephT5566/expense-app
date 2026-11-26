@@ -20,7 +20,12 @@ from .contracts import (
 from .errors import SemanticError, log_failure
 from .graph import Dependencies, invoke
 from .graph_v3 import invoke_v3
-from .images import issue_upload_urls, parse_upload_request
+from .images import (
+    issue_read_urls,
+    issue_upload_urls,
+    parse_read_url_request,
+    parse_upload_request,
+)
 
 # Strong references only for bounded in-flight requests; no conversation storage.
 _operations: set[asyncio.Task[None]] = set()
@@ -198,7 +203,7 @@ async def handle(request: Request, deps: Dependencies) -> Response:
     # Cloud Run reserves some paths ending in "z", including /healthz.
     if path == "/health" and request.method == "GET":
         return JSONResponse({"status": "ok"}, headers=cors)
-    if path == "/semantic-entry/uploads":
+    if path in ("/semantic-entry/uploads", "/semantic-entry/uploads/urls"):
         if request.method != "POST":
             return error(SemanticError(405, "method_not_allowed"))
         bearer_upload = re.fullmatch(
@@ -222,13 +227,18 @@ async def handle(request: Request, deps: Dependencies) -> Response:
                     if len(upload_body) > 4096:
                         raise SemanticError(400, "body_too_large")
                 try:
-                    files = parse_upload_request(load_json(upload_body.decode("utf-8")))
+                    raw_upload = load_json(upload_body.decode("utf-8"))
                 except (ValueError, TypeError, UnicodeError):
                     raise SemanticError(400, "invalid_request") from None
-                return JSONResponse(
-                    await issue_upload_urls(deps.image_store, user["id"], files),
-                    headers=cors,
-                )
+                if path == "/semantic-entry/uploads/urls":
+                    paths = parse_read_url_request(raw_upload)
+                    result = await issue_read_urls(deps.image_store, user["id"], paths)
+                else:
+                    files = parse_upload_request(raw_upload)
+                    result = await issue_upload_urls(
+                        deps.image_store, user["id"], files
+                    )
+                return JSONResponse(result, headers=cors)
         except TimeoutError:
             active_node = "deadline"
             return error(SemanticError(504, "image_error"))

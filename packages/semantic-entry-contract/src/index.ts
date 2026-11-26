@@ -992,3 +992,40 @@ export function parseUploadResponse(raw: unknown, expectedCount: number): Upload
 		})
 	};
 }
+
+export type ReadImageTarget = Pick<UploadTarget, 'path' | 'url' | 'expiresAt'>;
+export interface ReadImageResponse {
+	images: ReadImageTarget[];
+}
+export function parseReadImageResponse(raw: unknown, expectedCount: number): ReadImageResponse {
+	const r = object(raw);
+	exactKeys(r, ['images']);
+	if (
+		!Array.isArray(r.images) ||
+		r.images.length !== expectedCount ||
+		expectedCount < 1 ||
+		expectedCount > MAX_IMAGES
+	) {
+		throw new Error('Invalid image count');
+	}
+	const images = r.images.map((raw) => {
+		const t = object(raw);
+		exactKeys(t, ['path', 'url', 'expiresAt']);
+		const path = string(t.path);
+		const url = string(t.url);
+		const expiresAt = timestamp(t.expiresAt);
+		if (
+			!/^uploads\/[^/]+\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(path) ||
+			path.length > MAX_IMAGE_PATH_LENGTH ||
+			path.includes('..') ||
+			new URL(url).protocol !== 'https:'
+		) {
+			throw new Error('Invalid image target');
+		}
+		return { path, url, expiresAt };
+	});
+	if (new Set(images.map((image) => image.path)).size !== images.length) {
+		throw new Error('Duplicate image paths');
+	}
+	return { images };
+}

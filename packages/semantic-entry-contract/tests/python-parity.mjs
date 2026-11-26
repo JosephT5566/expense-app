@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
 	parseUploadRequest,
+	parseReadImageResponse,
 	parseDraftV3,
 	parseRequestV3,
 	parseResponseV3,
@@ -223,4 +224,32 @@ assert.deepEqual(
 	parseRequestV3({ action: 'analyze', requestId: id, text: '午餐', history: baseHistory })
 		.history,
 	baseHistory
+);
+
+for (const body of cases.readUrls) {
+	assert.deepEqual(parseReadImageResponse(body, body.images.length), body);
+	assert.throws(() => parseReadImageResponse(body, body.images.length + 1));
+}
+const readTarget = cases.readUrls[0].images[0];
+for (const raw of [
+	{},
+	{ images: [] },
+	{ images: [readTarget], extra: true },
+	...[
+		{ ...readTarget, extra: true },
+		{ ...readTarget, path: 'uploads/a/../b.jpg' },
+		{ ...readTarget, path: 'uploads/a/sub/a.jpg' },
+		{ ...readTarget, url: 'http://read.example.test/a.jpg' },
+		{ ...readTarget, url: 'invalid' },
+		{ ...readTarget, expiresAt: 'invalid' },
+		{ ...readTarget, path: null },
+		{ path: readTarget.path, url: readTarget.url }
+	].map((target) => ({ images: [target] }))
+]) {
+	assert.throws(() => parseReadImageResponse(raw, 1));
+}
+assert.throws(() => parseReadImageResponse({ images: [readTarget, readTarget] }, 2));
+assert.throws(() => parseReadImageResponse({ images: Array(5).fill(readTarget) }, 5));
+console.log(
+	`Signed read URL response parity: ${cases.readUrls.length} Python outputs and invalid responses passed`
 );

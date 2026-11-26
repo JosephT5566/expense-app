@@ -7,12 +7,13 @@ from unittest.mock import Mock
 
 import httpx
 from conftest import CONTEXT, RAW, REQUEST, REQUEST_ID, ROW
+from fakes_images import FakeImageStore
 from test_contract_v3 import JSON_INVALID, export_v3
 
 from semantic_entry.contracts import parse_request
 from semantic_entry.errors import SemanticError
 from semantic_entry.graph import Dependencies, input_hash
-from semantic_entry.images import parse_upload_request
+from semantic_entry.images import issue_read_urls, parse_upload_request
 from semantic_entry.server import create_app
 
 
@@ -62,6 +63,14 @@ def export_uploads():
         except (SemanticError, ValueError, TypeError):
             cases.append({"raw": raw, "invalid": True})
     return cases
+
+
+async def export_read_urls():
+    store = FakeImageStore()
+    paths = [f"uploads/a/{i}.jpg" for i in reversed(range(4))]
+    for path in paths:
+        store.add(path)
+    return [await issue_read_urls(store, "a", paths[:count]) for count in (1, 4)]
 
 
 async def main():
@@ -213,6 +222,7 @@ async def main():
         json.dumps(
             {
                 "uploads": export_uploads(),
+                "readUrls": await export_read_urls(),
                 "requests": requests,
                 "responses": responses,
                 "streams": streams,

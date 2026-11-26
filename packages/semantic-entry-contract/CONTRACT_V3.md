@@ -180,7 +180,15 @@ Draft issue code 為 `missing`、`unrecognized`、`low_confidence`、`missing_co
 用戶端只以 requiredHeaders 對 HTTPS signed URL PUT 圖片，不附 Authorization；
 後續 v3 analyze 的 images 僅送 path，不送 generation。上傳失敗不代表有支出寫入。
 
-上傳 JSON body 另限 4096 bytes。路徑只能是 `uploads/<已驗證 user id>/<檔名>`，
+`POST /semantic-entry/uploads/urls` 使用相同 Supabase Bearer、membership、Origin 檢查與請求 deadline，
+接受精確的 `{paths:string[]}`，每次 1–4 個不重複路徑。服務先檢查所有路徑都屬於 caller，
+再查詢物件 metadata；物件不存在時回傳 `404 image_not_found`。
+回應 `200 {images:[{path,url,expiresAt}]}`，順序與輸入相同，`expiresAt` 為 ISO-8601 UTC 時間。
+URL 以相同 service account 簽發 V4 GET，有效期 15 分鐘；物件仍存在即可隨時重新簽發，不保存簽發狀態。
+`<img src="signed URL">` 顯示圖片不需 bucket CORS GET；若使用 `fetch()` 讀取圖片，bucket CORS 必須允許 GET。
+物件可能在簽發後被 lifecycle 刪除，讀圖失敗時消費端仍須顯示占位。
+
+兩個 URL 端點的 JSON body 均限 4096 bytes。路徑只能是 `uploads/<已驗證 user id>/<檔名>`，
 檔名為 1–200 個允許的英數、點、底線、連字號且首字為英數，不接受 `..`。
 analyze 不接受重複路徑。服務先檢查 metadata，再依讀取的 generation 下載、驗證大小與圖片 magic bytes。
 
@@ -192,13 +200,13 @@ analyze 不接受重複路徑。服務先檢查 metadata，再依讀取的 gener
 | 401  | unauthorized         | 缺少有效 Bearer／驗證失敗                 |
 | 403  | origin_forbidden     | Origin 不在服務 allowlist                 |
 | 403  | image_forbidden_path | 圖片路徑不屬於 caller 或格式不允許        |
-| 404  | image_not_found      | 分析時物件不存在                          |
+| 404  | image_not_found      | 分析或簽發 GET URL 時物件不存在           |
 | 409  | image_changed        | generation 改變或下載長度不符             |
 | 413  | image_too_large      | 單張超過 10 MiB，或 metadata 大小非正     |
 | 415  | image_unsupported    | MIME 或圖片 signature 不支援              |
 | 502  | image_configuration  | 未設定 image store 或圖片 deadline 不合法 |
 | 502  | image_error          | 簽署／metadata／下載錯誤                  |
-| 504  | image_error          | 上傳 URL 端點逾時                         |
+| 504  | image_error          | PUT／GET URL 端點逾時                     |
 
 以上錯誤使用 `{error:{code,uncertain}}`；另可能回共用身分、membership 或服務錯誤，
 以 `handler.py`、`images.py`、`supabase.py` 為準。上傳成功不表示已記帳；

@@ -33,6 +33,7 @@ class ImageMetadata:
 
 class ImageStore(Protocol):
     async def signed_upload_url(self, path: str, content_type: str) -> JSON: ...
+    async def signed_read_url(self, path: str) -> JSON: ...
     async def metadata(self, path: str) -> ImageMetadata | None: ...
     async def download(self, path: str, generation: str) -> bytes: ...
 
@@ -81,6 +82,33 @@ async def issue_upload_urls(store: ImageStore, user_id: str, files: list[JSON]) 
         return {"path": path, **await store.signed_upload_url(path, content_type)}
 
     return {"uploads": list(await asyncio.gather(*(issue(file) for file in files)))}
+
+
+def parse_read_url_request(raw: object) -> list[str]:
+    try:
+        request = object_(raw)
+        exact_keys(request, ["paths"])
+        paths = request["paths"]
+        if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths):
+            raise ValueError("Invalid paths")
+        if not 1 <= len(paths) <= MAX_UPLOAD_FILES:
+            raise SemanticError(400, "image_limit")
+        if len(set(paths)) != len(paths):
+            raise ValueError("Duplicate paths")
+        return paths
+    except (ValueError, TypeError):
+        raise SemanticError(400, "invalid_request") from None
+
+
+async def issue_read_urls(store: ImageStore, user_id: str, paths: list[str]) -> JSON:
+    for path in paths:
+        check_owned_path(user_id, path)
+    images = []
+    for path in paths:
+        if await store.metadata(path) is None:
+            raise SemanticError(404, "image_not_found")
+        images.append({"path": path, **await store.signed_read_url(path)})
+    return {"images": images}
 
 
 async def read_verified_metadata(
@@ -140,6 +168,17 @@ class GcsImageStore:
         return self._client.bucket(self.bucket).blob(path)
 
     async def signed_upload_url(self, path: str, content_type: str) -> JSON:
+        return {
+            **await self._signed_url(path, "PUT", content_type),
+            "requiredHeaders": {"Content-Type": content_type},
+        }
+
+    async def signed_read_url(self, path: str) -> JSON:
+        return await self._signed_url(path, "GET")
+
+    async def _signed_url(
+        self, path: str, method: str, content_type: str | None = None
+    ) -> JSON:
         def sign() -> JSON:
             try:
                 blob = self._blob(path)
@@ -151,8 +190,8 @@ class GcsImageStore:
                 expiration = datetime.now(UTC) + UPLOAD_URL_TTL
                 url = blob.generate_signed_url(
                     version="v4",
-                    method="PUT",
-                    content_type=content_type,
+                    method=method,
+                    **({"content_type": content_type} if content_type else {}),
                     expiration=expiration,
                     service_account_email=credentials.service_account_email,
                     access_token=credentials.token,
@@ -160,7 +199,6 @@ class GcsImageStore:
                 return {
                     "url": url,
                     "expiresAt": expiration.isoformat().replace("+00:00", "Z"),
-                    "requiredHeaders": {"Content-Type": content_type},
                 }
             except Exception:
                 raise SemanticError(502, "image_error") from None
