@@ -345,7 +345,14 @@ async def test_custom_history_requires_options_then_fresh_confirmation(setup, im
     sdk = None
     if image:
         deps, adapter, _ = make_setup()
-        request, run = {**IMAGE_REQUEST, "text": TEXT}, invoke_v3
+        request, run = (
+            {
+                **IMAGE_REQUEST,
+                "text": TEXT,
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+            },
+            invoke_v3,
+        )
         sdk = fake_client()
         deps.extract_drafts = DraftProvider("synthetic-key", client=sdk)
     adapter.find_recent_household_splits = AsyncMock(
@@ -683,7 +690,11 @@ async def test_generic_purchase_history_keeps_explicit_current_equal_split(
                 "synthetic-key", client=fake_client(sdk_response(receipt))
             )
             run = invoke_v3
-            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            request.update(
+                action="analyze",
+                images=IMAGE_REQUEST["images"],
+                conversationStartedAt="2026-11-26T03:00:00Z",
+            )
             if mode == "revise":
                 request.pop("images")
                 request.update(action="revise", drafts=[client_draft()])
@@ -741,7 +752,11 @@ async def test_explicit_history_without_tool_cannot_trust_model_shares(
                 "synthetic-key", client=fake_client(sdk_response(receipt))
             )
             run = invoke_v3
-            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            request.update(
+                action="analyze",
+                images=IMAGE_REQUEST["images"],
+                conversationStartedAt="2026-11-26T03:00:00Z",
+            )
             if mode == "revise":
                 request.pop("images")
                 request.update(action="revise", drafts=[client_draft()])
@@ -822,7 +837,11 @@ async def test_float_history_cannot_offer_rounded_relationship_or_write(mode):
                 sdk_response(receipt),
             ]
             deps.extract_drafts = DraftProvider("synthetic-key", client=sdk)
-            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            request.update(
+                action="analyze",
+                images=IMAGE_REQUEST["images"],
+                conversationStartedAt="2026-11-26T03:00:00Z",
+            )
             run = invoke_v3
         result = await run(request, "t", deps)
     assert result["status"] == "needs_input"
@@ -859,7 +878,11 @@ async def test_receipt_changed_relation_requires_fresh_structured_choice(answer_
         turn.update(questionId=first["questionId"], optionId=option["id"])
     adapter.find_recent_household_splits.return_value = [row(102, {A: 71, B: 31})]
     supply()
-    result = await invoke_v3({**request, "history": [turn]}, "t", deps)
+    result = await invoke_v3(
+        {**request, "history": [turn], "conversationStartedAt": "2026-11-26T03:00:00Z"},
+        "t",
+        deps,
+    )
     if answer_kind == "structured":
         assert result["status"] == "rejected"
         assert {"field": "history", "code": "invalid"} in result["issues"]
@@ -949,7 +972,11 @@ async def no_tool_allocation(mode, text, in_history, *, expected=None):
             sdk = fake_client(sdk_response(receipt))
             deps.extract_drafts = DraftProvider("synthetic-key", client=sdk)
             run = invoke_v3
-            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            request.update(
+                action="analyze",
+                images=IMAGE_REQUEST["images"],
+                conversationStartedAt="2026-11-26T03:00:00Z",
+            )
             if mode == "revise":
                 request.pop("images")
                 request.update(action="revise", drafts=[client_draft()])
@@ -1034,7 +1061,11 @@ async def f3_result(mode, scope, phrase, in_history, carrier):
                 "synthetic-key", client=fake_client(sdk_response(receipt))
             )
             run = invoke_v3
-            request.update(action="analyze", images=IMAGE_REQUEST["images"])
+            request.update(
+                action="analyze",
+                images=IMAGE_REQUEST["images"],
+                conversationStartedAt="2026-11-26T03:00:00Z",
+            )
             if mode == "revise":
                 request.pop("images")
                 request.update(action="revise", drafts=[client_draft()])

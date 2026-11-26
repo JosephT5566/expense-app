@@ -93,6 +93,25 @@ def vectors():
     revise = {**REQUEST, "action": "revise", "drafts": [draft()]}
     commit = {"requestId": REQUEST_ID, "action": "commit", "drafts": [draft()]}
     for name, request in (("text", analyze), ("image", image), ("revise", revise)):
+        for history in ([], [{"question": "q", "answer": "a"}]):
+            followup = {**request, "history": history}
+            add(
+                f"conversation-missing-{name}-{len(history)}",
+                "request",
+                followup,
+                bool(history),
+            )
+            add(
+                f"conversation-null-{name}-{len(history)}",
+                "request",
+                {**followup, "conversationStartedAt": None},
+                True,
+            )
+            add(
+                f"conversation-fresh-{name}-{len(history)}",
+                "request",
+                {**followup, "conversationStartedAt": "2026-11-26T03:00:00Z"},
+            )
         for timestamp in (
             "2026-11-26T03:00:00.000Z",
             "2026-11-26T11:00:00+08:00",
@@ -213,7 +232,16 @@ def vectors():
         ([{"question": "q", "answer": "\ud800"}], True),
         (None, True),
     ]:
-        add("history", "request", {**revise, "history": history}, invalid)
+        add(
+            "history",
+            "request",
+            {
+                **revise,
+                "history": history,
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+            },
+            invalid,
+        )
     choice = {
         "question": "付款人？",
         "answer": "甲",
@@ -221,7 +249,15 @@ def vectors():
         "optionId": "member-0",
     }
     for raw in (analyze, image, revise):
-        add("option-history", "request", {**raw, "history": [choice]})
+        add(
+            "option-history",
+            "request",
+            {
+                **raw,
+                "history": [choice],
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+            },
+        )
         add("image-empty-history", "request", {**image, "history": []})
         for turn in (
             {**choice, "questionId": "bad"},
@@ -229,7 +265,16 @@ def vectors():
             {**choice, "optionId": ""},
             {**choice, "extra": True},
         ):
-            add("invalid-option-history", "request", {**raw, "history": [turn]}, True)
+            add(
+                "invalid-option-history",
+                "request",
+                {
+                    **raw,
+                    "history": [turn],
+                    "conversationStartedAt": "2026-11-26T03:00:00Z",
+                },
+                True,
+            )
     for shares, invalid in [
         ({"a@example.test": 100}, False),
         ({"a@example.test": 0, "b@example.test": 100}, False),
@@ -588,7 +633,13 @@ def test_v3_v2_isolation_and_legacy_hashes():
         {**REQUEST, "history": [{"question": "q", "answer": "a"}]},
         {**REQUEST, "referenceDate": "2026-10-28"},
     ):
-        assert input_hash_v4({**request, "action": "analyze"}) == input_hash(request)
+        assert input_hash_v4(
+            {
+                **request,
+                "action": "analyze",
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+            }
+        ) == input_hash(request)
 
 
 def test_v4_hash_canonical_editable_fields_and_generations():
@@ -707,6 +758,8 @@ def test_v3_created_always_expenses_array():
     ],
 )
 def test_conversation_timestamp_preserved_but_excluded_from_hash(body):
+    if body.get("history"):
+        body = {**body, "conversationStartedAt": "2026-11-26T03:00:00Z"}
     images = [{"path": path, "generation": "17"} for path in body.get("images", [])]
     for timestamp in ("2026-11-26T03:00:00.000Z", "2026-11-26T11:00:00+08:00"):
         parsed = parse_request_v3({**body, "conversationStartedAt": timestamp})

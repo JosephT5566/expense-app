@@ -15,8 +15,9 @@
 - 文字／圖片 analyze 及 revise 可附 `history`，最多三組 `{question, answer, questionId?, optionId?}`。
   `optionId` 必須搭配 UUID `questionId`；選項答案以 label 填入 `answer`，後端依可信 context 重新驗證 id。
 
-文字／圖片 `analyze` 及 `revise` 可附 `conversationStartedAt`，有無 history 均可。
-此欄位為向下相容而可省略；目前已部署前端未傳送時，沿用既有行為，不套用對話 TTL。
+文字／圖片 `analyze` 及 `revise` 的 `history` 經解析後非空時，必須提供有效的 `conversationStartedAt`。
+必填時省略或傳入 null 回 `400 invalid_request`。首輪未帶 history，或 history 解析後為空時，可省略此欄位；若有提供，仍驗證格式與 TTL。
+目前已部署前端未傳送此欄位，因此帶 history 的後續請求會被拒絕，直到前端配套上線。
 前端應傳入已保存對話的首次送出時間，補答、修訂或重試時不得重設。
 格式為有效的 RFC 3339 日期時間字串，須含秒與明確 offset（`Z` 或 `±HH:MM`），
 例如 `2026-11-26T03:00:00.000Z` 或 `2026-11-26T11:00:00+08:00`。

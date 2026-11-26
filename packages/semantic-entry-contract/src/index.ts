@@ -796,6 +796,9 @@ export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 	if (Object.hasOwn(r, 'conversationStartedAt')) {
 		result.conversationStartedAt = conversationStartedAt(r.conversationStartedAt);
 	}
+	if (result.history && !Object.hasOwn(result, 'conversationStartedAt')) {
+		throw new Error('conversationStartedAt is required with non-empty history');
+	}
 	if (image) {
 		result.images = listV3(r.images, MAX_IMAGES, (raw) => {
 			const path = textV3(raw, MAX_IMAGE_PATH_LENGTH);

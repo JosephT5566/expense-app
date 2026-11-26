@@ -197,7 +197,8 @@ assert.deepEqual(
 		action: 'analyze',
 		requestId: id,
 		images: ['uploads/synthetic/image.png'],
-		history: [answer]
+		history: [answer],
+		conversationStartedAt: '2026-11-26T03:00:00Z'
 	}).history,
 	[answer]
 );
@@ -225,8 +226,13 @@ assert.deepEqual(
 	baseHistory
 );
 assert.deepEqual(
-	parseRequestV3({ action: 'analyze', requestId: id, text: '午餐', history: baseHistory })
-		.history,
+	parseRequestV3({
+		action: 'analyze',
+		requestId: id,
+		text: '午餐',
+		history: baseHistory,
+		conversationStartedAt: '2026-11-26T03:00:00Z'
+	}).history,
 	baseHistory
 );
 

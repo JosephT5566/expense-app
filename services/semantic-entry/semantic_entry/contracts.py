@@ -481,6 +481,8 @@ def parse_request_v3(raw: Any) -> JSON:
         result["conversationStartedAt"] = conversation_started_at(
             r["conversationStartedAt"]
         )
+    if result.get("history") and "conversationStartedAt" not in result:
+        raise ValueError("conversationStartedAt is required with non-empty history")
     if image:
 
         def path(raw: Any) -> str:

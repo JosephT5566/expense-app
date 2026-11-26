@@ -161,7 +161,11 @@ async def test_image_common_payer_options_and_history():
     first = await invoke_v3(IMAGE_REQUEST, "synthetic", deps)
     assert first["status"] == "needs_input" and first["purpose"] == "payer"
     assert parse_response_v3(first) == first
-    request = {**IMAGE_REQUEST, "history": [reply(first)]}
+    request = {
+        **IMAGE_REQUEST,
+        "conversationStartedAt": "2026-11-26T03:00:00Z",
+        "history": [reply(first)],
+    }
     result = await invoke_v3(request, "synthetic", deps)
     assert result["status"] == "created"
     assert deps.extract_drafts.call_args.args[0]["history"] == request["history"]
@@ -179,7 +183,13 @@ async def test_image_split_options_and_custom_draft():
     first = await invoke_v3(IMAGE_REQUEST, "synthetic", deps)
     assert first["status"] == "needs_input" and first["purpose"] == "split"
     result = await invoke_v3(
-        {**IMAGE_REQUEST, "history": [reply(first, 3)]}, "synthetic", deps
+        {
+            **IMAGE_REQUEST,
+            "conversationStartedAt": "2026-11-26T03:00:00Z",
+            "history": [reply(first, 3)],
+        },
+        "synthetic",
+        deps,
     )
     assert result["status"] == "drafts" and result["drafts"][0]["shares"]
     adapter.persist_expense.assert_not_awaited()
@@ -229,7 +239,13 @@ async def test_image_split_answer_applies_to_different_item_totals():
     assert first["purpose"] == "split"
     for choice in (0, 1, 3):
         result = await invoke_v3(
-            {**IMAGE_REQUEST, "history": [reply(first, choice)]}, "synthetic", deps
+            {
+                **IMAGE_REQUEST,
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+                "history": [reply(first, choice)],
+            },
+            "synthetic",
+            deps,
         )
         assert result["status"] == "drafts"
         assert [sum(d["shares"].values()) for d in result["drafts"]] == [341, 501]
@@ -321,13 +337,29 @@ async def test_image_forged_option_and_three_unresolved_answers_never_write():
     deps.extract_drafts.return_value["raw"]["drafts"] = [r]
     first = await invoke_v3(IMAGE_REQUEST, "synthetic", deps)
     turn = {**reply(first), "optionId": "outside-context"}
-    assert (await invoke_v3({**IMAGE_REQUEST, "history": [turn]}, "synthetic", deps))[
-        "status"
-    ] == "rejected"
+    assert (
+        await invoke_v3(
+            {
+                **IMAGE_REQUEST,
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+                "history": [turn],
+            },
+            "synthetic",
+            deps,
+        )
+    )["status"] == "rejected"
     history = [{"question": "請確認", "answer": "不知道"}] * 3
-    assert (await invoke_v3({**IMAGE_REQUEST, "history": history}, "synthetic", deps))[
-        "status"
-    ] == "rejected"
+    assert (
+        await invoke_v3(
+            {
+                **IMAGE_REQUEST,
+                "conversationStartedAt": "2026-11-26T03:00:00Z",
+                "history": history,
+            },
+            "synthetic",
+            deps,
+        )
+    )["status"] == "rejected"
     adapter.persist_expense.assert_not_awaited()
 
 
@@ -431,7 +463,10 @@ async def test_selected_member_must_remain_in_callers_context(setup, image, tamp
     request, run = REQUEST, invoke
     if image:
         deps, adapter, _ = make_setup()
-        request, run = IMAGE_REQUEST, invoke_v3
+        request, run = (
+            {**IMAGE_REQUEST, "conversationStartedAt": "2026-11-26T03:00:00Z"},
+            invoke_v3,
+        )
         draft = raw_draft()
         draft["scope"].update(value="household", state="recognized", source="text")
         draft["payerEmail"].update(value="unknown", state="recognized", source="text")
@@ -484,7 +519,10 @@ async def test_base_history_exact_number_or_label_resolves_trusted_option(
     request, run = REQUEST, invoke
     if image:
         deps, adapter, _ = make_setup()
-        request, run = IMAGE_REQUEST, invoke_v3
+        request, run = (
+            {**IMAGE_REQUEST, "conversationStartedAt": "2026-11-26T03:00:00Z"},
+            invoke_v3,
+        )
         draft = raw_draft()
         draft["scope"].update(value="household", state="recognized", source="text")
         draft["payerEmail"].update(value="unknown", state="recognized", source="text")

@@ -284,10 +284,12 @@ async def test_v3_requires_action_even_for_legacy_shaped_body():
         "text/event-stream; semantic-version=3",
     ],
 )
+@pytest.mark.parametrize("history", [None, [], [{"question": "q", "answer": "a"}]])
 @pytest.mark.parametrize(
     "age,status",
     [
         (None, 200),
+        ("null", 400),
         (timedelta(hours=1), 200),
         (timedelta(hours=24), 200),
         (timedelta(hours=24, seconds=1), 400),
@@ -295,7 +297,7 @@ async def test_v3_requires_action_even_for_legacy_shaped_body():
         (-timedelta(minutes=5, seconds=1), 400),
     ],
 )
-async def test_conversation_window(monkeypatch, kind, accept, age, status):
+async def test_conversation_window(monkeypatch, kind, accept, history, age, status):
     now = datetime(2026, 11, 26, 3, tzinfo=UTC)
     clock = Mock(wraps=datetime)
     clock.now.return_value = now
@@ -308,14 +310,26 @@ async def test_conversation_window(monkeypatch, kind, accept, age, status):
         if kind == "revise"
         else {**REQUEST, "action": "analyze"}
     )
-    body = {**body, "history": [{"question": "q", "answer": "a"}]}
-    if age is not None:
+    body = {**body}
+    if history is not None:
+        body["history"] = history
+    missing_required = bool(history) and age is None
+    if missing_required:
+        status = 400
+    if age == "null":
+        body["conversationStartedAt"] = None
+    elif age is not None:
         body["conversationStartedAt"] = (now - age).isoformat()
     r = await response(deps, body, accept=accept)
     assert r.status_code == status
     if status == 400:
         assert r.json() == {
-            "error": {"code": "conversation_expired", "uncertain": False}
+            "error": {
+                "code": "invalid_request"
+                if missing_required or age == "null"
+                else "conversation_expired",
+                "uncertain": False,
+            }
         }
         deps.create_adapter.assert_not_called()
         deps.extract_entry.assert_not_awaited()
