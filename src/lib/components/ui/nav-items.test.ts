@@ -6,6 +6,12 @@ describe('navigation items', () => {
 		expect(items).toEqual([
 			{ key: 'add', label: '新增', path: '/', icon: 'solar:document-add-bold-duotone' },
 			{
+				key: 'ai-entry',
+				label: 'AI 記帳',
+				path: '/ai-entry',
+				icon: 'solar:chat-round-dots-bold-duotone'
+			},
+			{
 				key: 'summary',
 				label: '統計',
 				path: '/summary',
@@ -24,6 +30,7 @@ describe('navigation items', () => {
 describe('matchNavTab', () => {
 	it.each([
 		['/', 'add'],
+		['/ai-entry', 'ai-entry'],
 		['/summary', 'summary'],
 		['/setting', 'setting']
 	])('marks %s as the current page', (routeId, tab) => {
@@ -41,6 +48,13 @@ describe('matchNavTab', () => {
 		'leaves %s without a current tab',
 		(routeId) => {
 			expect(matchNavTab(routeId)).toBeUndefined();
+		}
+	);
+
+	it.each(['/settle', '/search', '/scheduled', '/ai-entry/details'])(
+		'does not select AI entry for non-tab route %s',
+		(routeId) => {
+			expect(matchNavTab(routeId)?.tab).not.toBe('ai-entry');
 		}
 	);
 });

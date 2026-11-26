@@ -1,32 +1,7 @@
-<script lang="ts" module>
-	import { SvelteMap } from 'svelte/reactivity';
-	import { browser } from '$app/environment';
-	import { user as sessionUser } from '$lib/stores/session.store';
-	import type { SemanticRequestV3 as AttemptRequest } from '@jopie/semantic-entry-contract';
-	// Full retry payloads live in memory for the page lifetime so closing the dialog keeps
-	// 「重試同一請求」; a reload keeps only the localStorage metadata and status lookup.
-	const attempts = new SvelteMap<string, AttemptRequest & { accountId: string }>();
-	if (browser) {
-		// The dialog unmounts this component while closed, so prune here at module level:
-		// any account change drops every other account's full payload, leaving lookup only.
-		let observedAccount: string | undefined;
-		sessionUser.subscribe((value) => {
-			const next = value?.id;
-			if (next === observedAccount) {
-				return;
-			}
-			observedAccount = next;
-			for (const [id, retained] of attempts) {
-				if (retained.accountId !== next) {
-					attempts.delete(id);
-				}
-			}
-		});
-	}
-</script>
-
 <script lang="ts">
-	import { onDestroy, tick, untrack, type Snippet } from 'svelte';
+	import { chat, attempts, imagePreviews } from './conversation.svelte';
+
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
 	import { Button } from '$lib/components/shadcn/button';
 	import Paperclip from 'lucide-svelte/icons/paperclip';
@@ -37,27 +12,17 @@
 	import { Label } from '$lib/components/shadcn/label';
 	import * as pending from './pending';
 	import PendingTray from './PendingTray.svelte';
-	import type { PendingItem } from './pending';
 	import CreatedSummary from './CreatedSummary.svelte';
 	import DraftBlock from './DraftBlock.svelte';
 	import DraftEditDialog from './DraftEditDialog.svelte';
-	import {
-		fromServerDrafts,
-		effectiveDrafts,
-		isComplete,
-		toClientDraft,
-		issueText,
-		type DraftSession
-	} from './drafts';
-	import type { DraftIssue, SemanticResponseV3 } from '@jopie/semantic-entry-contract';
-	import { expenseOptions } from '$lib/stores/categories.store';
-	import { allowedUsers } from '$lib/stores/appSetting.store';
+	import { fromServerDrafts, isComplete, toClientDraft, issueText } from './drafts';
+	import type { SemanticResponseV3 } from '@jopie/semantic-entry-contract';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import Send from 'lucide-svelte/icons/send';
 	import { user } from '$lib/stores/session.store';
 	import * as expensesStore from '$lib/stores/expenses.store';
 	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
-	import { getTaiwanMonthKey, toISODateOnly } from '$lib/utils/dates';
+	import { getTaiwanMonthKey } from '$lib/utils/dates';
 	import {
 		submitSemanticEntry,
 		getSemanticEntryStatus,
@@ -73,55 +38,23 @@
 		UPLOAD_IMAGE_TYPES,
 		type UploadImageType,
 		type IssueV3,
-		type SemanticRequestV3,
-		type ClarificationTurn
+		type SemanticRequestV3
 	} from '@jopie/semantic-entry-contract';
-	let {
-		busy = $bindable(false),
-		header = $bindable(),
-		onClose
-	}: { busy?: boolean; header?: Snippet; onClose: () => void } = $props();
-	let text = $state('');
-	let session = $state<DraftSession | null>(null);
-	let revised = $state(false);
-	let draftHeading = $state('');
-	let draftAnalysis = $state('');
-	let draftRejected = $state(false);
-	let serverDraftIssues = $state<Record<string, DraftIssue[]>>({});
-	const draftContext = $derived({
-		today: toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000)),
-		categoryIds: new Set($expenseOptions.map((option) => option.value)),
-		allowedEmails: $allowedUsers,
-		currentUserEmail: $user?.email ?? ''
-	});
-	const drafts = $derived(
-		session
-			? effectiveDrafts(session, draftContext).map((draft) =>
-					serverDraftIssues[draft.draftId] &&
-					!draft.mergedFrom?.length &&
-					!session?.items.find((item) => item.id === draft.draftId)?.edited
-						? {
-								...draft,
-								issues: serverDraftIssues[draft.draftId],
-								status: 'incomplete' as const
-							}
-						: draft
-				)
-			: []
-	);
+	let { busy = $bindable(false) }: { busy?: boolean } = $props();
+
 	let editingDrafts = $state(false);
-	let closeGuard = false;
+
 	function onEditDrafts() {
-		if (session) {
-			session = {
-				...session,
-				items: session.items.map((item) =>
-					serverDraftIssues[item.id] && !item.edited
+		if (chat.session) {
+			chat.session = {
+				...chat.session,
+				items: chat.session.items.map((item) =>
+					chat.serverDraftIssues[item.id] && !item.edited
 						? {
 								...item,
 								draft: {
 									...item.draft,
-									issues: serverDraftIssues[item.id],
+									issues: chat.serverDraftIssues[item.id],
 									status: 'incomplete'
 								}
 							}
@@ -132,60 +65,37 @@
 		editingDrafts = true;
 	}
 	function receiveDrafts(result: Extract<SemanticResponseV3, { status: 'drafts' }>) {
-		session = fromServerDrafts(result.drafts);
-		serverDraftIssues = {};
-		if (draftRejected) {
-			draftAnalysis = '';
+		chat.refreshToday();
+		chat.session = fromServerDrafts(result.drafts);
+		chat.serverDraftIssues = {};
+		if (chat.draftRejected) {
+			chat.draftAnalysis = '';
 		}
-		draftRejected = false;
-		draftHeading = `找到 ${drafts.length} 筆，${result.reason === 'multiple' ? '因為有多筆' : '有資料需要補齊'}，還沒記帳。`;
-		if (!conversation.some((entry) => entry.drafts)) {
-			draftAnalysis = analysis;
-			conversation.push({ role: 'assistant', text: '', drafts: true });
+		chat.draftRejected = false;
+		chat.draftHeading = `找到 ${chat.drafts.length} 筆，${result.reason === 'multiple' ? '因為有多筆' : '有資料需要補齊'}，還沒記帳。`;
+		if (!chat.conversation.some((entry) => entry.drafts)) {
+			chat.draftAnalysis = chat.analysis;
+			chat.conversation.push({ role: 'assistant', text: '', drafts: true });
 		}
-		analysis = '';
-		text = '';
-		attempt = null;
-		phase = 'drafts';
-		if (clarification?.purpose === 'split' && selectedOption === 'custom') {
-			onEditDrafts();
+		chat.analysis = '';
+		chat.text = '';
+		chat.attempt = null;
+		chat.phase = 'drafts';
+		if (chat.clarification?.purpose === 'split' && chat.selectedOption === 'custom') {
+			chat.draftEditorRequested = true;
 		}
 	}
-	let phase = $state<
-		| 'input'
-		| 'drafts'
-		| 'needs_input'
-		| 'processing'
-		| 'persisting'
-		| 'created'
-		| 'rejected'
-		| 'uncertain'
-		| 'error'
-	>('input');
-	let attempt = $state<(SemanticRequestV3 & { accountId: string }) | null>(null);
-	let history = $state<ClarificationTurn[]>([]);
-	let question = $state('');
-	let clarification = $state<Extract<SemanticResponseV3, { status: 'needs_input' }> | null>(null);
-	let selectedOption = $state('');
-	const optionQuestion = $derived(phase === 'needs_input' && !!clarification?.options?.length);
+
 	async function confirmOption() {
-		const option = clarification?.options?.find((item) => item.id === selectedOption);
-		if (!option || processing) {
+		const option = chat.clarification?.options?.find((item) => item.id === chat.selectedOption);
+		if (!option || chat.processing) {
 			return;
 		}
-		reply = option.label;
+		chat.reply = option.label;
 		await execute();
 	}
-	let reply = $state('');
-	let focusedId = $state<string | null>(null);
-	let pendingItems = $state<PendingItem[]>([]);
-	let failedAttempt: (SemanticRequestV3 & { accountId: string }) | null = null;
-	// The last commit sent for the current drafts. A later revise (successful or failed)
-	// does not replace it, so an unchanged batch resends with the same requestId (§7).
-	let retainedCommit: (SemanticRequestV3 & { accountId: string }) | null = null;
-	let seenPersisting = false;
-	let recovering = false;
-	// Pending tray (variant A): a popover under the title badge, scoped to this dialog.
+
+	// Pending tray: a popover under the page title badge.
 	let trayOpen = $state(false);
 	let expandedId = $state<string | null>(null);
 	let badgeElement = $state<HTMLButtonElement>();
@@ -193,57 +103,39 @@
 	// Expired items shown during the current tray opening; removed when the tray closes (§5).
 	// Plain bookkeeping (not rendered), so it stays non-reactive.
 	let seenExpired: string[] = [];
-	const lookingUp = new SvelteMap<string, 'query' | 'delete' | 'auto'>();
-	const lookupErrors = new SvelteMap<string, string>();
-	let lookupControllers: AbortController[] = [];
-	let lookupEpoch = 0;
+
 	let confirmId = $state<string | null>(null);
 	let cancelButton = $state<HTMLButtonElement | null>(null);
 	let toast = $state(false);
 	let toastTimer: ReturnType<typeof setTimeout> | undefined;
-	let savedExpense = $state<ExpenseRow | null>(null);
-	const processing = $derived(phase === 'processing' || phase === 'persisting');
+
 	$effect(() => {
-		busy = processing || converting;
+		busy = chat.processing || chat.converting;
 	});
-	$effect(() => {
-		header = pendingHeader;
-	});
-	let issues = $state<IssueV3[]>([]);
-	let message = $state('');
-	let analysis = $state('');
-	let conversation = $state<
-		{
-			role: 'user' | 'assistant';
-			text: string;
-			analysis?: string;
-			images?: string[];
-			expenses?: ExpenseRow[];
-			drafts?: boolean;
-			answer?: string;
-			options?: { id: string; label: string }[];
-			optionId?: string;
-		}[]
-	>([]);
+
 	let conversationElement = $state<HTMLDivElement>();
 	let followLatest = true;
 	$effect(() => {
 		// Follow streamed updates unless the reader has scrolled back through the conversation.
-		const content = [conversation.length, analysis, phase, question, message, savedExpense];
+		const content = [
+			chat.conversation.length,
+			chat.analysis,
+			chat.phase,
+			chat.question,
+			chat.message,
+			chat.savedExpense
+		];
 		untrack(() => {
 			if (followLatest && content) {
 				void tick().then(() => {
-					if (followLatest && conversationElement) {
+					if (!destroyed && followLatest && conversationElement?.isConnected) {
 						conversationElement.scrollTop = conversationElement.scrollHeight;
 					}
 				});
 			}
 		});
 	});
-	let selectedImages = $state<{ file: File; url: string }[]>([]);
-	let imageError = $state('');
-	let converting = $state(false);
-	let uploading = $state(false);
+
 	let fileInput: HTMLInputElement;
 	let composerElement = $state<HTMLTextAreaElement>();
 	const composerMaxRows = 6;
@@ -251,7 +143,7 @@
 	// Grow the composer with its content from one row up to six, then scroll inside it.
 	function resizeComposer() {
 		const el = composerElement;
-		if (!el) {
+		if (destroyed || !el?.isConnected) {
 			return;
 		}
 		const style = getComputedStyle(el);
@@ -266,13 +158,13 @@
 	}
 	$effect(() => {
 		// Re-measure whenever the bound value changes, including programmatic clears after sending.
-		void (composingReply ? reply : text);
+		void (chat.composingReply ? chat.reply : chat.text);
 		if (composerElement) {
 			resizeComposer();
 		}
 	});
 	$effect(() => {
-		// Width changes (rotation, dialog resize) change soft wrapping.
+		// Width changes and rotation change soft wrapping.
 		const el = composerElement;
 		if (!el || typeof ResizeObserver === 'undefined') {
 			return;
@@ -289,43 +181,45 @@
 	});
 
 	function clearImages() {
-		selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
-		selectedImages = [];
-		imageError = '';
-		converting = false;
-		uploading = false;
+		chat.selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+		chat.selectedImages = [];
+		chat.imageError = '';
+		chat.converting = false;
+		chat.uploading = false;
 	}
 	function clearConversation() {
-		conversation.forEach((entry) => entry.images?.forEach((url) => URL.revokeObjectURL(url)));
-		conversation = [];
-		session = null;
-		retainedCommit = null;
+		imagePreviews.forEach((url) => URL.revokeObjectURL(url));
+		imagePreviews.clear();
+		chat.conversation = [];
+		chat.session = null;
+		chat.draftEditorRequested = false;
+		chat.retainedCommit = null;
 		editingDrafts = false;
-		revised = false;
-		serverDraftIssues = {};
-		draftHeading = '';
-		draftAnalysis = '';
-		draftRejected = false;
+		chat.revised = false;
+		chat.serverDraftIssues = {};
+		chat.draftHeading = '';
+		chat.draftAnalysis = '';
+		chat.draftRejected = false;
 	}
 	function removeImage(index: number) {
-		URL.revokeObjectURL(selectedImages[index].url);
-		selectedImages = selectedImages.filter((_, i) => i !== index);
-		imageError = '';
+		URL.revokeObjectURL(chat.selectedImages[index].url);
+		chat.selectedImages = chat.selectedImages.filter((_, i) => i !== index);
+		chat.imageError = '';
 	}
 	async function selectImages(event: Event) {
 		const input = event.currentTarget as HTMLInputElement;
 		const files = Array.from(input.files ?? []);
 		input.value = '';
-		if (!files.length || attachmentsDisabled) {
+		if (!files.length || chat.attachmentsDisabled) {
 			return;
 		}
-		if (selectedImages.length + files.length > 4) {
-			imageError = '最多附加 4 張圖片。';
+		if (chat.selectedImages.length + files.length > 4) {
+			chat.imageError = '最多附加 4 張圖片。';
 			return;
 		}
-		const version = revision;
-		const owner = accountId;
-		converting = true;
+		const version = chat.revision;
+		const owner = chat.accountId;
+		chat.converting = true;
 		const converted: File[] = [];
 		try {
 			for (const file of files) {
@@ -333,7 +227,7 @@
 					/\.(heic|heif)$/i.test(file.name) ||
 					['image/heic', 'image/heif'].includes(file.type)
 				) {
-					imageError = '轉換 HEIC 中…';
+					chat.imageError = '轉換 HEIC 中…';
 					try {
 						const heic2any = (await import('heic2any')).default;
 						const result = await heic2any({
@@ -349,50 +243,48 @@
 							)
 						);
 					} catch {
-						if (version === revision && owner === accountId) {
-							imageError = 'HEIC/HEIF 圖片轉換失敗，請改用 JPEG、PNG 或 WebP。';
+						if (version === chat.revision && owner === chat.accountId) {
+							chat.imageError = 'HEIC/HEIF 圖片轉換失敗，請改用 JPEG、PNG 或 WebP。';
 						}
 						return;
 					}
 				} else {
 					converted.push(file);
 				}
-				if (version !== revision || owner !== accountId || destroyed) {
+				if (version !== chat.revision || owner !== chat.accountId) {
 					return;
 				}
 			}
-			const all = [...selectedImages.map((image) => image.file), ...converted];
+			const all = [...chat.selectedImages.map((image) => image.file), ...converted];
 			if (all.some((file) => !UPLOAD_IMAGE_TYPES.includes(file.type as UploadImageType))) {
-				imageError = '只支援 JPG、PNG、WebP、HEIC 圖片。';
+				chat.imageError = '只支援 JPG、PNG、WebP、HEIC 圖片。';
 			} else if (all.some((file) => file.size > MAX_IMAGE_BYTES)) {
-				imageError = '單張圖片不能超過 10 MiB。';
+				chat.imageError = '單張圖片不能超過 10 MiB。';
 			} else if (all.reduce((sum, file) => sum + file.size, 0) > MAX_TOTAL_IMAGE_BYTES) {
-				imageError = '圖片總計不能超過 20 MiB。';
+				chat.imageError = '圖片總計不能超過 20 MiB。';
 			} else {
-				selectedImages = [
-					...selectedImages,
+				chat.selectedImages = [
+					...chat.selectedImages,
 					...converted.map((file) => ({ file, url: URL.createObjectURL(file) }))
 				];
-				imageError = '';
+				chat.imageError = '';
 			}
 		} finally {
-			if (version === revision && owner === accountId) {
-				converting = false;
+			if (version === chat.revision && owner === chat.accountId) {
+				chat.converting = false;
 			}
 		}
 	}
-	let revision = 0;
-	let controller: AbortController | undefined;
-	let accountId: string | undefined;
+
 	let destroyed = false;
-	function clearPending(owner: string, id = focusedId) {
+	function clearPending(owner: string, id = chat.focusedId) {
 		if (!id) {
 			return;
 		}
 		try {
 			const items = pending.remove(owner, id);
-			if (owner === accountId) {
-				pendingItems = items;
+			if (owner === chat.accountId) {
+				chat.pendingItems = items;
 			}
 		} catch {
 			/* A stale item remains recoverable by lookup. */
@@ -400,29 +292,31 @@
 	}
 	function restorePending(owner: string) {
 		try {
-			pendingItems = pending.load(owner, Date.now());
+			chat.pendingItems = pending.load(owner, Date.now());
 			for (const id of attempts.keys()) {
 				if (
-					!pendingItems.some((item) => item.requestId === id && item.expiredAt === null)
+					!chat.pendingItems.some(
+						(item) => item.requestId === id && item.expiredAt === null
+					)
 				) {
 					attempts.delete(id);
 				}
 			}
 			checkExpiry();
 		} catch {
-			phase = 'error';
-			message = '無法讀取先前請求，請先檢查此網站的儲存設定。';
+			chat.phase = 'error';
+			chat.message = '無法讀取先前請求，請先檢查此網站的儲存設定。';
 		}
 	}
 	function freshRequestId() {
 		let id = crypto.randomUUID();
-		while (pendingItems.some((item) => item.requestId === id)) {
+		while (chat.pendingItems.some((item) => item.requestId === id)) {
 			id = crypto.randomUUID();
 		}
 		return id;
 	}
 	function atLimit() {
-		if (pending.activeCount(pendingItems) < pending.PENDING_LIMIT) {
+		if (pending.activeCount(chat.pendingItems) < pending.PENDING_LIMIT) {
 			return false;
 		}
 		showToast();
@@ -438,18 +332,18 @@
 		clearTimeout(toastTimer);
 		toast = false;
 	}
-	function resetLookups() {
-		lookupEpoch++;
-		lookupControllers.forEach((lookupController) => lookupController.abort());
-		lookupControllers = [];
-		lookingUp.clear();
-		lookupErrors.clear();
-	}
 	function openTray(expand: string | null = null) {
+		if (destroyed) {
+			return;
+		}
 		trayOpen = true;
 		expandedId = expand;
 		checkExpiry();
-		void tick().then(() => trayElement?.focus());
+		void tick().then(() => {
+			if (!destroyed) {
+				trayElement?.focus();
+			}
+		});
 	}
 	function closeTray(restoreFocus = false) {
 		if (!trayOpen) {
@@ -457,9 +351,9 @@
 		}
 		trayOpen = false;
 		expandedId = null;
-		if (accountId && seenExpired.length) {
+		if (chat.accountId && seenExpired.length) {
 			try {
-				pendingItems = pending.removeSeenExpired(accountId, seenExpired);
+				chat.pendingItems = pending.removeSeenExpired(chat.accountId, seenExpired);
 			} catch {
 				/* Storage is unavailable; the expired marks stay until the next close. */
 			}
@@ -470,6 +364,9 @@
 		}
 	}
 	function focusAfterTray() {
+		if (destroyed) {
+			return;
+		}
 		if (trayOpen && trayElement) {
 			trayElement.focus();
 		} else if (badgeElement?.isConnected) {
@@ -495,7 +392,7 @@
 		// Record every expired row displayed while the tray is open, including rows that
 		// expire during this opening (§5 seen-once clearing).
 		if (trayOpen) {
-			for (const item of pendingItems) {
+			for (const item of chat.pendingItems) {
 				if (item.expiredAt !== null && !seenExpired.includes(item.requestId)) {
 					seenExpired.push(item.requestId);
 				}
@@ -506,16 +403,14 @@
 		if (!trayOpen) {
 			return;
 		}
-		// Outside clicks inside the AI dialog close only the tray; clicks outside the dialog
-		// reach requestClose, which also closes only the tray.
+		// Outside clicks close only the pending tray.
 		const listener = (event: PointerEvent) => {
 			const target = event.target as Element | null;
 			if (
 				!target ||
 				confirmId ||
 				trayElement?.contains(target) ||
-				badgeElement?.contains(target) ||
-				!target.closest('[data-slot="dialog-content"]')
+				badgeElement?.contains(target)
 			) {
 				return;
 			}
@@ -525,20 +420,20 @@
 		return () => document.removeEventListener('pointerdown', listener, true);
 	});
 	$effect(() => {
-		// While the dialog is open, re-check items past the window once a minute (§5).
+		// While the page is mounted, re-check items past the window once a minute.
 		const timer = setInterval(() => checkExpiry(), 60_000);
 		return () => clearInterval(timer);
 	});
 	function checkExpiry() {
-		if (!accountId || processing || converting) {
+		if (!chat.accountId || chat.processing || chat.converting) {
 			return;
 		}
 		const now = Date.now();
-		for (const item of pendingItems) {
+		for (const item of chat.pendingItems) {
 			if (
 				item.expiredAt === null &&
 				pending.isPastWindow(item, now) &&
-				!lookingUp.has(item.requestId)
+				!chat.lookingUp.has(item.requestId)
 			) {
 				void lookup(item.requestId, 'auto');
 			}
@@ -553,27 +448,27 @@
 	}
 	function forgetPending(owner: string, id: string) {
 		attempts.delete(id);
-		if (retainedCommit?.requestId === id) {
-			retainedCommit = null;
+		if (chat.retainedCommit?.requestId === id) {
+			chat.retainedCommit = null;
 		}
-		lookupErrors.delete(id);
+		chat.lookupErrors.delete(id);
 		if (expandedId === id) {
 			expandedId = null;
 		}
-		if (phase === 'uncertain' && focusedId === id) {
+		if (chat.phase === 'uncertain' && chat.focusedId === id) {
 			// The current conversation was waiting on this item; it is resolved now.
-			focusedId = null;
-			attempt = null;
-			history = [];
-			question = '';
-			clarification = null;
-			selectedOption = '';
-			reply = '';
-			message = '';
-			analysis = '';
-			phase = 'input';
+			chat.focusedId = null;
+			chat.attempt = null;
+			chat.history = [];
+			chat.question = '';
+			chat.clarification = null;
+			chat.selectedOption = '';
+			chat.reply = '';
+			chat.message = '';
+			chat.analysis = '';
+			chat.phase = 'input';
 		}
-		if (owner === accountId && !pendingItems.length) {
+		if (owner === chat.accountId && !chat.pendingItems.length) {
 			closeTray(true);
 		}
 	}
@@ -583,18 +478,18 @@
 		id: string,
 		source: 'query' | 'delete' | 'auto'
 	): Promise<'completed' | 'not_found' | 'expired' | 'failed' | null> {
-		const owner = accountId;
-		if (!owner || lookingUp.has(id)) {
+		const owner = chat.accountId;
+		if (!owner || chat.lookingUp.has(id)) {
 			return null;
 		}
-		const epoch = lookupEpoch;
-		const current = () => !destroyed && epoch === lookupEpoch && get(user)?.id === owner;
+		const epoch = chat.lookupEpoch;
+		const current = () => epoch === chat.lookupEpoch && get(user)?.id === owner;
 		const lookupController = new AbortController();
-		lookupControllers.push(lookupController);
-		lookingUp.set(id, source);
-		lookupErrors.delete(id);
-		if (phase === 'uncertain' && focusedId === id) {
-			analysis = '';
+		chat.lookupControllers.push(lookupController);
+		chat.lookingUp.set(id, source);
+		chat.lookupErrors.delete(id);
+		if (chat.phase === 'uncertain' && chat.focusedId === id) {
+			chat.analysis = '';
 		}
 		try {
 			const completed = await getSemanticEntryStatus(id, lookupController.signal);
@@ -609,13 +504,17 @@
 				clearPending(owner, id);
 				forgetPending(owner, id);
 				followLatest = true;
-				conversation.push({ role: 'assistant', text: note, expenses: completed.expenses });
+				chat.conversation.push({
+					role: 'assistant',
+					text: note,
+					expenses: completed.expenses
+				});
 				return 'completed';
 			}
-			const item = pendingItems.find((value) => value.requestId === id);
+			const item = chat.pendingItems.find((value) => value.requestId === id);
 			if (item && item.expiredAt === null && pending.isPastWindow(item, Date.now())) {
 				try {
-					pendingItems = pending.markExpired(owner, id, Date.now());
+					chat.pendingItems = pending.markExpired(owner, id, Date.now());
 				} catch {
 					/* Storage is unavailable; keep the item pending so it can be queried again. */
 					return 'not_found';
@@ -629,18 +528,20 @@
 				return null;
 			}
 			if (source !== 'auto') {
-				lookupErrors.set(id, lookupMessage(error));
+				chat.lookupErrors.set(id, lookupMessage(error));
 			}
 			return 'failed';
 		} finally {
-			lookupControllers = lookupControllers.filter((entry) => entry !== lookupController);
-			if (epoch === lookupEpoch) {
-				lookingUp.delete(id);
+			chat.lookupControllers = chat.lookupControllers.filter(
+				(entry) => entry !== lookupController
+			);
+			if (epoch === chat.lookupEpoch) {
+				chat.lookingUp.delete(id);
 			}
 		}
 	}
 	async function deletePending(id: string) {
-		if (processing || converting) {
+		if (chat.processing || chat.converting) {
 			return;
 		}
 		// Re-query first: a completed item is applied instead of deleted (§6).
@@ -648,109 +549,67 @@
 			confirmId = id;
 		}
 	}
-	function guardParentClose() {
-		// Block the same click from dismissing the AI dialog after the alert closes.
-		closeGuard = true;
-		setTimeout(() => (closeGuard = false), 400);
-	}
 	function cancelDelete() {
 		if (confirmId) {
-			guardParentClose();
 			confirmId = null;
 		}
 	}
 	function confirmDelete() {
 		const id = confirmId;
-		guardParentClose();
 		confirmId = null;
-		if (!id || !accountId) {
+		if (!id || !chat.accountId) {
 			return;
 		}
-		clearPending(accountId, id);
-		forgetPending(accountId, id);
+		clearPending(chat.accountId, id);
+		forgetPending(chat.accountId, id);
 	}
 	function dismissExpired(id: string) {
-		if (!accountId) {
+		if (!chat.accountId) {
 			return;
 		}
 		seenExpired = seenExpired.filter((entry) => entry !== id);
-		clearPending(accountId, id);
-		if (!pendingItems.length) {
+		clearPending(chat.accountId, id);
+		if (!chat.pendingItems.length) {
 			closeTray(true);
 		}
 	}
 	async function retryFromTray(id: string) {
-		if (processing || converting || lookingUp.has(id) || !attempts.has(id)) {
+		if (chat.processing || chat.converting || chat.lookingUp.has(id) || !attempts.has(id)) {
 			return;
 		}
 		// The retry streams in the chat, so the tray closes to show it.
 		closeTray();
-		if (!(phase === 'uncertain' && focusedId === id)) {
+		if (!(chat.phase === 'uncertain' && chat.focusedId === id)) {
 			// Retrying another item starts a separate conversation, like new input does.
-			if (failedAttempt?.history?.length) {
-				failedAttempt = null;
+			if (chat.failedAttempt?.history?.length) {
+				chat.failedAttempt = null;
 			}
-			const images = selectedImages;
-			selectedImages = [];
+			const images = chat.selectedImages;
+			chat.selectedImages = [];
 			newOperation(false);
-			selectedImages = images;
+			chat.selectedImages = images;
 		}
 		await retryPending(id);
 	}
 	function retainAttempt() {
-		if (attempt && focusedId) {
-			attempts.set(focusedId, attempt);
+		if (chat.attempt && chat.focusedId) {
+			attempts.set(chat.focusedId, chat.attempt);
 		}
 	}
 	function interruptPending() {
-		if (!processing || !accountId || recovering) {
+		if (!chat.processing || !chat.accountId || chat.recovering) {
 			return;
 		}
-		if (seenPersisting && attempt?.action !== 'revise') {
+		if (chat.seenPersisting && chat.attempt?.action !== 'revise') {
 			retainAttempt();
 		} else {
-			if (!uploading && attempt?.action === 'analyze') {
-				failedAttempt = attempt;
+			if (!chat.uploading && chat.attempt?.action === 'analyze') {
+				chat.failedAttempt = chat.attempt;
 			}
-			clearPending(accountId);
+			clearPending(chat.accountId);
 		}
 	}
-	const count = $derived([...text.trim()].length);
-	const replyCount = $derived([...reply.trim()].length);
-	const composingReply = $derived(phase === 'needs_input');
-	const canCompose = $derived(
-		phase === 'input' ||
-			phase === 'drafts' ||
-			phase === 'uncertain' ||
-			(composingReply && clarification?.allowFreeText !== false)
-	);
-	const attachmentsDisabled = $derived(
-		!canCompose || !!session || composingReply || converting || selectedImages.length >= 4
-	);
-	const composerCount = $derived(composingReply ? replyCount : count);
-	const composerHint = $derived(
-		composerCount > 500 && canCompose
-			? '訊息最多 500 字，請縮短後再送出。'
-			: {
-					drafts: text.trim()
-						? '補充只更新草稿，不會重新讀取圖片。'
-						: drafts.length > 0 && drafts.every(isComplete)
-							? '可以繼續補充，或按「全部記帳」。'
-							: revised
-								? '可以繼續打字補充，或按「進入編輯」。'
-								: '可以直接打字補充，例如「第三筆是午餐」。',
-					input: '資訊完整後會直接記帳；多筆或不完整時會先列出草稿。',
-					needs_input: attempt?.referenceDate
-						? `本次「今天」固定為 ${attempt.referenceDate}（台灣日期）。日期更正請填完整年月日。`
-						: '補充這筆支出的資訊，接續剛才的對話。',
-					processing: '正在解析，請等待助手回覆。',
-					persisting: '正在儲存這筆支出，請稍候。',
-					created: '已完成記帳，點選「新增另一筆」開始新對話。',
-					rejected: '請修改內容後重新送出。',
-					error: '請查看助手訊息，再修改內容或稍後重試。',
-					uncertain: '請先查詢結果或重試同一請求，避免重複記帳。'
-				}[phase]
-	);
+
 	const fields: Record<string, string> = {
 		images: '圖片',
 		amount: '金額',
@@ -777,154 +636,115 @@
 	$effect(() => {
 		const next = $user?.id;
 		untrack(() => {
-			if (next !== accountId) {
-				interruptPending();
-				for (const [id, retained] of attempts) {
-					if (retained.accountId !== next) {
-						attempts.delete(id);
-					}
-				}
-				failedAttempt = null;
-				retainedCommit = null;
-				trayOpen = false;
-				expandedId = null;
-				seenExpired = [];
-				confirmId = null;
-				resetLookups();
-				closeToast();
-				pendingItems = [];
-				accountId = next;
-				revision++;
-				controller?.abort();
-				attempt = null;
-				focusedId = null;
-				history = [];
-				question = '';
-				clarification = null;
-				selectedOption = '';
-				reply = '';
-				savedExpense = null;
-				text = '';
-				phase = 'input';
-				issues = [];
-				message = '';
-				analysis = '';
-				clearConversation();
-				clearImages();
-				if (next) {
-					restorePending(next);
-				}
+			trayOpen = false;
+			expandedId = null;
+			seenExpired = [];
+			confirmId = null;
+			editingDrafts = false;
+			closeToast();
+			if (next) {
+				restorePending(next);
 			}
 		});
 	});
-	onDestroy(() => {
-		// Closing the dialog with the tray open counts as closing the tray (§5).
-		closeTray();
-		resetLookups();
-		closeToast();
-		interruptPending();
-		failedAttempt = null;
-		analysis = '';
-		clearConversation();
-		clearImages();
-		destroyed = true;
-		revision++;
-		controller?.abort();
+	$effect(() => {
+		if (chat.draftEditorRequested) {
+			untrack(() => {
+				chat.draftEditorRequested = false;
+				onEditDrafts();
+			});
+		}
 	});
-	export function requestClose() {
-		if (editingDrafts || closeGuard || confirmId) {
-			return;
-		}
-		if (trayOpen) {
-			// Escape and outside clicks close the tray first, not the AI dialog.
-			closeTray(true);
-			return;
-		}
-		changeOpen(false);
-	}
-	function changeOpen(next: boolean) {
-		if (!next && (processing || converting)) {
-			message = '正在處理這筆記帳，請等待結果。';
-			return;
-		}
-		if (!next) {
+	onDestroy(() => {
+		destroyed = true;
+		closeTray();
+		editingDrafts = false;
+		closeToast();
+		conversationElement = undefined;
+		composerElement = undefined;
+		badgeElement = undefined;
+		trayElement = undefined;
+		cancelButton = null;
+	});
+	export function startNewConversation() {
+		if (!chat.processing && !chat.converting) {
 			closeTray();
 			newOperation();
 		}
-		onClose();
 	}
 	function newOperation(clear = true) {
+		chat.refreshToday();
 		const failedReply =
-			!clear && failedAttempt?.action === 'analyze' && failedAttempt.history?.length
-				? failedAttempt
+			!clear && chat.failedAttempt?.action === 'analyze' && chat.failedAttempt.history?.length
+				? chat.failedAttempt
 				: null;
-		const failedClarification = failedReply ? clarification : null;
-		const failedOption = failedReply ? selectedOption : '';
-		focusedId = null;
-		analysis = '';
+		const failedClarification = failedReply ? chat.clarification : null;
+		const failedOption = failedReply ? chat.selectedOption : '';
+		chat.focusedId = null;
+		chat.analysis = '';
 		if (failedReply) {
-			conversation = conversation.slice(0, -2);
+			chat.conversation = chat.conversation.slice(0, -2);
 		} else {
 			clearConversation();
 		}
 		clearImages();
 		followLatest = true;
-		revision++;
-		controller?.abort();
-		attempt = null;
-		history = [];
-		question = '';
-		clarification = null;
-		selectedOption = '';
-		reply = '';
-		savedExpense = null;
+		chat.revision++;
+		chat.controller?.abort();
+		chat.attempt = null;
+		chat.history = [];
+		chat.question = '';
+		chat.clarification = null;
+		chat.selectedOption = '';
+		chat.reply = '';
+		chat.savedExpense = null;
 		if (clear) {
-			text = '';
+			chat.text = '';
 		}
-		phase = 'input';
+		chat.phase = 'input';
 		if (failedReply?.history?.length) {
-			attempt = failedReply;
-			history = failedReply.history.slice(0, -1);
-			question = failedReply.history[failedReply.history.length - 1].question;
-			clarification = failedClarification;
-			selectedOption = failedOption;
-			reply = failedReply.history[failedReply.history.length - 1].answer;
-			phase = 'needs_input';
+			chat.attempt = failedReply;
+			chat.history = failedReply.history.slice(0, -1);
+			chat.question = failedReply.history[failedReply.history.length - 1].question;
+			chat.clarification = failedClarification;
+			chat.selectedOption = failedOption;
+			chat.reply = failedReply.history[failedReply.history.length - 1].answer;
+			chat.phase = 'needs_input';
 		}
-		issues = [];
-		message = '';
+		chat.issues = [];
+		chat.message = '';
 	}
 	function stillCurrent(version: number, owner: string) {
-		return !destroyed && version === revision && get(user)?.id === owner;
+		return version === chat.revision && get(user)?.id === owner;
 	}
 	function leavePage() {
 		interruptPending();
-		const interruptedUpload = uploading;
-		const interruptedRevision = attempt?.action === 'revise';
-		analysis = '';
+		const interruptedUpload = chat.uploading;
+		const interruptedRevision = chat.attempt?.action === 'revise';
+		chat.analysis = '';
 		clearConversation();
 		clearImages();
-		revision++;
-		controller?.abort();
+		chat.revision++;
+		chat.controller?.abort();
 		if (interruptedUpload) {
-			if (accountId) {
-				clearPending(accountId);
+			if (chat.accountId) {
+				clearPending(chat.accountId);
 			}
-			focusedId = null;
-			attempt = null;
-			phase = 'error';
-			message = '圖片上傳失敗，請稍後再試。';
+			chat.focusedId = null;
+			chat.attempt = null;
+			chat.phase = 'error';
+			chat.message = '圖片上傳失敗，請稍後再試。';
 		} else if (interruptedRevision) {
-			if (accountId) {
-				clearPending(accountId);
+			if (chat.accountId) {
+				clearPending(chat.accountId);
 			}
-			focusedId = null;
-			attempt = null;
-			phase = 'input';
-		} else if (processing) {
-			phase = seenPersisting || recovering ? 'uncertain' : 'error';
-			message =
-				seenPersisting || recovering
+			chat.focusedId = null;
+			chat.attempt = null;
+			chat.phase = 'input';
+		} else if (chat.processing) {
+			chat.phase = chat.seenPersisting || chat.recovering ? 'uncertain' : 'error';
+			chat.message =
+				chat.seenPersisting || chat.recovering
 					? '結果待確認，請查詢結果。'
 					: '解析服務無法完成，請稍後再試。';
 		}
@@ -942,40 +762,44 @@
 			return;
 		}
 		clearPending(owner);
-		if (focusedId) {
-			attempts.delete(focusedId);
+		if (chat.focusedId) {
+			attempts.delete(chat.focusedId);
 		}
-		failedAttempt = null;
-		retainedCommit = null;
-		focusedId = null;
-		message = note;
-		if (attempt?.images || attempt?.action === 'commit' || result.expenses.length > 1) {
-			conversation = conversation.filter((entry) => !entry.drafts);
-			session = null;
+		chat.failedAttempt = null;
+		chat.retainedCommit = null;
+		chat.focusedId = null;
+		chat.message = note;
+		if (
+			chat.attempt?.images ||
+			chat.attempt?.action === 'commit' ||
+			result.expenses.length > 1
+		) {
+			chat.conversation = chat.conversation.filter((entry) => !entry.drafts);
+			chat.session = null;
 			editingDrafts = false;
-			revised = false;
-			serverDraftIssues = {};
-			conversation.push({
+			chat.revised = false;
+			chat.serverDraftIssues = {};
+			chat.conversation.push({
 				role: 'assistant',
-				text: message,
-				analysis,
+				text: chat.message,
+				analysis: chat.analysis,
 				expenses: result.expenses
 			});
 			clearImages();
-			attempt = null;
-			history = [];
-			question = '';
-			clarification = null;
-			selectedOption = '';
-			reply = '';
-			text = '';
-			analysis = '';
-			message = '';
-			phase = 'input';
+			chat.attempt = null;
+			chat.history = [];
+			chat.question = '';
+			chat.clarification = null;
+			chat.selectedOption = '';
+			chat.reply = '';
+			chat.text = '';
+			chat.analysis = '';
+			chat.message = '';
+			chat.phase = 'input';
 		} else {
-			savedExpense = result.expenses[0];
-			attempt = null;
-			phase = 'created';
+			chat.savedExpense = result.expenses[0];
+			chat.attempt = null;
+			chat.phase = 'created';
 		}
 	}
 	// Apply a created result to the store (replays refresh the affected months). Returns the
@@ -1033,19 +857,24 @@
 		return '解析服務無法完成';
 	}
 	async function executeDraft(action: 'revise' | 'commit', retry = false) {
+		chat.refreshToday();
 		if (
 			!$user ||
-			(!session && !retry) ||
-			processing ||
-			converting ||
-			(phase === 'uncertain' && !retry)
+			(!chat.session && !retry) ||
+			chat.processing ||
+			chat.converting ||
+			(chat.phase === 'uncertain' && !retry)
 		) {
 			return;
 		}
-		if (!retry && action === 'commit' && (!drafts.length || !drafts.every(isComplete))) {
+		if (
+			!retry &&
+			action === 'commit' &&
+			(!chat.drafts.length || !chat.drafts.every(isComplete))
+		) {
 			return;
 		}
-		if (action === 'revise' && (!text.trim() || count > 500)) {
+		if (action === 'revise' && (!chat.text.trim() || chat.count > 500)) {
 			return;
 		}
 		if (!retry && action === 'commit' && atLimit()) {
@@ -1055,30 +884,32 @@
 		let request: SemanticRequestV3;
 		try {
 			if (retry) {
-				if (attempt?.action !== 'commit') {
+				if (chat.attempt?.action !== 'commit') {
 					return;
 				}
 				request = parseRequestV3({
 					action: 'commit',
-					requestId: attempt.requestId,
-					...(attempt.referenceDate ? { referenceDate: attempt.referenceDate } : {}),
-					drafts: attempt.drafts
+					requestId: chat.attempt.requestId,
+					...(chat.attempt.referenceDate
+						? { referenceDate: chat.attempt.referenceDate }
+						: {}),
+					drafts: chat.attempt.drafts
 				});
 			} else {
 				// Reuse the earlier commit identity only while the normalized drafts are unchanged.
 				const reuse =
 					action === 'commit' &&
-					retainedCommit?.accountId === owner &&
-					JSON.stringify(drafts.map(toClientDraft).map(parseClientDraftV3)) ===
-						JSON.stringify(retainedCommit.drafts)
-						? retainedCommit
+					chat.retainedCommit?.accountId === owner &&
+					JSON.stringify(chat.drafts.map(toClientDraft).map(parseClientDraftV3)) ===
+						JSON.stringify(chat.retainedCommit.drafts)
+						? chat.retainedCommit
 						: null;
 				request = parseRequestV3({
 					action,
 					requestId: reuse?.requestId ?? freshRequestId(),
-					referenceDate: reuse?.referenceDate ?? draftContext.today,
-					drafts: drafts.map(toClientDraft),
-					...(action === 'revise' ? { text } : {})
+					referenceDate: reuse?.referenceDate ?? chat.draftContext.today,
+					drafts: chat.drafts.map(toClientDraft),
+					...(action === 'revise' ? { text: chat.text } : {})
 				});
 			}
 			if (action === 'commit' && !retry) {
@@ -1096,46 +927,46 @@
 				if (!items) {
 					return;
 				}
-				pendingItems = items;
+				chat.pendingItems = items;
 			}
 		} catch {
-			conversation.push({
+			chat.conversation.push({
 				role: 'assistant',
 				text: '目前無法保留請求，請允許此網站儲存資料後再試。'
 			});
 			return;
 		}
-		attempt = { ...request, accountId: owner };
+		chat.attempt = { ...request, accountId: owner };
 		if (action === 'commit') {
-			retainedCommit = attempt;
+			chat.retainedCommit = chat.attempt;
 		}
-		focusedId = action === 'commit' ? request.requestId : null;
+		chat.focusedId = action === 'commit' ? request.requestId : null;
 		if (action === 'revise') {
-			conversation.push({ role: 'user', text: text.trim() });
-			text = '';
-			revised = true;
+			chat.conversation.push({ role: 'user', text: chat.text.trim() });
+			chat.text = '';
+			chat.revised = true;
 		}
-		const version = ++revision;
-		controller = new AbortController();
-		phase = 'processing';
-		seenPersisting = false;
-		recovering = retry;
-		analysis = '';
-		message = '';
+		const version = ++chat.revision;
+		chat.controller = new AbortController();
+		chat.phase = 'processing';
+		chat.seenPersisting = false;
+		chat.recovering = retry;
+		chat.analysis = '';
+		chat.message = '';
 		followLatest = true;
 		try {
 			const result = await submitSemanticEntry(
 				request,
-				controller.signal,
+				chat.controller.signal,
 				() => {
 					if (stillCurrent(version, owner)) {
-						seenPersisting = true;
-						phase = 'persisting';
+						chat.seenPersisting = true;
+						chat.phase = 'persisting';
 					}
 				},
 				(delta) => {
 					if (stillCurrent(version, owner)) {
-						analysis += delta.text;
+						chat.analysis += delta.text;
 					}
 				}
 			);
@@ -1148,18 +979,18 @@
 			}
 			if (action === 'commit') {
 				// Any non-created commit result is final for this id: nothing was written.
-				retainedCommit = null;
+				chat.retainedCommit = null;
 			}
 			if (retry) {
 				// A replayed non-created commit result is final: nothing was written for this id.
 				attempts.delete(request.requestId);
-				if (!session) {
+				if (!chat.session) {
 					clearPending(owner, request.requestId);
-					focusedId = null;
-					attempt = null;
-					analysis = '';
-					phase = 'input';
-					conversation.push({
+					chat.focusedId = null;
+					chat.attempt = null;
+					chat.analysis = '';
+					chat.phase = 'input';
+					chat.conversation.push({
 						role: 'assistant',
 						text: `未記帳：${request.drafts?.length ?? 0} 筆都沒有寫入`
 					});
@@ -1167,52 +998,52 @@
 				}
 			}
 			if (result.status === 'drafts') {
-				const responseAnalysis = analysis;
+				const responseAnalysis = chat.analysis;
 				receiveDrafts(result);
 				if (action === 'revise') {
-					conversation.push({
+					chat.conversation.push({
 						role: 'assistant',
 						text: responseAnalysis ? '' : '已更新草稿。',
 						analysis: responseAnalysis
 					});
 				}
 			} else if (action === 'commit' && result.status === 'rejected') {
-				draftRejected = true;
-				draftHeading = `未記帳：${drafts.length} 筆都沒有寫入`;
-				const known = new Set(drafts.map((draft) => draft.draftId));
+				chat.draftRejected = true;
+				chat.draftHeading = `未記帳：${chat.drafts.length} 筆都沒有寫入`;
+				const known = new Set(chat.drafts.map((draft) => draft.draftId));
 				const matching = result.draftIssues?.filter(
 					(item) => known.has(item.draftId) && item.issues.length
 				);
-				serverDraftIssues = Object.fromEntries(
+				chat.serverDraftIssues = Object.fromEntries(
 					(matching ?? []).map((item) => [item.draftId, item.issues])
 				);
 				const unmatched =
 					result.draftIssues
 						?.filter((item) => !known.has(item.draftId))
 						.flatMap((item) => item.issues.map(issueText)) ?? [];
-				draftAnalysis = [
+				chat.draftAnalysis = [
 					result.draftIssues
 						? `伺服器檢查時發現 ${new Set(result.draftIssues.map((item) => item.draftId)).size} 筆有問題，草稿都還在。`
 						: result.issues.map(generalIssueText).join('、'),
 					...unmatched
 				].join('、');
-				phase = 'drafts';
+				chat.phase = 'drafts';
 			} else {
-				conversation.push({
+				chat.conversation.push({
 					role: 'assistant',
 					text: [
 						...(result.status === 'needs_input' ? [result.question] : []),
 						...result.issues.map(generalIssueText)
 					].join('、'),
-					analysis
+					analysis: chat.analysis
 				});
-				analysis = '';
-				phase = 'drafts';
+				chat.analysis = '';
+				chat.phase = 'drafts';
 			}
-			analysis = '';
+			chat.analysis = '';
 			clearPending(owner);
-			focusedId = null;
-			attempt = null;
+			chat.focusedId = null;
+			chat.attempt = null;
 		} catch (error) {
 			if (!stillCurrent(version, owner)) {
 				return;
@@ -1220,7 +1051,7 @@
 			if (
 				action === 'commit' &&
 				(retry ||
-					seenPersisting ||
+					chat.seenPersisting ||
 					(error instanceof SemanticEntryError && error.persisting))
 			) {
 				// Q8: drop the drafts block so the same batch cannot be resent under a new id;
@@ -1228,22 +1059,22 @@
 				// No chat status is added: the item is handled from the tray, and the composer
 				// is free for a new entry.
 				retainAttempt();
-				attempt = null;
-				focusedId = null;
-				phase = 'input';
-				conversation = conversation.filter((entry) => !entry.drafts);
-				session = null;
+				chat.attempt = null;
+				chat.focusedId = null;
+				chat.phase = 'input';
+				chat.conversation = chat.conversation.filter((entry) => !entry.drafts);
+				chat.session = null;
 				editingDrafts = false;
-				revised = false;
-				serverDraftIssues = {};
-				draftHeading = '';
-				draftAnalysis = '';
-				draftRejected = false;
-				retainedCommit = null;
-				analysis = '';
+				chat.revised = false;
+				chat.serverDraftIssues = {};
+				chat.draftHeading = '';
+				chat.draftAnalysis = '';
+				chat.draftRejected = false;
+				chat.retainedCommit = null;
+				chat.analysis = '';
 				openTray(request.requestId);
 			} else {
-				conversation.push({
+				chat.conversation.push({
 					role: 'assistant',
 					text:
 						action === 'revise'
@@ -1251,12 +1082,12 @@
 							: `未記帳：${draftError(error)}`
 				});
 				clearPending(owner);
-				focusedId = null;
+				chat.focusedId = null;
 				if (action === 'revise') {
-					attempt = null;
+					chat.attempt = null;
 				}
-				phase = 'drafts';
-				analysis = '';
+				chat.phase = 'drafts';
+				chat.analysis = '';
 			}
 		}
 	}
@@ -1264,85 +1095,89 @@
 		if (!id || !attempts.has(id)) {
 			return;
 		}
-		attempt = attempts.get(id) ?? null;
-		focusedId = id;
-		if (attempt?.action === 'commit') {
+		chat.attempt = attempts.get(id) ?? null;
+		chat.focusedId = id;
+		if (chat.attempt?.action === 'commit') {
 			await executeDraft('commit', true);
 		} else {
 			await execute(id);
 		}
 	}
 	async function execute(retryId?: string) {
-		if (phase === 'drafts' && !retryId) {
+		chat.refreshToday();
+		if (chat.phase === 'drafts' && !retryId) {
 			await executeDraft('revise');
 			return;
 		}
-		if (processing || converting || !$user || (optionQuestion && !selectedOption)) {
+		if (
+			chat.processing ||
+			chat.converting ||
+			!$user ||
+			(chat.optionQuestion && !chat.selectedOption)
+		) {
 			return;
 		}
 		if (!retryId && atLimit()) {
 			return;
 		}
-		if (phase === 'uncertain' && !retryId) {
+		if (chat.phase === 'uncertain' && !retryId) {
 			// New input starts a separate conversation, including when a commit is pending.
 			// Do not resurrect an unrelated failed clarification reply into this new request.
-			if (failedAttempt?.history?.length) {
-				failedAttempt = null;
+			if (chat.failedAttempt?.history?.length) {
+				chat.failedAttempt = null;
 			}
-			const images = selectedImages;
-			selectedImages = [];
+			const images = chat.selectedImages;
+			chat.selectedImages = [];
 			newOperation(false);
-			selectedImages = images;
+			chat.selectedImages = images;
 		}
 		if (retryId) {
-			focusedId = retryId;
+			chat.focusedId = retryId;
 		}
-		imageError = '';
+		chat.imageError = '';
 		let uploadContext: { requestId: string; referenceDate: string; text?: string } | undefined;
-		const filesToUpload = selectedImages.map((image) => image.file);
+		const filesToUpload = chat.selectedImages.map((image) => image.file);
 		const hadUncertainty = !!retryId;
 		const owner = $user.id;
 		const outgoingText = hadUncertainty
 			? '重試同一請求'
-			: phase === 'needs_input'
-				? reply.trim()
-				: text.trim();
+			: chat.phase === 'needs_input'
+				? chat.reply.trim()
+				: chat.text.trim();
 		if (!hadUncertainty) {
 			try {
 				const nextHistory =
-					phase === 'needs_input'
+					chat.phase === 'needs_input'
 						? [
-								...history,
+								...chat.history,
 								{
-									question,
-									answer: reply,
-									...(clarification?.questionId
-										? { questionId: clarification.questionId }
+									question: chat.question,
+									answer: chat.reply,
+									...(chat.clarification?.questionId
+										? { questionId: chat.clarification.questionId }
 										: {}),
-									...(optionQuestion && selectedOption
-										? { optionId: selectedOption }
+									...(chat.optionQuestion && chat.selectedOption
+										? { optionId: chat.selectedOption }
 										: {})
 								}
 							]
-						: history;
+						: chat.history;
 				// Image retries after a pre-persisting failure require selecting files again and a new ID.
 				const reusable =
 					!filesToUpload.length &&
 					!nextHistory.length &&
-					failedAttempt?.action === 'analyze' &&
-					!failedAttempt.images &&
-					!failedAttempt.history?.length &&
-					failedAttempt.text === text.trim().normalize('NFC')
-						? failedAttempt
+					chat.failedAttempt?.action === 'analyze' &&
+					!chat.failedAttempt.images &&
+					!chat.failedAttempt.history?.length &&
+					chat.failedAttempt.text === chat.text.trim().normalize('NFC')
+						? chat.failedAttempt
 						: null;
-				const previous = phase === 'needs_input' ? attempt : reusable;
+				const previous = chat.phase === 'needs_input' ? chat.attempt : reusable;
 				const identity = {
 					requestId: previous?.requestId ?? freshRequestId(),
-					referenceDate:
-						previous?.referenceDate ??
-						toISODateOnly(new Date(Date.now() + 8 * 60 * 60 * 1000))
+					referenceDate: previous?.referenceDate ?? chat.draftContext.today
 				};
-				if (count > 500) {
+				if (chat.count > 500) {
 					return;
 				}
 				const request = filesToUpload.length
@@ -1357,11 +1192,11 @@
 											? { text: previous.text }
 											: {})
 									}
-								: { text }),
+								: { text: chat.text }),
 							...(nextHistory.length &&
 							(!previous?.images ||
-								optionQuestion ||
-								history.some((turn) => turn.optionId))
+								chat.optionQuestion ||
+								chat.history.some((turn) => turn.optionId))
 								? { history: nextHistory }
 								: {})
 						});
@@ -1371,7 +1206,9 @@
 						requestId: identity.requestId,
 						submittedAt: Date.now(),
 						kind: 'analyze',
-						...(pending.snippetOf(text) ? { snippet: pending.snippetOf(text) } : {}),
+						...(pending.snippetOf(chat.text)
+							? { snippet: pending.snippetOf(chat.text) }
+							: {}),
 						...(filesToUpload.length ? { imageCount: filesToUpload.length } : {}),
 						expiredAt: null
 					},
@@ -1380,76 +1217,85 @@
 				if (!items) {
 					return;
 				}
-				pendingItems = items;
-				failedAttempt = null;
+				chat.pendingItems = items;
+				chat.failedAttempt = null;
 				if (request) {
-					attempt = { ...request, accountId: owner };
-					history = request.history ?? [];
+					chat.attempt = { ...request, accountId: owner };
+					chat.history = request.history ?? [];
 				} else {
 					uploadContext = {
 						...identity,
-						...(text.trim() ? { text: text.trim().normalize('NFC') } : {})
+						...(chat.text.trim() ? { text: chat.text.trim().normalize('NFC') } : {})
 					};
 				}
-				focusedId = identity.requestId;
-				reply = '';
+				chat.focusedId = identity.requestId;
+				chat.reply = '';
 			} catch {
-				message = '目前無法保留請求，請允許此網站儲存資料後再試。';
+				chat.message = '目前無法保留請求，請允許此網站儲存資料後再試。';
 				return;
 			}
 		}
-		let operation = attempt;
-		const id = retryId ?? operation?.requestId ?? focusedId;
+		let operation = chat.attempt;
+		const id = retryId ?? operation?.requestId ?? chat.focusedId;
 		if (!id) {
 			return;
 		}
-		if (phase === 'needs_input' || phase === 'uncertain') {
-			conversation.push({
+		if (chat.phase === 'needs_input' || chat.phase === 'uncertain') {
+			chat.conversation.push({
 				role: 'assistant',
-				text: phase === 'needs_input' ? question : message || '先前請求結果待確認。',
-				...(phase === 'needs_input'
+				text:
+					chat.phase === 'needs_input'
+						? chat.question
+						: chat.message || '先前請求結果待確認。',
+				...(chat.phase === 'needs_input'
 					? {
 							answer: outgoingText,
-							options: clarification?.options,
-							optionId: selectedOption
+							options: chat.clarification?.options,
+							optionId: chat.selectedOption
 						}
 					: {}),
-				analysis
+				analysis: chat.analysis
 			});
 		}
-		conversation.push({
+		chat.conversation.push({
 			role: 'user',
 			text: outgoingText,
-			...(!hadUncertainty && selectedImages.length
-				? { images: selectedImages.map((image) => image.url) }
+			...(!hadUncertainty && chat.selectedImages.length
+				? {
+						imageIds: chat.selectedImages.map((image) => {
+							const id = crypto.randomUUID();
+							imagePreviews.set(id, image.url);
+							return id;
+						})
+					}
 				: {})
 		});
-		selectedImages = [];
+		chat.selectedImages = [];
 		followLatest = true;
-		const version = ++revision;
-		controller = new AbortController();
-		phase = 'processing';
-		seenPersisting = false;
-		recovering = !!retryId;
-		analysis = '';
-		message = '';
-		issues = [];
+		const version = ++chat.revision;
+		chat.controller = new AbortController();
+		chat.phase = 'processing';
+		chat.seenPersisting = false;
+		chat.recovering = !!retryId;
+		chat.analysis = '';
+		chat.message = '';
+		chat.issues = [];
 		try {
 			if (operation || uploadContext) {
 				if (uploadContext) {
-					uploading = true;
+					chat.uploading = true;
 					const targets = await requestImageUploads(
 						filesToUpload.map((file) => ({
 							contentType: file.type as UploadImageType,
 							size: file.size
 						})),
-						controller.signal
+						chat.controller.signal
 					);
 					if (!stillCurrent(version, owner)) {
 						return;
 					}
 					for (let i = 0; i < targets.length; i++) {
-						await uploadImage(targets[i], filesToUpload[i], controller.signal);
+						await uploadImage(targets[i], filesToUpload[i], chat.controller.signal);
 						if (!stillCurrent(version, owner)) {
 							return;
 						}
@@ -1460,8 +1306,8 @@
 						images: targets.map((target) => target.path),
 						accountId: owner
 					};
-					attempt = operation;
-					uploading = false;
+					chat.attempt = operation;
+					chat.uploading = false;
 				}
 				if (!operation) {
 					throw new SemanticEntryError('invalid_request', false);
@@ -1477,16 +1323,16 @@
 				});
 				const result = await submitSemanticEntry(
 					request,
-					controller.signal,
+					chat.controller.signal,
 					() => {
 						if (stillCurrent(version, owner)) {
-							seenPersisting = true;
-							phase = 'persisting';
+							chat.seenPersisting = true;
+							chat.phase = 'persisting';
 						}
 					},
 					(delta) => {
 						if (stillCurrent(version, owner)) {
-							analysis += delta.text;
+							chat.analysis += delta.text;
 						}
 					}
 				);
@@ -1496,24 +1342,24 @@
 				if (result.status === 'created') {
 					await accept(result, version, owner);
 				} else if (hadUncertainty) {
-					phase = 'uncertain';
-					message = '本次解析未完成寫入，但先前請求結果仍待確認。';
+					chat.phase = 'uncertain';
+					chat.message = '本次解析未完成寫入，但先前請求結果仍待確認。';
 				} else {
 					clearPending(owner);
-					focusedId = null;
+					chat.focusedId = null;
 					if (result.status === 'needs_input') {
-						question = result.question;
-						clarification = result;
-						selectedOption = '';
-						phase = 'needs_input';
+						chat.question = result.question;
+						chat.clarification = result;
+						chat.selectedOption = '';
+						chat.phase = 'needs_input';
 					} else {
 						if (result.status === 'drafts') {
 							receiveDrafts(result);
 						} else {
-							issues = result.issues;
+							chat.issues = result.issues;
 						}
 						if (result.status !== 'drafts') {
-							phase = 'rejected';
+							chat.phase = 'rejected';
 						}
 					}
 				}
@@ -1522,22 +1368,22 @@
 			if (!stillCurrent(version, owner)) {
 				return;
 			}
-			const failedUpload = uploading;
+			const failedUpload = chat.uploading;
 			const uncertain =
 				!failedUpload &&
 				(hadUncertainty ||
-					seenPersisting ||
+					chat.seenPersisting ||
 					(error instanceof SemanticEntryError && error.persisting));
 			if (uncertain) {
 				retainAttempt();
 			}
 			if (!uncertain) {
-				failedAttempt = attempt;
+				chat.failedAttempt = chat.attempt;
 				clearPending(owner);
-				focusedId = null;
+				chat.focusedId = null;
 			}
-			phase = uncertain ? 'uncertain' : 'error';
-			message =
+			chat.phase = uncertain ? 'uncertain' : 'error';
+			chat.message =
 				!uncertain && error instanceof SemanticEntryError && error.code.startsWith('image_')
 					? failedUpload
 						? '圖片上傳失敗，請稍後再試。'
@@ -1553,13 +1399,31 @@
 									: '解析服務無法完成，請稍後再試。';
 		} finally {
 			if (stillCurrent(version, owner)) {
-				uploading = false;
+				chat.uploading = false;
 			}
 		}
 	}
 </script>
 
-<svelte:window onpagehide={leavePage} />
+<svelte:window
+	onpagehide={leavePage}
+	onkeydown={(event) => {
+		if (
+			event.key === 'Escape' &&
+			!event.defaultPrevented &&
+			trayOpen &&
+			!confirmId &&
+			!editingDrafts
+		) {
+			closeTray(true);
+		}
+	}}
+/>
+
+<div class="relative flex items-center gap-2">
+	<h2 id="ai-entry-title" class="text-lg font-semibold">AI 記帳</h2>
+	{@render pendingHeader()}
+</div>
 
 <div class="relative flex h-[60vh] min-h-0 touch-manipulation flex-col gap-3">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable conversation needs keyboard access.) -->
@@ -1579,22 +1443,26 @@
 			}
 		}}
 	>
-		{#each conversation as entry, index (index)}
-			{#if entry.drafts && session}
+		{#each chat.conversation as entry, index (index)}
+			{#if entry.drafts && chat.session}
 				<div class="space-y-2">
 					<p class="text-xs text-muted-foreground">記帳助手</p>
-					{#if draftAnalysis && !draftRejected}<p class="text-xs text-muted-foreground">
+					{#if chat.draftAnalysis && !chat.draftRejected}<p
+							class="text-xs text-muted-foreground"
+						>
 							Gemini 分析
 						</p>
-						<p class="whitespace-pre-wrap break-words">{draftAnalysis}</p>{/if}
-					<p class:text-destructive={draftRejected}>{draftHeading}</p>
-					{#if draftRejected}<p class="text-destructive">{draftAnalysis}</p>{/if}
+						<p class="whitespace-pre-wrap break-words">{chat.draftAnalysis}</p>{/if}
+					<p class:text-destructive={chat.draftRejected}>{chat.draftHeading}</p>
+					{#if chat.draftRejected}<p class="text-destructive">
+							{chat.draftAnalysis}
+						</p>{/if}
 					<DraftBlock
-						{drafts}
-						editedIds={session.items
+						drafts={chat.drafts}
+						editedIds={chat.session.items
 							.filter((item) => item.edited)
 							.map((item) => item.id)}
-						disabled={processing || phase === 'uncertain'}
+						disabled={chat.processing || chat.phase === 'uncertain'}
 						{onEditDrafts}
 						onCommit={() => executeDraft('commit')}
 					/>
@@ -1615,9 +1483,9 @@
 								{entry.analysis}
 							</p>
 						{/if}
-						{#if entry.images}<div class="mb-2 flex gap-2">
-								{#each entry.images as url (url)}<img
-										src={url}
+						{#if entry.imageIds}<div class="mb-2 flex gap-2">
+								{#each entry.imageIds as url (url)}<img
+										src={imagePreviews.get(url)}
 										alt="附加圖片"
 										class="h-12 w-12 rounded-lg object-cover"
 									/>{/each}
@@ -1655,28 +1523,31 @@
 				</div>
 			{/if}
 		{/each}
-		{#if !session || processing || analysis || message}
+		{#if !chat.session || chat.processing || chat.analysis || chat.message}
 			<div class="flex justify-start">
 				<div
 					class="max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2"
 				>
 					<p class="text-muted-foreground text-xs">記帳助手</p>
-					{#if phase === 'input'}
+					{#if chat.phase === 'input'}
 						<p>今天記了什麼？告訴我一筆支出，我會幫你記帳。</p>
 					{/if}
-					{#if analysis}
+					{#if chat.analysis}
 						<div class="space-y-1">
 							<p class="text-muted-foreground text-xs">Gemini 分析</p>
 							<p aria-label="Gemini 分析摘要" class="whitespace-pre-wrap break-words">
-								{analysis}
+								{chat.analysis}
 							</p>
 						</div>
 					{/if}
-					{#if phase === 'needs_input'}
-						<p role="status" class="whitespace-pre-wrap font-medium">{question}</p>
-						{#if optionQuestion && clarification?.options}
-							<RadioGroup.Root bind:value={selectedOption} aria-label="補充資訊選項">
-								{#each clarification.options as option, index (option.id)}
+					{#if chat.phase === 'needs_input'}
+						<p role="status" class="whitespace-pre-wrap font-medium">{chat.question}</p>
+						{#if chat.optionQuestion && chat.clarification?.options}
+							<RadioGroup.Root
+								bind:value={chat.selectedOption}
+								aria-label="補充資訊選項"
+							>
+								{#each chat.clarification.options as option, index (option.id)}
 									<div
 										class="flex items-center gap-3 rounded-lg border px-3 py-3"
 									>
@@ -1691,53 +1562,58 @@
 									</div>
 								{/each}
 							</RadioGroup.Root>
-							<Button disabled={!selectedOption || !$user} onclick={confirmOption}
-								>確認</Button
+							<Button
+								disabled={!chat.selectedOption || !$user}
+								onclick={confirmOption}>確認</Button
 							>
 						{/if}
 					{/if}
 					<div aria-live="polite" class="space-y-2">
-						{#if phase === 'processing'}<p role="status">
-								{uploading
+						{#if chat.phase === 'processing'}<p role="status">
+								{chat.uploading
 									? '上傳圖片中…'
-									: attempt?.action === 'commit'
+									: chat.attempt?.action === 'commit'
 										? '記帳中…'
-										: analysis
+										: chat.analysis
 											? 'Gemini 分析中…'
 											: '處理中…'}
 							</p>
-						{:else if phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
-						{:else if phase === 'created'}<p class="font-semibold">已新增</p>
-						{:else if phase === 'rejected' || phase === 'error'}<p
+						{:else if chat.phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
+						{:else if chat.phase === 'created'}<p class="font-semibold">已新增</p>
+						{:else if chat.phase === 'rejected' || chat.phase === 'error'}<p
 								class="font-semibold"
 							>
 								未新增
 							</p>
-						{:else if phase === 'uncertain'}<p class="font-semibold">結果待確認</p>{/if}
-						{#each issues as issue, index (index)}<p>
+						{:else if chat.phase === 'uncertain'}<p class="font-semibold">
+								結果待確認
+							</p>{/if}
+						{#each chat.issues as issue, index (index)}<p>
 								{issue.field === 'images' && issue.code === 'not_a_receipt'
 									? '圖片看起來不是收據，請重新選擇圖片。'
 									: issue.code === 'too_many_drafts'
 										? '一次最多 20 筆，請分批送出。'
 										: `${fields[issue.field] ?? '內容'}：${codes[issue.code] ?? '資訊無效'}`}
 							</p>{/each}
-						{#if savedExpense && phase === 'created'}
-							<p class="text-sm">{savedExpense.note} · NT$ {savedExpense.amount}</p>
+						{#if chat.savedExpense && chat.phase === 'created'}
 							<p class="text-sm">
-								{new Date(savedExpense.ts).toLocaleDateString('zh-TW', {
+								{chat.savedExpense.note} · NT$ {chat.savedExpense.amount}
+							</p>
+							<p class="text-sm">
+								{new Date(chat.savedExpense.ts).toLocaleDateString('zh-TW', {
 									timeZone: 'Asia/Taipei'
 								})}
 							</p>
-							{#each Object.entries(savedExpense.shares_json) as [email, amount] (email)}
+							{#each Object.entries(chat.savedExpense.shares_json) as [email, amount] (email)}
 								<p class="text-sm">{email}：NT$ {amount}</p>
 							{/each}
 						{/if}
-						{#if message}<p class="text-sm">{message}</p>{/if}
+						{#if chat.message}<p class="text-sm">{chat.message}</p>{/if}
 					</div>
 					<div class="flex flex-wrap gap-2">
-						{#if phase === 'created'}
+						{#if chat.phase === 'created'}
 							<Button size="sm" onclick={() => newOperation()}>新增另一筆</Button>
-						{:else if phase === 'rejected' || phase === 'error'}
+						{:else if chat.phase === 'rejected' || chat.phase === 'error'}
 							<Button size="sm" onclick={() => newOperation(false)}
 								>修改後重新送出</Button
 							>
@@ -1750,11 +1626,12 @@
 
 	<div class="shrink-0 space-y-2">
 		<div class="text-muted-foreground flex items-start justify-between gap-3 px-1 text-xs">
-			<p id="semantic-entry-hint">{imageError || composerHint}</p>
-			{#if canCompose}<span class="shrink-0 tabular-nums">{composerCount}/500</span>{/if}
+			<p id="semantic-entry-hint">{chat.imageError || chat.composerHint}</p>
+			{#if chat.canCompose}<span class="shrink-0 tabular-nums">{chat.composerCount}/500</span
+				>{/if}
 		</div>
-		{#if selectedImages.length}<div class="flex gap-2 px-1">
-				{#each selectedImages as image, i (image.url)}<div class="relative">
+		{#if chat.selectedImages.length}<div class="flex gap-2 px-1">
+				{#each chat.selectedImages as image, i (image.url)}<div class="relative">
 						<img
 							src={image.url}
 							alt={`第 ${i + 1} 張附圖`}
@@ -1764,7 +1641,7 @@
 							variant="outline"
 							class="absolute -right-1 -top-1 h-5 w-5 rounded-full"
 							aria-label={`移除第 ${i + 1} 張圖片`}
-							disabled={processing || converting}
+							disabled={chat.processing || chat.converting}
 							onclick={() => removeImage(i)}><X class="h-3 w-3" /></Button
 						>
 					</div>{/each}
@@ -1777,7 +1654,7 @@
 			class="hidden"
 			onchange={selectImages}
 		/>
-		{#if !optionQuestion || clarification?.allowFreeText !== false}
+		{#if !chat.optionQuestion || chat.clarification?.allowFreeText !== false}
 			<div
 				class="bg-background flex touch-manipulation items-end gap-2 rounded-2xl border p-2 focus-within:ring-2 focus-within:ring-ring"
 			>
@@ -1786,47 +1663,51 @@
 					variant="ghost"
 					class="shrink-0"
 					aria-label="附加圖片"
-					disabled={attachmentsDisabled}
+					disabled={chat.attachmentsDisabled}
 					onclick={() => fileInput.click()}><Paperclip class="h-4 w-4" /></Button
 				>
 				<textarea
 					bind:this={composerElement}
 					id="semantic-entry-text"
-					aria-label={phase === 'drafts'
+					aria-label={chat.phase === 'drafts'
 						? '補充草稿'
-						: composingReply
+						: chat.composingReply
 							? '補充資訊'
 							: '記帳內容'}
 					aria-describedby="semantic-entry-hint"
 					bind:value={
-						() => (composingReply ? reply : text),
+						() => (chat.composingReply ? chat.reply : chat.text),
 						(value) => {
-							if (composingReply) {
-								reply = value;
+							if (chat.composingReply) {
+								chat.reply = value;
 							} else {
-								text = value;
+								chat.text = value;
 							}
 						}
 					}
-					disabled={converting || !canCompose || (phase === 'input' && attempt !== null)}
+					disabled={chat.converting ||
+						!chat.canCompose ||
+						(chat.phase === 'input' && chat.attempt !== null)}
 					rows="1"
 					class="min-w-0 flex-1 touch-manipulation resize-none overflow-y-hidden bg-transparent px-2 py-1 text-base focus-visible:outline-none md:text-sm"
-					placeholder={phase === 'drafts'
+					placeholder={chat.phase === 'drafts'
 						? '例如：第三筆是午餐'
-						: composingReply
+						: chat.composingReply
 							? '輸入你的回答…'
 							: '例如：今天午餐100元'}
 				></textarea>
 				<Button
 					size="icon"
 					class="shrink-0 rounded-xl"
-					aria-label={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
-					title={composingReply || phase === 'drafts' ? '送出補充' : '送出記帳'}
+					aria-label={chat.composingReply || chat.phase === 'drafts'
+						? '送出補充'
+						: '送出記帳'}
+					title={chat.composingReply || chat.phase === 'drafts' ? '送出補充' : '送出記帳'}
 					disabled={!$user ||
-						converting ||
-						!canCompose ||
-						(composerCount === 0 && selectedImages.length === 0) ||
-						composerCount > 500}
+						chat.converting ||
+						!chat.canCompose ||
+						(chat.composerCount === 0 && chat.selectedImages.length === 0) ||
+						chat.composerCount > 500}
 					onclick={() => execute()}
 				>
 					<Send class="h-4 w-4" aria-hidden="true" />
@@ -1860,12 +1741,12 @@
 
 {#snippet pendingHeader()}
 	<PendingTray
-		items={pendingItems}
+		items={chat.pendingItems}
 		open={trayOpen}
 		{expandedId}
-		{lookingUp}
-		errors={lookupErrors}
-		disabled={processing || converting}
+		lookingUp={chat.lookingUp}
+		errors={chat.lookupErrors}
+		disabled={chat.processing || chat.converting}
 		canRetry={(id) => attempts.has(id)}
 		bind:badge={badgeElement}
 		bind:tray={trayElement}
@@ -1912,21 +1793,18 @@
 	</AlertDialog.Content>
 </AlertDialog.Root>
 
-{#if editingDrafts && session}
+{#if editingDrafts && chat.session}
 	<DraftEditDialog
-		{session}
-		context={draftContext}
+		session={chat.session}
+		context={chat.draftContext}
 		onChange={(next) => {
-			session = next;
+			chat.session = next;
 		}}
 		onClose={(changed) => {
-			// Block the same outside click from dismissing the parent after the editor closes.
-			closeGuard = true;
-			setTimeout(() => (closeGuard = false), 400);
 			editingDrafts = false;
 			if (changed) {
 				followLatest = true;
-				conversation.push({ role: 'assistant', text: '已套用你的編輯。' });
+				chat.conversation.push({ role: 'assistant', text: '已套用你的編輯。' });
 			}
 		}}
 	/>
