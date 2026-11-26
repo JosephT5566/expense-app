@@ -1593,7 +1593,11 @@
 											: '處理中…'}
 							</p>
 						{:else if chat.phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
-						{:else if chat.phase === 'created'}<p class="font-semibold">已新增</p>
+						{:else if chat.phase === 'created' && !chat.completed}<p
+								class="font-semibold"
+							>
+								已新增
+							</p>
 						{:else if chat.phase === 'rejected' || chat.phase === 'error'}<p
 								class="font-semibold"
 							>
@@ -1628,11 +1632,15 @@
 						{#if chat.phase === 'uncertain' && chat.restoredRequestId}
 							<Button
 								size="sm"
+								variant="outline"
+								class="border-foreground text-foreground"
 								disabled={chat.checking}
 								onclick={() => chat.lookupRestored()}>查詢結果</Button
 							>
 							{#if chat.resendAvailable || (chat.focusedId && attempts.has(chat.focusedId))}<Button
 									size="sm"
+									variant="outline"
+									class="border-foreground text-foreground"
 									disabled={chat.readOnly}
 									onclick={() => retryPending(chat.focusedId)}
 									>{chat.resendAvailable ? '重新送出' : '重試同一請求'}</Button

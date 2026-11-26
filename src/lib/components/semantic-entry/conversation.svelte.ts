@@ -714,6 +714,10 @@ async function lookupRestored() {
 		}
 		if (result) {
 			completed = true;
+			text = '';
+			reply = '';
+			selectedImages.forEach((image) => URL.revokeObjectURL(image.url));
+			selectedImages = [];
 			phase = 'created';
 			session = null;
 			clarification = null;

@@ -207,8 +207,21 @@ it('does not trust stored completion and only locks after the status GET complet
 	await vi.waitFor(() => expect(chat.checking).toBe(false));
 	expect(chat.completed).toBe(false);
 	expect(chat.resendAvailable).toBe(true);
+	chat.reply = '我付款';
+	const url = URL.createObjectURL(new Blob(['synthetic']));
+	chat.selectedImages = [{ file: new File(['synthetic'], 'receipt.png'), url }];
+	const revoke = vi.spyOn(URL, 'revokeObjectURL');
 	vi.mocked(getSemanticEntryStatus).mockResolvedValue({ expenses: [], replayed: true });
 	await chat.lookupRestored();
+	expect(chat.text).toBe('');
+	expect(chat.reply).toBe('');
+	expect(chat.selectedImages).toEqual([]);
+	expect(revoke).toHaveBeenCalledWith(url);
+	revoke.mockRestore();
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).text).toBe('');
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).payload).toEqual(
+		saved().payload
+	);
 	expect(chat.completed).toBe(true);
 	expect(chat.readOnly).toBe(true);
 	expect(chat.canCompose).toBe(false);

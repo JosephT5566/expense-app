@@ -4126,8 +4126,16 @@ test('analysis in flight reload queries not_found and resends the exact saved pa
 	page
 }) => {
 	let posts = 0;
+	let queries = 0;
+	let release = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
 	const s = await setup(page, async (route, body) => {
 		if (!body) {
+			if (++queries === 2) {
+				await held;
+			}
 			await statusJson(route, 'not_found');
 		} else if (++posts === 1) {
 			/* Deliberately leave the first request in flight until reload. */
@@ -4141,6 +4149,22 @@ test('analysis in flight reload queries not_found and resends the exact saved pa
 	await page.reload();
 	await reopen(page);
 	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toBeVisible();
+	const query = page.getByRole('button', { name: '查詢結果', exact: true });
+	const resend = page.getByRole('button', { name: /^(重新送出|重試同一請求)$/ });
+	await expect(query).toBeEnabled();
+	await expect(query).not.toHaveAttribute('disabled');
+	await expect(resend).toBeEnabled();
+	await expect(resend).not.toHaveAttribute('disabled');
+	try {
+		await query.click();
+		await expect.poll(() => queries).toBe(2);
+		await expect(query).toBeDisabled();
+		await expect(resend).toBeDisabled();
+	} finally {
+		release();
+	}
+	await expect(query).toBeEnabled();
+	await expect(resend).toBeEnabled();
 	await expect(pendingBadge(page)).toHaveCount(0);
 	expect(s.posts).toHaveLength(1);
 	await page.getByRole('button', { name: '重新送出', exact: true }).click();
@@ -4156,6 +4180,8 @@ test('reload completed status locks the conversation and new conversation clears
 	await reopen(page);
 	await expect(page.getByText('已完成，請開新對話').first()).toBeVisible();
 	await expect(page.getByLabel('記帳內容', { exact: true })).toBeDisabled();
+	await expect(page.getByLabel('記帳內容', { exact: true })).toHaveValue('');
+	await expect(page.getByText('已新增', { exact: true })).toHaveCount(0);
 	await expect(page.getByRole('button', { name: '重新送出', exact: true })).toHaveCount(0);
 	await expect(createdSummary(page)).toBeVisible();
 	await page.getByRole('button', { name: '新對話', exact: true }).click();
