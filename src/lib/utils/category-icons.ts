@@ -1,26 +1,26 @@
-// 中文類別名稱 -> Iconify (MDI) 圖示名稱
+// 中文類別名稱 -> Iconify (Phosphor duotone) 圖示名稱
 // 你可以依喜好微調每個圖示對應
 export const CATEGORY_ICON_BY_NAME: Record<string, string> = {
-	早餐: 'mdi:bread-slice',
-	午餐: 'mdi:food-fork-drink',
-	晚餐: 'mdi:silverware-fork-knife',
-	飲料: 'mdi:cup-water',
-	食材: 'mdi:food-apple',
-	其他零食: 'mdi:candy-outline',
-	交通: 'mdi:bus',
-	日用品: 'mdi:toilet-paper-outline',
-	娛樂: 'mdi:gamepad-variant-outline',
-	衣物: 'mdi:tshirt-crew-outline',
-	居家相關: 'mdi:home-outline',
-	學習: 'mdi:school-outline',
-	'3C': 'mdi:laptop',
-	送禮: 'mdi:gift-outline',
-	醫藥: 'mdi:pill',
-	出遊: 'mdi:airplane',
-	運動: 'mdi:run'
+	早餐: 'ph:bread-duotone',
+	午餐: 'ph:hamburger-duotone',
+	晚餐: 'ph:pizza-duotone',
+	飲料: 'ph:beer-bottle-duotone',
+	食材: 'ph:carrot-duotone',
+	其他零食: 'ph:cookie-duotone',
+	交通: 'ph:bus-duotone',
+	日用品: 'ph:toilet-paper-duotone',
+	娛樂: 'ph:game-controller-duotone',
+	衣物: 'ph:t-shirt-duotone',
+	居家相關: 'ph:house-duotone',
+	學習: 'ph:book-open-duotone',
+	'3C': 'ph:laptop-duotone',
+	送禮: 'ph:gift-duotone',
+	醫藥: 'ph:pill-duotone',
+	出遊: 'ph:airplane-duotone',
+	運動: 'ph:person-simple-run-duotone'
 };
 
-export const CATEGORY_ICON_FALLBACK = 'mdi:tag-outline';
+export const CATEGORY_ICON_FALLBACK = 'ph:tag-duotone';
 
 export function getCategoryIcon(name: string): string {
 	return CATEGORY_ICON_BY_NAME[name] ?? CATEGORY_ICON_FALLBACK;

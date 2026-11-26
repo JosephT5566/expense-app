@@ -2,19 +2,19 @@ export type Tab = 'add' | 'ai-entry' | 'summary' | 'setting';
 type NavPath = '/' | '/ai-entry' | '/summary' | '/setting';
 
 export const items: { key: Tab; label: string; path: NavPath; icon: string }[] = [
-	{ key: 'add', label: '新增', path: '/', icon: 'solar:document-add-bold-duotone' },
+	{ key: 'add', label: '新增', path: '/', icon: 'ph:file-plus-duotone' },
 	{
 		key: 'ai-entry',
 		label: 'AI 記帳',
 		path: '/ai-entry',
-		icon: 'solar:sparkles-bold-duotone'
+		icon: 'ph:sparkle-duotone'
 	},
-	{ key: 'summary', label: '統計', path: '/summary', icon: 'solar:graph-up-bold-duotone' },
+	{ key: 'summary', label: '統計', path: '/summary', icon: 'ph:chart-line-up-duotone' },
 	{
 		key: 'setting',
 		label: '更多功能',
 		path: '/setting',
-		icon: 'solar:layers-minimalistic-bold-duotone'
+		icon: 'ph:stack-simple-duotone'
 	}
 ];
 

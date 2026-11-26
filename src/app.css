@@ -2,7 +2,8 @@
 /* @plugin 'daisyui'; */
 
 :root {
-	--nav-height: calc(49px + env(safe-area-inset-bottom, 0px));
+	--safe-bottom: env(safe-area-inset-bottom, 0px);
+	--nav-height: calc(64px + 8px + var(--safe-bottom));
 }
 
 @theme {
@@ -34,5 +35,11 @@
 		100% {
 			transform: translateY(0);
 		}
+	}
+}
+
+@media (min-width: 768px) {
+	:root {
+		--nav-height: 0px;
 	}
 }

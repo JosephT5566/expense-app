@@ -557,8 +557,3 @@ export function saveConversation(
 	}
 	return clean;
 }
-// #84 will supply signed GET URLs. Object paths are never used as image URLs.
-export function restoredImageUrl(path: string): null {
-	void path;
-	return null;
-}

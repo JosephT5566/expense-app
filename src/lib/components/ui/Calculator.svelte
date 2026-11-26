@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { Button } from '$lib/components/shadcn/button';
 	let { amountNum = $bindable(0) } = $props();
 
@@ -7,21 +7,36 @@
 	let errorMsg = $state('');
 	// 運算子對應的 MDI 圖示（含新鍵）
 	const OP_ICONS: Record<string, string> = {
-		'+': 'mdi:plus',
-		'-': 'mdi:minus',
-		'*': 'mdi:multiply',
-		'/': 'mdi:division',
-		'<-': 'mdi:backspace-outline',
-		'+/-': 'mdi:plus-minus-variant'
+		'+': 'ph:plus-duotone',
+		'-': 'ph:minus-duotone',
+		'*': 'ph:x-duotone',
+		'/': 'ph:divide-duotone',
+		'<-': 'ph:backspace-duotone',
+		'+/-': 'ph:plus-minus-duotone'
 	};
 	const isOperator = (k: string) => ['+', '-', '*', '/', '<-', '+/-'].includes(k);
 
 	const KEYS = [
-		'<-', 'C', '(', ')',
-		'7', '8', '9', '/',
-		'4', '5', '6', '*',
-		'1', '2', '3', '-',
-		'+/-', '0', '.', '+',
+		'<-',
+		'C',
+		'(',
+		')',
+		'7',
+		'8',
+		'9',
+		'/',
+		'4',
+		'5',
+		'6',
+		'*',
+		'1',
+		'2',
+		'3',
+		'-',
+		'+/-',
+		'0',
+		'.',
+		'+'
 	] as const;
 
 	function tapKey(k: string) {
@@ -101,7 +116,7 @@
 		errorMsg = '';
 	}
 
-	export function resetCal () {
+	export function resetCal() {
 		calcExpr = String(amountNum);
 	}
 
@@ -154,4 +169,3 @@
 	</div>
 	<div class="text-xs mt-2 opacity-70">按 = 將結果填入「金額」。</div>
 </div>
-

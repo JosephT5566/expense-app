@@ -5,8 +5,8 @@
 	import { Dialog } from 'bits-ui';
 	import classNames from 'classnames';
 	import { onDestroy } from 'svelte';
-	import Icon from '@iconify/svelte';
-	
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
+
 	let open = $state(false);
 
 	const unsubscribe = loading.subscribe(($loading) => {

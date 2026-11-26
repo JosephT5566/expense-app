@@ -156,6 +156,14 @@ async function setup(
 	});
 	await page.route(`${endpoint}/**`, async (route) => {
 		expect(route.request().headers().authorization).toBe('Bearer synthetic-jwt');
+		if (new URL(route.request().url()).pathname.endsWith('/uploads/urls')) {
+			expect(route.request().headers().accept).toBe('application/json');
+			const body = route.request().postDataJSON();
+			expect(Object.keys(body)).toEqual(['paths']);
+			expect(body.paths.length).toBeGreaterThanOrEqual(1);
+			expect(body.paths.length).toBeLessThanOrEqual(4);
+			return route.fulfill({ status: 404, json: { error: { code: 'image_not_found' } } });
+		}
 		const body = route.request().method() === 'POST' ? route.request().postDataJSON() : null;
 		if (body) {
 			expect(['analyze', 'revise', 'commit']).toContain(body.action);
@@ -4331,7 +4339,7 @@ test('conversation older than 24 hours is dropped on load', async ({ page }) => 
 	expect(await savedConversation(page)).toBeNull();
 	expect(queries).toBe(0);
 });
-test('restored image uses an accessible placeholder and makes no image request', async ({
+test('missing restored image requests signing and uses an accessible placeholder without reading image bytes', async ({
 	page
 }) => {
 	await seedConversation(
@@ -4342,7 +4350,11 @@ test('restored image uses an accessible placeholder and makes no image request',
 		})
 	);
 	const imageRequests: string[] = [];
+	let signedRequests = 0;
 	page.on('request', (request) => {
+		if (request.url().endsWith('/uploads/urls')) {
+			signedRequests++;
+		}
 		if (request.url().includes('synthetic.png')) {
 			imageRequests.push(request.url());
 		}
@@ -4351,6 +4363,7 @@ test('restored image uses an accessible placeholder and makes no image request',
 	await expect(
 		page.getByRole('img', { name: '收據圖片，圖片暫時無法顯示', exact: true })
 	).toBeVisible();
+	await expect.poll(() => signedRequests).toBe(1);
 	expect(imageRequests).toEqual([]);
 	await expect(page.locator('img[alt="附加圖片"]')).toHaveCount(0);
 });
@@ -4536,3 +4549,115 @@ test('conversation history marks a row expired while open and loads it read-only
 	).toHaveCount(2);
 	expect(calls).toBe(0);
 });
+
+for (const action of ['analyze', 'revise'] as const) {
+	test(`conversation_expired on ${action} locks the conversation without auto-resending`, async ({
+		page
+	}) => {
+		let expired = false;
+		const state = await setup(page, async (route, body) => {
+			if (action === 'revise' && !expired) {
+				expired = true;
+				await route.fulfill({
+					json: draftResponse(body!.requestId, [makeDraft(1), makeDraft(2)])
+				});
+			} else {
+				await route.fulfill({
+					status: 400,
+					json: { error: { code: 'conversation_expired' } }
+				});
+			}
+		});
+		await submit(page);
+		if (action === 'revise') {
+			await expect(page.getByText(/找到 2 筆/)).toBeVisible();
+			await page.getByRole('textbox', { name: '補充草稿', exact: true }).fill('第一筆是早餐');
+			await page.getByRole('button', { name: '送出補充', exact: true }).click();
+		}
+		await expect(
+			page
+				.getByLabel('助手訊息', { exact: true })
+				.filter({ hasText: '這段對話已超過 24 小時' })
+		).toBeVisible();
+		await expect(page.getByRole('textbox', { name: '記帳內容', exact: true })).toBeDisabled();
+		const count = action === 'revise' ? 2 : 1;
+		expect(state.posts).toHaveLength(count);
+		await page.reload();
+		await expect(page.getByRole('textbox', { name: '記帳內容', exact: true })).toBeDisabled();
+		expect(state.posts).toHaveLength(count);
+		await page.getByRole('button', { name: '新對話', exact: true }).click();
+		await expect(page.getByRole('textbox', { name: '記帳內容', exact: true })).toBeEnabled();
+		expect(state.posts).toHaveLength(count);
+	});
+}
+
+for (const failures of [0, 1, 2]) {
+	test(`restored receipt signs and renders img with ${failures} image load failures`, async ({
+		page
+	}) => {
+		let signs = 0;
+		const reads: string[] = [];
+		page.on('request', (request) => {
+			if (new URL(request.url()).hostname === 'signed-images.example.test') {
+				reads.push(request.resourceType());
+			}
+		});
+		const state = await setup(page, async (route) => route.abort());
+		await page.route('https://signed-images.example.test/**', async (route) => {
+			expect(route.request().resourceType()).toBe('image');
+			if (Number(new URL(route.request().url()).searchParams.get('attempt')) <= failures) {
+				return route.fulfill({ status: 403 });
+			}
+			return route.fulfill({
+				contentType: 'image/png',
+				body: png.buffer
+			});
+		});
+		await page.route(`${endpoint}/semantic-entry/uploads/urls`, async (route) => {
+			signs++;
+			expect(route.request().postDataJSON()).toEqual({ paths: [imagePath] });
+			await route.fulfill({
+				json: {
+					images: [
+						{
+							path: imagePath,
+							url: `https://signed-images.example.test/receipt.png?attempt=${signs}`,
+							expiresAt: '2026-10-01T04:15:00Z'
+						}
+					]
+				}
+			});
+		});
+		// Seed only after setup so signing and image counts cover one restored-image mount.
+		await seedConversation(
+			page,
+			conversationRecord({
+				phase: 'input',
+				conversation: [
+					{ role: 'user', text: '收據', imageCount: 1, imagePaths: [imagePath] }
+				],
+				payload: { action: 'analyze', requestId: pendingId(80), images: [imagePath] }
+			})
+		);
+		await page.reload();
+		await expect.poll(() => reads).toEqual(Array(failures ? 2 : 1).fill('image'));
+		if (failures === 2) {
+			await expect(
+				page.getByRole('img', { name: '收據圖片，圖片暫時無法顯示', exact: true })
+			).toBeVisible();
+			await expect(page.locator('img[alt="收據圖片"]')).toHaveCount(0);
+		} else {
+			const image = page.locator('img[alt="收據圖片"]');
+			await expect(image).toBeVisible();
+			await expect
+				.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+				.toBe(1);
+		}
+		expect(signs).toBe(failures ? 2 : 1);
+		expect(reads).toEqual(Array(failures ? 2 : 1).fill('image'));
+		expect(state.posts).toHaveLength(0);
+		expect(JSON.stringify(await savedConversation(page))).not.toContain(
+			'signed-images.example.test'
+		);
+	});
+}

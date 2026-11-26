@@ -53,7 +53,7 @@ Each run writes `test-results/verify/<run-id>/` (git-ignored): `build.log`, `pre
 - Drive the real user path: roles, clicks, typing, swipes. No store setters or test-only routes.
 - For writes, assert the mocked request (method, body) and a second view of the result, such as reloading or reopening the day.
 - Report results as repository-verified only for what ran. These mocks cannot prove RLS, deployed Supabase or Cloud Run behavior, real OAuth, receipt or semantic model output, or transaction atomicity (AGENTS.md Validation). List those as external verification still needed.
-- Icons and web fonts are blocked, so icon-only buttons render blank and have no accessible name. Do not judge visual polish from these screenshots.
+- Iconify API hosts and web fonts are blocked. Bundled offline Iconify SVGs must still render; icon-only controls retain their existing accessible names. Web font appearance may differ.
 - `npm run test:e2e` clears `test-results/` at start. Copy evidence elsewhere before running the e2e suite if you still need it.
 
 ## Cleanup

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { CalendarClock, Pencil, Plus, Trash2 } from 'lucide-svelte';
 	import { SvelteDate } from 'svelte/reactivity';
 

@@ -7,7 +7,7 @@
 	import type { UpsertExpenseInput } from '$lib/data/expenses.fetcher';
 	import type { ShareEntry } from '$lib/types/expense';
 	import { upsertExpense, deleteExpense } from '$lib/data/expenses.fetcher';
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import classNames from 'classnames';
 	import { allowedUserInfo, allowedUsers } from '$lib/stores/appSetting.store';
 	import { expenseOptions, categoryIconMap } from '$lib/stores/categories.store';
@@ -505,7 +505,7 @@
 						calculatorDialogOpen = true;
 					}}
 				>
-					<Icon icon="solar:calculator-bold-duotone" width="20" height="20" />
+					<Icon icon="ph:calculator-duotone" width="20" height="20" />
 				</Button>
 			</ButtonGroup>
 		</div>

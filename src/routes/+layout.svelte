@@ -1,5 +1,6 @@
 <script lang="ts">
 	import '../app.css';
+	import '$lib/icons/register';
 	import { pwaInfo } from 'virtual:pwa-info';
 	import { onMount } from 'svelte';
 	import { type LayoutData } from './$types';
@@ -118,15 +119,15 @@
 	{@html webManifestLink}
 </svelte:head>
 
-<div class="flex flex-col flex-1">
-	<Header appName="JoPie" />
-	<div class="md:flex md:h-dvh">
+<div class="flex h-dvh min-h-0 flex-col">
+	<div class="shrink-0"><Header appName="JoPie" /></div>
+	<div class="flex min-h-0 flex-1">
 		<SideNav />
 		<main
 			bind:this={mainEl}
 			class={classNames(
-				'p-4 space-y-3 w-full h-[calc(100dvh-var(--nav-height))] pb-[calc(var(--nav-height)+8px)] overflow-auto',
-				'md:h-full md:pb-4 md:max-w-screen-md md:mx-auto'
+				'p-4 space-y-3 w-full flex-1 min-h-0 pb-[calc(var(--nav-height)+8px)] overflow-auto',
+				'md:pb-4 md:max-w-screen-md md:mx-auto'
 			)}
 		>
 			{@render children?.()}

@@ -205,6 +205,23 @@ export const chat = {
 		return true;
 	},
 	lookupRestored,
+	expire() {
+		expired = true;
+		completed = true;
+		phase = 'error';
+		analysis = '';
+		message = '';
+		resendAvailable = false;
+		attempt = null;
+		failedAttempt = null;
+		retainedCommit = null;
+		text = '';
+		reply = '';
+		conversation.push({
+			role: 'assistant',
+			text: '這段對話已超過 24 小時，無法繼續。請按「新對話」重新開始。'
+		});
+	},
 	flush: persistCurrent,
 	clearPersisted() {
 		if (!persistCurrent()) {
@@ -771,6 +788,13 @@ function restoreConversation(owner: string, id?: string | PersistedConversation)
 			}
 			return;
 		}
+	}
+	// A server-expired thread has no write to recover and must stay read-only after reload.
+	if (saved.completed && saved.phase === 'error') {
+		completed = true;
+		expired = true;
+		text = '';
+		return;
 	}
 	// A stored completion flag is a hint to query, never authority to mark completion.
 	if (saved.payload) {

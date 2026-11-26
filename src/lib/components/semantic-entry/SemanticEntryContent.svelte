@@ -1,6 +1,5 @@
 <script lang="ts">
 	import {
-		restoredImageUrl,
 		listConversations,
 		loadConversation,
 		summarizeConversation,
@@ -21,6 +20,7 @@
 	import * as pending from './pending';
 	import PendingTray from './PendingTray.svelte';
 	import CreatedSummary from './CreatedSummary.svelte';
+	import RestoredImages from './RestoredImages.svelte';
 	import DraftBlock from './DraftBlock.svelte';
 	import DraftEditDialog from './DraftEditDialog.svelte';
 	import { fromServerDrafts, isComplete, toClientDraft, issueText } from './drafts';
@@ -1098,6 +1098,13 @@
 			if (!stillCurrent(version, owner)) {
 				return;
 			}
+			if (error instanceof SemanticEntryError && error.code === 'conversation_expired') {
+				clearPending(owner);
+				chat.focusedId = null;
+				chat.expire();
+				editingDrafts = false;
+				return;
+			}
 			if (
 				action === 'commit' &&
 				(retry ||
@@ -1446,6 +1453,13 @@
 			if (!stillCurrent(version, owner)) {
 				return;
 			}
+			if (error instanceof SemanticEntryError && error.code === 'conversation_expired') {
+				clearPending(owner);
+				chat.focusedId = null;
+				chat.expire();
+				editingDrafts = false;
+				return;
+			}
 			const failedUpload = chat.uploading;
 			const uncertain =
 				!failedUpload &&
@@ -1498,7 +1512,7 @@
 	}}
 />
 
-<div class="relative flex items-center gap-2">
+<div class="relative flex shrink-0 items-center gap-2">
 	<Button
 		bind:ref={historyButton}
 		variant="outline"
@@ -1561,7 +1575,7 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<div class="relative flex h-[60vh] min-h-0 touch-manipulation flex-col gap-3">
+<div class="relative flex flex-1 min-h-0 touch-manipulation flex-col gap-3">
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex (The scrollable conversation needs keyboard access.) -->
 	<div
 		bind:this={conversationElement}
@@ -1622,20 +1636,12 @@
 						{#if (entry.imagePaths || entry.imageCount) && !entry.imageIds}<div
 								class="mb-2 flex gap-2"
 							>
-								{#each entry.imagePaths ?? Array.from({ length: entry.imageCount ?? 0 }, () => '') as path, i (i)}
-									{@const url = restoredImageUrl(path)}
-									{#if url}<img
-											src={url}
-											alt="收據圖片"
-											class="h-12 w-12 rounded-lg object-cover"
-										/>{:else}<div
-											role="img"
-											aria-label="收據圖片，圖片暫時無法顯示"
-											class="rounded-lg bg-muted p-3 text-xs text-muted-foreground"
-										>
-											收據圖片<br />圖片暫時無法顯示
-										</div>{/if}
-								{/each}
+								{#key chat.accountId}
+									<RestoredImages
+										paths={entry.imagePaths ??
+											Array.from({ length: entry.imageCount ?? 0 }, () => '')}
+									/>
+								{/key}
 							</div>{/if}
 						{#if entry.imageIds}<div class="mb-2 flex gap-2">
 								{#each entry.imageIds as url (url)}<img

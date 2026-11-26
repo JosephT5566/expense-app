@@ -658,3 +658,49 @@ it('allows leaving unchanged or expired content even when storage writes fail', 
 	vi.advanceTimersByTime(86_400_000);
 	expect(chat.clearPersisted()).toBe(true);
 });
+
+it('expires a server-rejected conversation read-only, keeps an assistant explanation and clears resend state', () => {
+	chat.phase = 'processing';
+	chat.text = '續談';
+	chat.reply = '100';
+	chat.analysis = '暫時分析';
+	chat.expire();
+	expect(chat.readOnly).toBe(true);
+	expect(chat.completed).toBe(true);
+	expect(chat.processing).toBe(false);
+	expect(chat.canCompose).toBe(false);
+	expect(chat.resendAvailable).toBe(false);
+	expect(chat.attempt).toBeNull();
+	expect(chat.text).toBe('');
+	expect(chat.reply).toBe('');
+	expect(chat.conversation.at(-1)).toEqual({
+		role: 'assistant',
+		text: '這段對話已超過 24 小時，無法繼續。請按「新對話」重新開始。'
+	});
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+	expect(chat.clearPersisted()).toBe(true);
+	expect(chat.readOnly).toBe(false);
+});
+
+it('restores a server-expired thread read-only without querying or offering resend', () => {
+	user.set(null);
+	saveConversation(
+		first.id,
+		{
+			...saved('error'),
+			completed: true,
+			conversation: [
+				{
+					role: 'assistant',
+					text: '這段對話已超過 24 小時，無法繼續。請按「新對話」重新開始。'
+				}
+			]
+		},
+		storage
+	);
+	user.set(first);
+	expect(chat.readOnly).toBe(true);
+	expect(chat.canCompose).toBe(false);
+	expect(chat.resendAvailable).toBe(false);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});

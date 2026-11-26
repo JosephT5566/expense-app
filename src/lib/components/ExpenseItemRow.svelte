@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import type { ExpenseRow } from '$lib/types/expense';
 	import { getTaiwanDate } from '$lib/utils/dates';
 	import { user } from '$lib/stores/session.store';
@@ -17,7 +17,7 @@
 		checked = false,
 		displayShare = false,
 		onEdit = undefined as ((expense: ExpenseRow) => void) | undefined,
-		onToggle = undefined as ((args: { id: string; checked: boolean }) => void) | undefined,
+		onToggle = undefined as ((args: { id: string; checked: boolean }) => void) | undefined
 	}: {
 		hideIcon?: boolean;
 		expense: ExpenseRow;
@@ -79,18 +79,13 @@
 			<div class="tooltip" data-tip={expense.is_settled ? '已結算' : '未結算'}>
 				{#if expense.is_settled}
 					<Icon
-						icon="solar:check-circle-bold"
+						icon="ph:check-circle-duotone"
 						class="text-emerald-400"
 						width="15"
 						height="15"
 					/>
 				{:else}
-					<Icon
-						icon="solar:close-circle-bold"
-						class="text-red-400"
-						width="15"
-						height="15"
-					/>
+					<Icon icon="ph:x-circle-duotone" class="text-red-400" width="15" height="15" />
 				{/if}
 			</div>
 		{/if}
@@ -104,7 +99,7 @@
 			aria-label="Edit"
 			onclick={handleEdit}
 		>
-			<Icon icon="solar:pen-new-square-bold-duotone" width="20" height="20" />
+			<Icon icon="ph:note-pencil-duotone" width="20" height="20" />
 		</button>
 	{/if}
 </li>
