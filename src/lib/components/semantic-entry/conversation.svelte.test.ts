@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { user } from '$lib/stores/session.store';
+import type { ExpenseRow } from '$lib/types/expense';
+import * as pending from './pending';
 
 const storage = vi.hoisted(() => {
 	const data = new Map<string, string>();
@@ -30,6 +32,7 @@ vi.mock('$app/environment', () => ({ browser: true }));
 import { attempts, chat, imagePreviews } from './conversation.svelte';
 
 afterEach(() => {
+	vi.restoreAllMocks();
 	vi.useRealTimers();
 });
 
@@ -541,3 +544,117 @@ it.each(['created', 'expired', 'expired-processing'] as const)(
 		expect(chat.readOnly).toBe(false);
 	}
 );
+
+it('preserves unsent text and selected images when another tab updates history before any request', () => {
+	chat.text = '尚未送出的午餐';
+	const file = new File(['synthetic'], 'receipt.png');
+	const url = URL.createObjectURL(file);
+	chat.selectedImages = [{ file, url }];
+	const revoke = vi.spyOn(URL, 'revokeObjectURL');
+	saveConversation(first.id, saved('input'), storage);
+	storageChanged();
+	expect(chat.attempt).toBeNull();
+	expect(chat.text).toBe('尚未送出的午餐');
+	expect(chat.selectedImages).toEqual([{ file, url }]);
+	expect(revoke).not.toHaveBeenCalled();
+	expect(chat.flush()).toBe(true);
+	expect(listConversations(first.id, Date.now(), storage)).toHaveLength(1);
+});
+
+it('retains unrelated account pending items while switching between stable threads', () => {
+	const one = saved('input');
+	const two = { ...one, conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+	saveConversation(first.id, one, storage);
+	saveConversation(first.id, two, storage);
+	const item: pending.PendingItem = {
+		requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+		submittedAt: Date.now(),
+		kind: 'analyze',
+		expiredAt: null
+	};
+	pending.save(first.id, [item], storage);
+	chat.pendingItems = [item];
+	for (const record of [one, two, one]) {
+		expect(chat.selectConversation(first.id, record)).toBe(true);
+		expect(chat.pendingItems).toEqual([item]);
+		expect(pending.activeCount(chat.pendingItems)).toBe(1);
+	}
+	user.set({ id: 'other', email: 'other@example.test' });
+	expect(chat.pendingItems).toEqual([]);
+});
+
+it.each(['quota', 'conflict'] as const)(
+	'keeps changed content and reports %s failure instead of switching or clearing',
+	(failure) => {
+		const one = saved('input');
+		const two = { ...one, conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' };
+		saveConversation(first.id, one, storage);
+		saveConversation(first.id, two, storage);
+		expect(chat.selectConversation(first.id, one)).toBe(true);
+		chat.text = '未儲存的修改';
+		if (failure === 'quota') {
+			vi.spyOn(storage, 'setItem').mockImplementation(() => {
+				throw new DOMException('Quota exceeded', 'QuotaExceededError');
+			});
+		} else {
+			saveConversation(first.id, { ...one, text: '另一分頁的修改' }, storage);
+		}
+		const raw = storage.getItem(conversationKey(first.id));
+		expect(chat.flush()).toBe(false);
+		for (const action of [
+			() => chat.selectConversation(first.id, two),
+			() => chat.clearPersisted()
+		]) {
+			expect(action()).toBe(false);
+			expect(chat.text).toBe('未儲存的修改');
+			expect(chat.conversation).toEqual(one.conversation);
+			expect(chat.imageError).toContain('無法儲存對話');
+			expect(chat.lastRequestId).toBe(requestId);
+			expect(storage.getItem(conversationKey(first.id))).toBe(raw);
+		}
+	}
+);
+
+it('persists a live single-text result for completed history selection', () => {
+	const expense: ExpenseRow = {
+		id: '22222222-2222-4222-8222-222222222222',
+		note: '語意午餐',
+		amount: 100,
+		currency: 'TWD',
+		ts: '2026-10-01T04:00:00Z',
+		payer_email: first.email,
+		scope: 'personal',
+		shares_json: { [first.email]: 100 },
+		category_id: null,
+		meta: '',
+		created_at: '2026-10-01T04:00:00Z',
+		updated_at: '2026-10-01T04:00:00Z',
+		is_settled: false
+	};
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.conversation = saved().conversation;
+	chat.savedExpense = expense;
+	chat.phase = 'created';
+	expect(chat.flush()).toBe(true);
+	expect(chat.flush()).toBe(true);
+	const record = loadConversation(first.id, Date.now(), storage)!;
+	expect(record.conversation).toHaveLength(2);
+	expect(chat.selectConversation(first.id, record)).toBe(true);
+	expect(chat.completed).toBe(true);
+	expect(chat.conversation.at(-1)?.expenses).toEqual([expense]);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});
+
+it('allows leaving unchanged or expired content even when storage writes fail', () => {
+	vi.useFakeTimers();
+	const record = saved('input');
+	saveConversation(first.id, record, storage);
+	expect(chat.selectConversation(first.id, record)).toBe(true);
+	vi.spyOn(storage, 'setItem').mockImplementation(() => {
+		throw new DOMException('Quota exceeded', 'QuotaExceededError');
+	});
+	expect(chat.flush()).toBe(true);
+	chat.text = '過期後的修改';
+	vi.advanceTimersByTime(86_400_000);
+	expect(chat.clearPersisted()).toBe(true);
+});

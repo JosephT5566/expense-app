@@ -96,6 +96,7 @@ let conversation = $state<(ConversationTurn & { imageIds?: string[] })[]>([]);
 let conversationId = $state<string | null>(null);
 let persistedBase: PersistedConversation | null = null;
 let persistenceInvalidated = false;
+const persistenceError = '無法儲存對話，請檢查儲存空間或其他分頁後再試。';
 let startedAt = $state<number | null>(null);
 let lastPayload = $state<SemanticRequestV3 | null>(null);
 let lastRequestId = $state<string | null>(null);
@@ -181,7 +182,10 @@ export const chat = {
 		if (owner !== accountId || this.switchingDisabled) {
 			return false;
 		}
-		persistCurrent();
+		if (!persistCurrent()) {
+			imageError = persistenceError;
+			return false;
+		}
 		let latest: PersistedConversation | null;
 		try {
 			latest = loadConversation(
@@ -203,7 +207,10 @@ export const chat = {
 	lookupRestored,
 	flush: persistCurrent,
 	clearPersisted() {
-		persistCurrent();
+		if (!persistCurrent()) {
+			imageError = persistenceError;
+			return false;
+		}
 		restoredRequestId = null;
 		startedAt = null;
 		conversationId = null;
@@ -215,6 +222,7 @@ export const chat = {
 		expired = false;
 		resendAvailable = false;
 		checking = false;
+		return true;
 	},
 	refreshToday,
 	get draftEditorRequested() {
@@ -522,6 +530,9 @@ function resetAccount(
 	expired = false;
 	checking = false;
 	resendAvailable = false;
+	if (next !== accountId) {
+		pendingItems = [];
+	}
 	accountId = next;
 	text = '';
 	session = null;
@@ -540,7 +551,6 @@ function resetAccount(
 	selectedOption = '';
 	reply = '';
 	focusedId = null;
-	pendingItems = [];
 	failedAttempt = null;
 	retainedCommit = null;
 	seenPersisting = false;
@@ -599,25 +609,26 @@ if (browser) {
 			if (!accountId || (event.key !== conversationKey(accountId) && event.key !== null)) {
 				return;
 			}
-			if (conversationId) {
-				try {
-					const saved = loadConversation(
-						accountId,
-						Date.now(),
-						globalThis.localStorage,
-						conversationId
-					);
-					if (saved?.revision === persistedBase?.revision) {
-						return;
-					}
-				} catch {
+			if (!conversationId) {
+				return;
+			}
+			try {
+				const saved = loadConversation(
+					accountId,
+					Date.now(),
+					globalThis.localStorage,
+					conversationId
+				);
+				if (saved?.revision === persistedBase?.revision) {
 					return;
 				}
+			} catch {
+				return;
 			}
 			if (processing || uploading || converting || checking || lookingUp.size > 0) {
 				persistenceInvalidated = true;
 			} else {
-				resetAccount(accountId, false, conversationId ?? undefined);
+				resetAccount(accountId, false, conversationId);
 			}
 		});
 	}
@@ -642,7 +653,19 @@ function snapshotConversation(): PersistedConversation | null {
 					: phase,
 		requestId: lastRequestId,
 		payload: lastPayload,
-		conversation: $state.snapshot(conversation),
+		conversation: $state.snapshot(
+			savedExpense && phase === 'created'
+				? [
+						...conversation,
+						{
+							role: 'assistant' as const,
+							text: message,
+							requestId: lastRequestId ?? undefined,
+							expenses: [savedExpense]
+						}
+					]
+				: conversation
+		),
 		history: $state.snapshot(history),
 		clarification: $state.snapshot(clarification),
 		session: session
@@ -673,33 +696,36 @@ function snapshotConversation(): PersistedConversation | null {
 	};
 }
 function persistCurrent() {
-	if (!accountId || persistenceInvalidated) {
-		return;
+	if (!accountId) {
+		return true;
 	}
 	const snapshot = snapshotConversation();
-	if (snapshot) {
-		persistSnapshot(accountId, snapshot);
-	}
+	return snapshot ? persistSnapshot(accountId, snapshot) : true;
 }
 function persistSnapshot(owner: string, snapshot: PersistedConversation) {
 	const clean = parseConversation(snapshot, Date.now());
 	if (!clean) {
-		return;
+		return Date.now() - snapshot.startedAt >= CONVERSATION_TTL_MS;
 	}
 	// Restoring unchanged state must not start a storage-event write loop between tabs.
 	const content = (value: PersistedConversation) =>
 		JSON.stringify({ ...value, updatedAt: 0, revision: 0 });
 	if (persistedBase && content(clean) === content(persistedBase)) {
-		return;
+		return true;
+	}
+	if (persistenceInvalidated) {
+		return false;
 	}
 	try {
 		const saved = saveConversation(owner, clean, globalThis.localStorage, persistedBase);
 		if (saved) {
 			persistedBase = saved;
+			return true;
 		}
 	} catch {
 		/* Storage unavailable. */
 	}
+	return false;
 }
 
 function restoreConversation(owner: string, id?: string | PersistedConversation) {

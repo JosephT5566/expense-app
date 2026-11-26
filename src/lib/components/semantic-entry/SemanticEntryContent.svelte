@@ -743,7 +743,9 @@
 		}
 	}
 	function newOperation(clear = true) {
-		chat.clearPersisted();
+		if (!chat.clearPersisted()) {
+			return;
+		}
 		chat.refreshToday();
 		const failedReply =
 			!clear && chat.failedAttempt?.action === 'analyze' && chat.failedAttempt.history?.length
@@ -1527,6 +1529,7 @@
 				>只保存在此裝置，對話自開始起保留 24 小時。時間為台灣時間。</Dialog.Description
 			>
 		</Dialog.Header>
+		{#if chat.imageError}<p role="alert" class="text-sm">{chat.imageError}</p>{/if}
 		<div class="max-h-[65vh] space-y-2 overflow-y-auto">
 			{#each historyRows as item (item.id)}
 				<button

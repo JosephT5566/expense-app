@@ -4484,6 +4484,12 @@ test('conversation history opens a completed thread read-only without resending'
 		.getByRole('button', { name: /午餐100.*已完成/ })
 		.click();
 	await expect(page.getByLabel('記帳內容', { exact: true })).toBeDisabled();
+	await expect(
+		page.getByRole('group', { name: '已記帳摘要' }).getByText('語意午餐', { exact: true })
+	).toBeVisible();
+	await expect(
+		page.getByRole('group', { name: '已記帳摘要' }).getByText('NT$ 100', { exact: true })
+	).toBeVisible();
 	expect(s.posts).toHaveLength(1);
 });
 
