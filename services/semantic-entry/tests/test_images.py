@@ -201,7 +201,8 @@ async def test_gcs_lazy_and_generation_download_parameters(gcs):
     auth.assert_not_called()
 
 
-async def test_gcs_v4_put_signing_parameters_and_offloop_work(gcs):
+@pytest.mark.parametrize("method", ["PUT", "GET"])
+async def test_gcs_v4_signing_parameters_and_offloop_work(gcs, method):
     client, blob, auth, credentials, request = gcs
     main_thread = threading.get_ident()
     threads = []
@@ -210,13 +211,17 @@ async def test_gcs_v4_put_signing_parameters_and_offloop_work(gcs):
     )
     store = GcsImageStore("synthetic-bucket")
     before = datetime.now(UTC)
-    result = await store.signed_upload_url(PATH, "image/png")
+    result = await (
+        store.signed_upload_url(PATH, "image/png")
+        if method == "PUT"
+        else store.signed_read_url(PATH)
+    )
     after = datetime.now(UTC)
     kwargs = blob.generate_signed_url.call_args.kwargs
     assert kwargs == {
         "version": "v4",
-        "method": "PUT",
-        "content_type": "image/png",
+        "method": method,
+        **({"content_type": "image/png"} if method == "PUT" else {}),
         "expiration": kwargs["expiration"],
         "service_account_email": "service@example.test",
         "access_token": "synthetic-token",
@@ -225,7 +230,11 @@ async def test_gcs_v4_put_signing_parameters_and_offloop_work(gcs):
     assert result == {
         "url": "https://upload.example.test/synthetic",
         "expiresAt": kwargs["expiration"].isoformat().replace("+00:00", "Z"),
-        "requiredHeaders": {"Content-Type": "image/png"},
+        **(
+            {"requiredHeaders": {"Content-Type": "image/png"}}
+            if method == "PUT"
+            else {}
+        ),
     }
     auth.assert_called_once_with()
     credentials.refresh.assert_called_once_with(request.return_value)

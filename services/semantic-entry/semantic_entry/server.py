@@ -96,6 +96,9 @@ def create_app(deps: Dependencies | None = None) -> FastAPI:
         "/semantic-entry/uploads", endpoint, methods=["POST"], name="upload_images"
     )
     app.add_api_route(
+        "/semantic-entry/uploads/urls", endpoint, methods=["POST"], name="read_images"
+    )
+    app.add_api_route(
         "/semantic-entry/{requestId}",
         endpoint,
         methods=["GET"],

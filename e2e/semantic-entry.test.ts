@@ -1360,7 +1360,10 @@ test('image and text upload once then create a summary and update home without c
 		requestId: s.posts[0].requestId,
 		referenceDate: '2026-10-01',
 		text: '昨天晚餐',
-		images: [imagePath]
+		images: [imagePath],
+		conversationStartedAt: expect.stringMatching(
+			/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/
+		)
 	});
 	expect(await pending(page)).toBeNull();
 	expect(s.writes()).toBe(0);
@@ -4265,7 +4268,11 @@ for (const response of ['needs_input', 'drafts', 'rejected'] as const) {
 		await reopen(page);
 		await page.getByRole('button', { name: '重新送出', exact: true }).click();
 		await expect.poll(() => s.posts.length).toBe(1);
-		expect(s.posts[0]).toEqual(conversationRecord().payload);
+		const record = conversationRecord();
+		expect(s.posts[0]).toEqual({
+			...record.payload,
+			conversationStartedAt: new Date(record.startedAt).toISOString()
+		});
 		await expect
 			.poll(async () => JSON.parse((await savedConversation(page)) ?? '{}').phase)
 			.toBe(response);

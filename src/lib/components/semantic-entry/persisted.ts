@@ -184,7 +184,8 @@ function payload(value: unknown): SemanticRequestV3 {
 		'text',
 		'images',
 		'history',
-		'drafts'
+		'drafts',
+		'conversationStartedAt'
 	]);
 	if ('history' in r) {
 		r.history = list(r.history, turnHistory);
@@ -234,7 +235,21 @@ export function parseConversation(raw: unknown, now: number): PersistedConversat
 		if (requestId !== null && !uuid.test(requestId)) {
 			return null;
 		}
-		const request = r.payload === null ? null : payload(r.payload);
+		let rawPayload = r.payload;
+		if (rawPayload !== null) {
+			const stored = object(rawPayload);
+			if (
+				!Object.hasOwn(stored, 'conversationStartedAt') &&
+				Array.isArray(stored.history) &&
+				stored.history.length
+			) {
+				rawPayload = {
+					...stored,
+					conversationStartedAt: new Date(num(r.startedAt)).toISOString()
+				};
+			}
+		}
+		const request = rawPayload === null ? null : payload(rawPayload);
 		if (!request || !requestId) {
 			return null;
 		}
@@ -363,7 +378,8 @@ export function parseConversation(raw: unknown, now: number): PersistedConversat
 					action: 'analyze',
 					requestId,
 					text: 'history',
-					history: list(r.history, turnHistory)
+					history: list(r.history, turnHistory),
+					conversationStartedAt: new Date(num(r.startedAt)).toISOString()
 				}).history ?? [],
 			clarification: response?.status === 'needs_input' ? response : null,
 			text: str(r.text),

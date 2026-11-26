@@ -91,7 +91,11 @@ async def invoke_v3(
     request = parse_request_v3(request)
     if request["action"] == "analyze" and "images" not in request:
         result = await invoke(
-            {k: v for k, v in request.items() if k != "action"},
+            {
+                k: v
+                for k, v in request.items()
+                if k not in ("action", "conversationStartedAt")
+            },
             token,
             deps,
             on_persisting,

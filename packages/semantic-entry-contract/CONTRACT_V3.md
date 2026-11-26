@@ -11,9 +11,22 @@
 
 - `analyze`：純文字需要 `text`；圖片模式需要 `images`，可附 `text`（可空白）。
 - `revise`：需要 `text` 與 `drafts`。
-- `commit`：需要 `drafts`，不接受 `text`、`history` 或 `images`。
+- `commit`：需要 `drafts`，不接受 `text`、`history`、`images` 或 `conversationStartedAt`。
 - 文字／圖片 analyze 及 revise 可附 `history`，最多三組 `{question, answer, questionId?, optionId?}`。
   `optionId` 必須搭配 UUID `questionId`；選項答案以 label 填入 `answer`，後端依可信 context 重新驗證 id。
+
+文字／圖片 `analyze` 及 `revise` 的 `history` 經解析後非空時，必須提供有效的 `conversationStartedAt`。
+必填時省略或傳入 null 回 `400 invalid_request`。首輪未帶 history，或 history 解析後為空時，可省略此欄位；若有提供，仍驗證格式與 TTL。
+目前已部署前端未傳送此欄位，因此帶 history 的後續請求會被拒絕，直到前端配套上線。
+前端應傳入已保存對話的首次送出時間，補答、修訂或重試時不得重設。
+格式為有效的 RFC 3339 日期時間字串，須含秒與明確 offset（`Z` 或 `±HH:MM`），
+例如 `2026-11-26T03:00:00.000Z` 或 `2026-11-26T11:00:00+08:00`。
+年份限 0001–9999；可含小數秒，接受小寫 `t`／`z`，不接受閏秒、24:00 或省略 offset。
+驗證器保留原字串；格式、型別或日期不合法回 `400 invalid_request`。
+純驗證器不檢查時效。HTTP handler 以伺服器 UTC 時間比對，
+早於 now − 24 小時或晚於 now + 5 分鐘回 `400 conversation_expired`；兩端邊界均接受。
+此檢查在模型、圖片讀取、DB 寫入及 completed lookup 前執行，JSON／SSE POST 均適用。
+因此已完成但過期的 POST 重試也會被拒絕；仍可用狀態 GET 讀取完成快照，不受此 TTL 限制。
 
 文字會 trim 並做 NFC 正規化；text 最多 500 字元，history 問答上限為 300／500。
 `images` 是 1–4 個路徑字串，每個最多 1024 字元，不接受含 `..` 的路徑；
@@ -49,6 +62,7 @@ images（依序為 path／服務讀取的 generation）、drafts（預設 []）�
 草稿包含 draftId、可選 mergedFrom／originalAmount／shares，以及八欄的全部欄位資料；
 status／issues／updated 已被丟棄，不參與雜湊；requestId 也不參與。
 沒有 images／drafts 時沿用既有 input_hash 的 v1／v2／v3 分支。
+`conversationStartedAt` 是對話 metadata，不參與任何 v1／v2／v3／v4 fingerprint；既有 hash 保持不變。
 `graph_v3.py` 的圖片／草稿分支使用此函式；純文字 analyze 委派既有 graph。
 
 ## 批次 RPC
@@ -180,25 +194,34 @@ Draft issue code 為 `missing`、`unrecognized`、`low_confidence`、`missing_co
 用戶端只以 requiredHeaders 對 HTTPS signed URL PUT 圖片，不附 Authorization；
 後續 v3 analyze 的 images 僅送 path，不送 generation。上傳失敗不代表有支出寫入。
 
-上傳 JSON body 另限 4096 bytes。路徑只能是 `uploads/<已驗證 user id>/<檔名>`，
+`POST /semantic-entry/uploads/urls` 使用相同 Supabase Bearer、membership、Origin 檢查與請求 deadline，
+接受精確的 `{paths:string[]}`，每次 1–4 個不重複路徑。服務先檢查所有路徑都屬於 caller，
+再查詢物件 metadata；物件不存在時回傳 `404 image_not_found`。
+回應 `200 {images:[{path,url,expiresAt}]}`，順序與輸入相同，`expiresAt` 為 ISO-8601 UTC 時間。
+URL 以相同 service account 簽發 V4 GET，有效期 15 分鐘；物件仍存在即可隨時重新簽發，不保存簽發狀態。
+`<img src="signed URL">` 顯示圖片不需 bucket CORS GET；若使用 `fetch()` 讀取圖片，bucket CORS 必須允許 GET。
+物件可能在簽發後被 lifecycle 刪除，讀圖失敗時消費端仍須顯示占位。
+
+兩個 URL 端點的 JSON body 均限 4096 bytes。路徑只能是 `uploads/<已驗證 user id>/<檔名>`，
 檔名為 1–200 個允許的英數、點、底線、連字號且首字為英數，不接受 `..`。
 analyze 不接受重複路徑。服務先檢查 metadata，再依讀取的 generation 下載、驗證大小與圖片 magic bytes。
 
 | HTTP | code                 | 條件                                      |
 | ---- | -------------------- | ----------------------------------------- |
 | 400  | invalid_request      | 格式不符、非正整數大小或重複圖片路徑      |
+| 400  | conversation_expired | 對話早於 24 小時前或晚於 5 分鐘後         |
 | 400  | body_too_large       | 超過端點 body 限制                        |
 | 400  | image_limit          | 張數超限或合計超過 20 MiB                 |
 | 401  | unauthorized         | 缺少有效 Bearer／驗證失敗                 |
 | 403  | origin_forbidden     | Origin 不在服務 allowlist                 |
 | 403  | image_forbidden_path | 圖片路徑不屬於 caller 或格式不允許        |
-| 404  | image_not_found      | 分析時物件不存在                          |
+| 404  | image_not_found      | 分析或簽發 GET URL 時物件不存在           |
 | 409  | image_changed        | generation 改變或下載長度不符             |
 | 413  | image_too_large      | 單張超過 10 MiB，或 metadata 大小非正     |
 | 415  | image_unsupported    | MIME 或圖片 signature 不支援              |
 | 502  | image_configuration  | 未設定 image store 或圖片 deadline 不合法 |
 | 502  | image_error          | 簽署／metadata／下載錯誤                  |
-| 504  | image_error          | 上傳 URL 端點逾時                         |
+| 504  | image_error          | PUT／GET URL 端點逾時                     |
 
 以上錯誤使用 `{error:{code,uncertain}}`；另可能回共用身分、membership 或服務錯誤，
 以 `handler.py`、`images.py`、`supabase.py` 為準。上傳成功不表示已記帳；

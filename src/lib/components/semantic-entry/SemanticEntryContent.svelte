@@ -834,6 +834,10 @@
 		}
 		return '解析服務無法完成';
 	}
+	function conversationTimestamp() {
+		return new Date(chat.ensureStarted()).toISOString();
+	}
+
 	async function executeDraft(action: 'revise' | 'commit', retry = false) {
 		chat.refreshToday();
 		if (
@@ -888,7 +892,9 @@
 					requestId: reuse?.requestId ?? freshRequestId(),
 					referenceDate: reuse?.referenceDate ?? chat.draftContext.today,
 					drafts: chat.drafts.map(toClientDraft),
-					...(action === 'revise' ? { text: chat.text } : {})
+					...(action === 'revise'
+						? { text: chat.text, conversationStartedAt: conversationTimestamp() }
+						: {})
 				});
 			}
 			if (action === 'commit' && !retry) {
@@ -1174,6 +1180,8 @@
 					: parseRequestV3({
 							action: 'analyze',
 							...identity,
+							conversationStartedAt:
+								previous?.conversationStartedAt ?? conversationTimestamp(),
 							...(previous?.images
 								? {
 										images: previous.images,
@@ -1315,7 +1323,13 @@
 					...(operation.images ? { images: operation.images } : {}),
 					...(operation.drafts ? { drafts: operation.drafts } : {}),
 					...(operation.text !== undefined ? { text: operation.text } : {}),
-					...(operation.history ? { history: operation.history } : {})
+					...(operation.history ? { history: operation.history } : {}),
+					...(operation.action !== 'commit'
+						? {
+								conversationStartedAt:
+									operation.conversationStartedAt ?? conversationTimestamp()
+							}
+						: {})
 				});
 				const result = await submitSemanticEntry(
 					request,

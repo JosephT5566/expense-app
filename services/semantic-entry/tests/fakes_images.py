@@ -16,6 +16,13 @@ class FakeImageStore:
             "requiredHeaders": {"Content-Type": content_type},
         }
 
+    async def signed_read_url(self, path):
+        self.calls.append(("sign_read", path))
+        return {
+            "url": f"https://read.example.test/{path}",
+            "expiresAt": "2026-10-28T00:15:00Z",
+        }
+
     async def metadata(self, path):
         self.calls.append(("metadata", path))
         return self.items.get(path)

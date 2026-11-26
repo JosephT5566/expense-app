@@ -252,6 +252,11 @@ export const chat = {
 	set phase(value: typeof phase) {
 		phase = value;
 	},
+	ensureStarted() {
+		startedAt ??= Date.now();
+		conversationId ??= crypto.randomUUID();
+		return startedAt;
+	},
 	get attempt() {
 		return attempt;
 	},

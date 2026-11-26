@@ -499,6 +499,7 @@ export interface DraftIssue {
 export type SemanticRequestV3 = { requestId: string; referenceDate?: string } & (
 	| {
 			action: 'analyze';
+			conversationStartedAt?: string;
 			text: string;
 			history?: ClarificationTurn[];
 			images?: never;
@@ -506,6 +507,7 @@ export type SemanticRequestV3 = { requestId: string; referenceDate?: string } & 
 	  }
 	| {
 			action: 'analyze';
+			conversationStartedAt?: string;
 			text?: string;
 			images: string[];
 			history?: ClarificationTurn[];
@@ -513,12 +515,20 @@ export type SemanticRequestV3 = { requestId: string; referenceDate?: string } & 
 	  }
 	| {
 			action: 'revise';
+			conversationStartedAt?: string;
 			text: string;
 			history?: ClarificationTurn[];
 			drafts: ClientDraft[];
 			images?: never;
 	  }
-	| { action: 'commit'; drafts: ClientDraft[]; text?: never; history?: never; images?: never }
+	| {
+			action: 'commit';
+			conversationStartedAt?: never;
+			drafts: ClientDraft[];
+			text?: never;
+			history?: never;
+			images?: never;
+	  }
 );
 export interface IssueV3 {
 	field: string;
@@ -720,6 +730,24 @@ export function parseClientDraftV3(raw: unknown): ClientDraft {
 	delete result.updated;
 	return result as unknown as ClientDraft;
 }
+function conversationStartedAt(raw: unknown): string {
+	const value = string(raw);
+	const match =
+		/^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt](?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\.[0-9]+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$/.exec(
+			value
+		);
+	const calendarDate = value.slice(0, 10);
+	const parsed = new Date(`${calendarDate}T00:00:00.000Z`);
+	if (
+		match?.[0] !== value ||
+		!Number.isFinite(parsed.getTime()) ||
+		parsed.getUTCFullYear() < 1 ||
+		parsed.toISOString().slice(0, 10) !== calendarDate
+	) {
+		throw new Error('Invalid conversation timestamp');
+	}
+	return value;
+}
 export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 	const r = object(raw);
 	const image = r.action === 'analyze' && Object.hasOwn(r, 'images');
@@ -739,6 +767,7 @@ export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 		['requestId', 'action', ...required],
 		[
 			'referenceDate',
+			...(r.action === 'commit' ? [] : ['conversationStartedAt']),
 			...(image ? ['text', 'history'] : r.action === 'commit' ? [] : ['history'])
 		]
 	);
@@ -763,6 +792,12 @@ export function parseRequestV3(raw: unknown): SemanticRequestV3 {
 	}
 	if (Object.hasOwn(r, 'referenceDate')) {
 		result.referenceDate = dateV3(r.referenceDate);
+	}
+	if (Object.hasOwn(r, 'conversationStartedAt')) {
+		result.conversationStartedAt = conversationStartedAt(r.conversationStartedAt);
+	}
+	if (result.history && !Object.hasOwn(result, 'conversationStartedAt')) {
+		throw new Error('conversationStartedAt is required with non-empty history');
 	}
 	if (image) {
 		result.images = listV3(r.images, MAX_IMAGES, (raw) => {
@@ -991,4 +1026,41 @@ export function parseUploadResponse(raw: unknown, expectedCount: number): Upload
 			return { path, url, expiresAt, requiredHeaders };
 		})
 	};
+}
+
+export type ReadImageTarget = Pick<UploadTarget, 'path' | 'url' | 'expiresAt'>;
+export interface ReadImageResponse {
+	images: ReadImageTarget[];
+}
+export function parseReadImageResponse(raw: unknown, expectedCount: number): ReadImageResponse {
+	const r = object(raw);
+	exactKeys(r, ['images']);
+	if (
+		!Array.isArray(r.images) ||
+		r.images.length !== expectedCount ||
+		expectedCount < 1 ||
+		expectedCount > MAX_IMAGES
+	) {
+		throw new Error('Invalid image count');
+	}
+	const images = r.images.map((raw) => {
+		const t = object(raw);
+		exactKeys(t, ['path', 'url', 'expiresAt']);
+		const path = string(t.path);
+		const url = string(t.url);
+		const expiresAt = timestamp(t.expiresAt);
+		if (
+			!/^uploads\/[^/]+\/[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(path) ||
+			path.length > MAX_IMAGE_PATH_LENGTH ||
+			path.includes('..') ||
+			new URL(url).protocol !== 'https:'
+		) {
+			throw new Error('Invalid image target');
+		}
+		return { path, url, expiresAt };
+	});
+	if (new Set(images.map((image) => image.path)).size !== images.length) {
+		throw new Error('Duplicate image paths');
+	}
+	return { images };
 }
