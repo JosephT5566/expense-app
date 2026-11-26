@@ -1,39 +1,41 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import collections from './iconify-subset.json';
-import type { IconifyJSON } from '@iconify/svelte/dist/OfflineIcon.svelte';
-const sets: Record<string, IconifyJSON> = collections;
-import { generateSubset } from '../../../scripts/generate-icon-subset.mjs';
+import {
+	assertSubsetCoverage,
+	checkSourceIcons,
+	generateSubset,
+	sourceIconNames
+} from '../../../scripts/generate-icon-subset.mjs';
 
 it('commits exactly the generated subset', () => {
 	expect(collections).toEqual(generateSubset());
 });
 it('bundles every source icon and uses only the offline renderer', () => {
-	const names = new Set(
-		Object.values(sets).flatMap((set) =>
-			[...Object.keys(set.icons), ...Object.keys(set.aliases ?? {})].map(
-				(name) => `${set.prefix}:${name}`
-			)
-		)
-	);
-	function scan(dir: string) {
-		for (const entry of readdirSync(dir, { withFileTypes: true })) {
-			const path = resolve(dir, entry.name);
-			if (entry.isDirectory()) {
-				scan(path);
-			} else if (/\.(svelte|ts|js)$/.test(path) && !path.endsWith('.test.ts')) {
-				const source = readFileSync(path, 'utf8');
-				expect(source, path).not.toMatch(/(?:solar|mdi):/);
-				expect(source, path).not.toMatch(/from ['"]@iconify\/svelte['"]/);
-				expect(source, path).not.toMatch(/@iconify-json\/.*icons\.json/);
-				for (const match of source.matchAll(
-					/['"`]((?:ph|logos|svg-spinners):[a-z0-9-]+)['"`]/g
-				)) {
-					expect(names.has(match[1]), `${path}: ${match[1]}`).toBe(true);
-				}
-			}
+	expect(() => checkSourceIcons(collections)).not.toThrow();
+});
+it.each(['phh:plus-duotone', 'ph:unknown-icon-duotone'])(
+	'rejects missing icon %s in props and closed maps',
+	(name) => {
+		for (const [path, source] of [
+			['Example.svelte', `<Icon icon="${name}" class="md:hidden" />`],
+			['nav-items.ts', `const items = [{ icon: '${name}' }];`],
+			['category-icons.ts', `const icons = { other: '${name}' };`],
+			[
+				'Calculator.svelte',
+				`<script>import Icon from '@iconify/svelte/dist/OfflineIcon.svelte'; const OP_ICONS = { '+': '${name}' };</script>`
+			]
+		]) {
+			expect(() => assertSubsetCoverage(collections, sourceIconNames(path, source))).toThrow(
+				name
+			);
 		}
 	}
-	scan(resolve('src'));
+);
+it('ignores URLs, attributes and Tailwind variants outside icon sites', () => {
+	expect(
+		sourceIconNames(
+			'Example.svelte',
+			`<script>import Icon from '@iconify/svelte/dist/OfflineIcon.svelte'; const url = 'https://example.test';</script><Icon icon="ph:plus-duotone" class="md:hidden" aria-label="Add" /><div class="md:hidden" />`
+		)
+	).toEqual(['ph:plus-duotone']);
 });

@@ -35,17 +35,17 @@ npm run dev
 
 ## Build and validation
 
-| Command                      | Purpose                                                                      |
-| ---------------------------- | ---------------------------------------------------------------------------- |
-| `npm run icons:subset`       | Regenerate the committed offline Iconify subset from installed collections   |
-| `npm run check`              | Sync SvelteKit and check Svelte/TypeScript                                   |
-| `npm run lint`               | Check Prettier formatting and run ESLint                                     |
-| `npm run format`             | Format the repository in place                                               |
-| `npm run build`              | Build the static site into `build/`                                          |
-| `npm run preview`            | Preview the production build                                                 |
-| `npm run test:e2e:base-path` | Run isolated base-path navigation tests on preview port 4174                 |
-| `npm run test:e2e`           | Run Playwright, which builds and starts the preview server                   |
-| `npm run test:unit`          | Run Vitest unit tests (`src/**/*.test.ts`, Node, mocked fetchers and caches) |
+| Command                      | Purpose                                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------------------ |
+| `npm run icons:subset`       | Regenerate the committed offline Iconify subset; prebuild checks drift and source coverage |
+| `npm run check`              | Sync SvelteKit and check Svelte/TypeScript                                                 |
+| `npm run lint`               | Check Prettier formatting and run ESLint                                                   |
+| `npm run format`             | Format the repository in place                                                             |
+| `npm run build`              | Build the static site into `build/`                                                        |
+| `npm run preview`            | Preview the production build                                                               |
+| `npm run test:e2e:base-path` | Run isolated base-path navigation tests on preview port 4174                               |
+| `npm run test:e2e`           | Run Playwright, which builds and starts the preview server                                 |
+| `npm run test:unit`          | Run Vitest unit tests (`src/**/*.test.ts`, Node, mocked fetchers and caches)               |
 
 The E2E suite includes daily carousel tests with mocked Supabase authentication and responses, covering date jumps, repeated swipes, month/year boundaries, bounded card rendering, DOM reuse within and across buffer shifts, date jumps during animation, empty months, and retrying failed loads. The original scaffold test still checks for a visible home-page `h1`. These tests do not verify live authentication or settlement workflows.
 

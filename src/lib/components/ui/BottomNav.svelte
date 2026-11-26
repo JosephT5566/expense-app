@@ -50,11 +50,15 @@
 	.glass-nav {
 		left: 16px;
 		right: 16px;
-		bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+		bottom: calc(var(--safe-bottom) + 8px);
 		height: 64px;
 		border-radius: 32px;
 		border: 1px solid rgb(255 255 255 / 65%);
-		background: linear-gradient(135deg, rgb(255 255 255 / 82%), rgb(255 255 255 / 60%));
+		background: linear-gradient(
+			135deg,
+			color-mix(in srgb, var(--c-card) 82%, transparent),
+			color-mix(in srgb, var(--c-card) 60%, transparent)
+		);
 		-webkit-backdrop-filter: blur(28px) saturate(190%);
 		backdrop-filter: blur(28px) saturate(190%);
 		box-shadow:
@@ -62,10 +66,10 @@
 			0 8px 28px rgb(0 0 0 / 12%);
 	}
 	a {
-		color: #374151;
+		color: var(--c-text);
 	}
 	a.selected {
-		color: var(--c-primary);
+		color: color-mix(in srgb, var(--c-primary) 94%, var(--c-text));
 	}
 	.lens {
 		position: absolute;
@@ -74,9 +78,12 @@
 		width: 25%;
 		height: 50px;
 		border-radius: 28px;
-		background: linear-gradient(rgb(255 255 255 / 85%), rgb(255 255 255 / 35%));
+		background: linear-gradient(
+			color-mix(in srgb, var(--c-card) 85%, transparent),
+			color-mix(in srgb, var(--c-card) 35%, transparent)
+		);
 		box-shadow:
-			inset 0 1px 1px white,
+			inset 0 1px 1px var(--c-card),
 			0 2px 8px rgb(0 0 0 / 7%);
 		transition: transform 480ms cubic-bezier(0.22, 1.35, 0.38, 1);
 		pointer-events: none;
@@ -100,8 +107,8 @@
 		.glass-nav {
 			background: var(--c-card);
 		}
-		a:not(.selected) {
-			color: var(--c-text);
+		.lens {
+			background: var(--c-card);
 		}
 	}
 	@media (prefers-reduced-transparency: reduce) {
@@ -110,8 +117,8 @@
 			-webkit-backdrop-filter: none;
 			backdrop-filter: none;
 		}
-		a:not(.selected) {
-			color: var(--c-text);
+		.lens {
+			background: var(--c-card);
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

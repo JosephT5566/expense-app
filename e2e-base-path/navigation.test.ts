@@ -110,11 +110,14 @@ for (const { name, viewport } of [
 						);
 				await expect.poll(gap).toBeGreaterThanOrEqual(0);
 				await expect.poll(gap).toBeLessThanOrEqual(12);
-				// Chromium cannot set env(safe-area-inset-bottom); simulate both consumers in test CSS only.
+				// Override the shared safe-area input so production math drives both consumers.
 				await page.addStyleTag({
-					content:
-						':root { --nav-height: calc(64px + 8px + 34px); } nav.glass-nav { bottom: 42px !important; }'
+					content: ':root { --safe-bottom: 34px; }'
 				});
+				await expect
+					.poll(() => nav.evaluate((element) => element.getBoundingClientRect().bottom))
+					.toBe(844 - 34 - 8);
+				await expect(page.locator('main')).toHaveCSS('padding-bottom', '114px');
 				await expect.poll(gap).toBeGreaterThanOrEqual(0);
 				await expect.poll(gap).toBeLessThanOrEqual(12);
 				const list = page.getByRole('region', { name: '本次對話', exact: true });

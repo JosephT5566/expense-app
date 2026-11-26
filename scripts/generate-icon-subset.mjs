@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const usedIcons = [
@@ -90,9 +91,76 @@ export function generateSubset() {
 	);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-	writeFileSync(
-		new URL('../src/lib/icons/iconify-subset.json', import.meta.url),
-		JSON.stringify(generateSubset(), null, '\t') + '\n'
+/** @param {string} path @param {string} source */
+export function sourceIconNames(path, source) {
+	const scripts = path.endsWith('.svelte')
+		? [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
+				.map((match) => match[1])
+				.join('\n')
+		: source;
+	const isMap = /(?:^|[/\\])(?:nav-items|category-icons)\.ts$/.test(path);
+	const literals = [...source.matchAll(/<Icon\b[^>]*>/g)]
+		.flatMap((tag) =>
+			[...tag[0].matchAll(/\bicon\s*=\s*(\{[^}]*\}|"[^"]*"|'[^']*')/g)].map(
+				(match) => match[1]
+			)
+		)
+		.join('\n');
+	const sites =
+		literals +
+		'\n' +
+		(isMap || /from ['"]@iconify\/svelte(?:\/[^'"]*)?['"]/.test(scripts) ? scripts : '');
+	return [...sites.matchAll(/(['"`])([a-z0-9]+(?:-[a-z0-9]+)*:[a-z0-9]+(?:-[a-z0-9]+)*)\1/g)].map(
+		(match) => match[2]
 	);
+}
+
+/** @param {Record<string, import('@iconify/types').IconifyJSON>} collections
+ * @param {string[]} names
+ */
+export function assertSubsetCoverage(collections, names) {
+	for (const fullName of names) {
+		const [prefix, name] = fullName.split(':');
+		if (!collections[prefix]?.icons[name] && !collections[prefix]?.aliases?.[name]) {
+			throw new Error(`Missing source icon in subset: ${fullName}`);
+		}
+	}
+}
+
+/** @param {Record<string, import('@iconify/types').IconifyJSON>} collections
+ * @param {string} dir
+ */
+export function checkSourceIcons(
+	collections,
+	dir = fileURLToPath(new URL('../src', import.meta.url))
+) {
+	for (const entry of readdirSync(dir, { withFileTypes: true })) {
+		const path = resolve(dir, entry.name);
+		if (entry.isDirectory()) {
+			checkSourceIcons(collections, path);
+		} else if (/\.(svelte|ts|js)$/.test(path) && !/\.test\.[tj]s$/.test(path)) {
+			const source = readFileSync(path, 'utf8');
+			if (
+				/(?:solar|mdi):|from ['"]@iconify\/svelte['"]|@iconify-json\/.*icons\.json/.test(
+					source
+				)
+			) {
+				throw new Error(`Non-offline icon source: ${path}`);
+			}
+			assertSubsetCoverage(collections, sourceIconNames(path, source));
+		}
+	}
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	const subsetUrl = new URL('../src/lib/icons/iconify-subset.json', import.meta.url);
+	const generated = JSON.stringify(generateSubset(), null, '\t') + '\n';
+	if (process.argv.includes('--check')) {
+		if (readFileSync(subsetUrl, 'utf8') !== generated) {
+			throw new Error('Committed icon subset differs; run npm run icons:subset');
+		}
+		checkSourceIcons(JSON.parse(generated));
+	} else {
+		writeFileSync(subsetUrl, generated);
+	}
 }
