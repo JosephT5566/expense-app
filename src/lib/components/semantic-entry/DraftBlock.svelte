@@ -21,7 +21,7 @@
 	const complete = $derived(drafts.filter(isComplete).length);
 </script>
 
-<div role="group" aria-label="草稿" class="space-y-3 rounded-xl border bg-card p-3">
+<div role="group" aria-label="草稿" class="space-y-3 rounded-2xl rounded-tl-sm border bg-card p-4">
 	<div class="flex flex-wrap items-center justify-between gap-2 font-medium">
 		<span>草稿 {drafts.length} 筆（尚未記帳）</span><span class="text-xs text-muted-foreground"
 			>完整 {complete}／{drafts.length}</span
@@ -31,7 +31,7 @@
 		{#each drafts as draft (draft.draftId)}
 			<div role="listitem" class="space-y-2 py-3">
 				<div class="flex items-start justify-between gap-3">
-					<p class="min-w-0 break-words">
+					<p class="min-w-0 [overflow-wrap:anywhere]">
 						{draft.note.value ?? '未命名帳目'}{draft.mergedFrom &&
 						draft.mergedFrom.length >= 2
 							? ` 等 ${draft.mergedFrom.length} 項`
@@ -40,7 +40,7 @@
 					<p
 						class:text-destructive={draft.currency.value !== 'TWD' ||
 							draft.amount.value === null}
-						class="shrink-0"
+						class="shrink-0 text-right font-semibold tabular-nums"
 					>
 						{draftAmount(draft)}
 					</p>

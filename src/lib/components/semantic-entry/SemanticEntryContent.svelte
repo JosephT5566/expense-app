@@ -3,12 +3,14 @@
 		listConversations,
 		loadConversation,
 		summarizeConversation,
+		type ConversationSummary,
 		type PersistedConversation
 	} from './persisted';
 	import { chat, attempts, imagePreviews } from './conversation.svelte';
 
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { get } from 'svelte/store';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { Button } from '$lib/components/shadcn/button';
 	import Paperclip from 'lucide-svelte/icons/paperclip';
 	import X from 'lucide-svelte/icons/x';
@@ -48,6 +50,12 @@
 		type IssueV3,
 		type SemanticRequestV3
 	} from '@jopie/semantic-entry-contract';
+
+	const historyStatusIcons = {
+		進行中: 'ph:chat-circle-dots-duotone',
+		已完成: 'ph:check-circle-duotone',
+		已過期: 'ph:hourglass-duotone'
+	} satisfies Record<ConversationSummary['status'], string>;
 
 	let historyOpen = $state(false);
 	let historyButton = $state<HTMLButtonElement | null>(null);
@@ -1517,7 +1525,8 @@
 		bind:ref={historyButton}
 		variant="outline"
 		disabled={chat.switchingDisabled}
-		onclick={openHistory}>對話紀錄</Button
+		onclick={openHistory}
+		><Icon icon="ph:clock-duotone" width={20} height={20} aria-hidden="true" />對話紀錄</Button
 	>
 	{@render pendingHeader()}
 	<Button
@@ -1530,33 +1539,49 @@
 
 <Dialog.Root bind:open={historyOpen}>
 	<Dialog.Content
-		class="w-full max-w-full sm:max-w-xl"
+		class="flex max-h-[calc(100dvh-2rem)] max-w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-[25rem] motion-reduce:animate-none"
 		showCloseButton={false}
 		onCloseAutoFocus={(event) => {
 			event.preventDefault();
 			historyButton?.focus();
 		}}
 	>
-		<Dialog.Header>
-			<Dialog.Title>對話紀錄</Dialog.Title>
+		<Dialog.Header class="shrink-0 border-b px-4 py-4">
+			<Dialog.Title class="flex items-center gap-1.5 text-xl"
+				><Icon
+					icon="ph:clock-duotone"
+					width={20}
+					height={20}
+					aria-hidden="true"
+				/>對話紀錄</Dialog.Title
+			>
 			<Dialog.Description
 				>只保存在此裝置，對話自開始起保留 24 小時。時間為台灣時間。</Dialog.Description
 			>
 		</Dialog.Header>
-		{#if chat.imageError}<p role="alert" class="text-sm">{chat.imageError}</p>{/if}
-		<div class="max-h-[65vh] space-y-2 overflow-y-auto">
+		{#if chat.imageError}<p role="alert" class="px-4 pt-2 text-sm">{chat.imageError}</p>{/if}
+		<div class="min-h-0 flex-1 divide-y overflow-y-auto overscroll-contain px-4">
 			{#each historyRows as item (item.id)}
 				<button
 					type="button"
-					class="w-full space-y-1 rounded-lg border p-3 text-left hover:bg-muted disabled:opacity-50"
+					class="block min-h-11 w-full space-y-1 py-3 text-left hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
 					disabled={chat.switchingDisabled}
 					onclick={() => selectHistory(item.record)}
 				>
-					<span class="block break-words font-medium">{item.summary}</span>
-					<span class="flex justify-between gap-2 text-xs text-muted-foreground"
+					<span class="block font-medium [overflow-wrap:anywhere]">{item.summary}</span>
+					<span
+						class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground"
 						><time datetime={new Date(item.updatedAt).toISOString()}
 							>{historyTime.format(item.updatedAt)}</time
-						><span>{item.status}</span></span
+						><span class="inline-flex items-center gap-1.5">
+							<Icon
+								icon={historyStatusIcons[item.status]}
+								width={16}
+								height={16}
+								aria-hidden="true"
+							/>
+							{item.status}
+						</span></span
 					>
 					{#if item.status === '已過期'}<span class="block text-xs text-muted-foreground"
 							>對話已過期，可能無法續談，圖片可能已失效。僅供檢視。</span
@@ -1566,12 +1591,15 @@
 				<p class="py-6 text-center text-muted-foreground">還沒有對話紀錄</p>
 			{/each}
 		</div>
-		<Button
-			variant="outline"
-			onclick={() => {
-				historyOpen = false;
-			}}>關閉</Button
-		>
+		<Dialog.Footer class="mx-0 mb-0 shrink-0 border-t p-4">
+			<Button
+				class="min-h-11 w-full"
+				variant="outline"
+				onclick={() => {
+					historyOpen = false;
+				}}>關閉</Button
+			>
+		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
 
@@ -1582,7 +1610,7 @@
 		role="region"
 		aria-label="本次對話"
 		tabindex="0"
-		class="min-h-0 flex-1 touch-manipulation space-y-4 overflow-y-auto overscroll-contain rounded-xl bg-muted/15 p-3 text-sm focus-visible:outline-2 focus-visible:outline-ring"
+		class="min-h-0 flex-1 touch-manipulation space-y-4 overflow-y-auto overscroll-contain py-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
 		onscroll={() => {
 			if (conversationElement) {
 				followLatest =
@@ -1621,8 +1649,8 @@
 				<div class={entry.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
 					<div
 						class={entry.role === 'user'
-							? 'max-w-[85%] rounded-2xl rounded-tr-sm bg-primary/15 px-3 py-2'
-							: 'max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2'}
+							? 'min-w-0 max-w-[88%] [overflow-wrap:anywhere] rounded-2xl rounded-br-sm bg-primary/15 px-4 py-3'
+							: 'min-w-0 max-w-[92%] [overflow-wrap:anywhere] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-4 py-3'}
 					>
 						<p class="text-muted-foreground mb-1 text-xs">
 							{entry.role === 'user' ? '你' : '記帳助手'}
