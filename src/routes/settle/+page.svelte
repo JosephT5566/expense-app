@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { type DateRange } from 'bits-ui';
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import ExpenseListSection from '$lib/components/ExpenseListSection.svelte';
 	import * as categoriesStore from '$lib/stores/categories.store';
 	import * as sessionStore from '$lib/stores/session.store';
@@ -396,7 +396,7 @@
 				disabled={settledTrash.length === 0}
 				onclick={recoverSettle}
 			>
-				<Icon icon="solar:restart-linear" width="24" height="24" />
+				<Icon icon="ph:arrow-clockwise-duotone" width="24" height="24" />
 			</button>
 		</div>
 	</div>

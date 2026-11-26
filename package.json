@@ -15,15 +15,15 @@
 		"test:e2e": "playwright test",
 		"test:e2e:base-path": "playwright test -c playwright.base-path.config.ts",
 		"test:unit": "vitest run",
-		"test": "npm run test:e2e"
+		"test": "npm run test:e2e",
+		"icons:subset": "node scripts/generate-icon-subset.mjs"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.4.0",
 		"@eslint/js": "^9.36.0",
 		"@fontsource-variable/geist": "^5.2.8",
 		"@iconify-json/logos": "^1.2.9",
-		"@iconify-json/mdi": "^1.2.3",
-		"@iconify-json/solar": "^1.2.4",
+		"@iconify-json/ph": "^1.2.2",
 		"@iconify-json/svg-spinners": "^1.2.4",
 		"@internationalized/date": "^3.12.1",
 		"@lucide/svelte": "^1.14.0",

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import classNames from 'classnames';

@@ -15,7 +15,7 @@
 	import { summaryChartLabel } from '$lib/utils/summary-chart-label';
 	import { createCategoryColorMap, getCategoryColor } from '$lib/utils/category-colors';
 	import { getCategoryIcon } from '$lib/utils/category-icons';
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	// 新增：月份選擇 Dialog 與台灣月份邊界
 	import { Dialog, Accordion } from 'bits-ui';
 	import { toTaiwanDateString } from '$lib/utils/dates';
@@ -215,7 +215,7 @@
 								<div class="flex items-center gap-3">
 									<div class="tabular-nums font-semibold">{g.amount}</div>
 									<Icon
-										icon="mdi:caret"
+										icon="ph:caret-up-duotone"
 										class="size-[18px] transition-transform duration-200"
 										width="24"
 										height="24"

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Icon from '@iconify/svelte';
+	import Icon from '@iconify/svelte/dist/OfflineIcon.svelte';
 	import classNames from 'classnames';
 	import Logger from '$lib/utils/logger';
 	import { forceRefetchMonthlyExpenses } from '$lib/data/expenses.fetcher';
@@ -29,5 +29,5 @@
 	}}
 	disabled={isLoading}
 >
-	<Icon icon="solar:restart-bold" width="20" height="20" />
+	<Icon icon="ph:arrow-clockwise-duotone" width="20" height="20" />
 </button>
