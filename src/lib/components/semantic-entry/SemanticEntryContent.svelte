@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { restoredImageUrl } from './persisted';
 	import { chat, attempts, imagePreviews } from './conversation.svelte';
 
 	import { onDestroy, tick, untrack } from 'svelte';
@@ -45,6 +46,9 @@
 	let editingDrafts = $state(false);
 
 	function onEditDrafts() {
+		if (chat.readOnly) {
+			return;
+		}
 		if (chat.session) {
 			chat.session = {
 				...chat.session,
@@ -75,7 +79,12 @@
 		chat.draftHeading = `找到 ${chat.drafts.length} 筆，${result.reason === 'multiple' ? '因為有多筆' : '有資料需要補齊'}，還沒記帳。`;
 		if (!chat.conversation.some((entry) => entry.drafts)) {
 			chat.draftAnalysis = chat.analysis;
-			chat.conversation.push({ role: 'assistant', text: '', drafts: true });
+			chat.conversation.push({
+				role: 'assistant',
+				text: '',
+				drafts: true,
+				requestId: result.requestId
+			});
 		}
 		chat.analysis = '';
 		chat.text = '';
@@ -88,7 +97,7 @@
 
 	async function confirmOption() {
 		const option = chat.clarification?.options?.find((item) => item.id === chat.selectedOption);
-		if (!option || chat.processing) {
+		if (!option || chat.processing || chat.readOnly) {
 			return;
 		}
 		chat.reply = option.label;
@@ -295,6 +304,7 @@
 			chat.pendingItems = pending.load(owner, Date.now());
 			for (const id of attempts.keys()) {
 				if (
+					id !== chat.lastRequestId &&
 					!chat.pendingItems.some(
 						(item) => item.requestId === id && item.expiredAt === null
 					)
@@ -392,7 +402,9 @@
 		// Record every expired row displayed while the tray is open, including rows that
 		// expire during this opening (§5 seen-once clearing).
 		if (trayOpen) {
-			for (const item of chat.pendingItems) {
+			for (const item of chat.pendingItems.filter(
+				(item) => item.requestId !== chat.restoredRequestId
+			)) {
 				if (item.expiredAt !== null && !seenExpired.includes(item.requestId)) {
 					seenExpired.push(item.requestId);
 				}
@@ -431,6 +443,7 @@
 		const now = Date.now();
 		for (const item of chat.pendingItems) {
 			if (
+				item.requestId !== chat.restoredRequestId &&
 				item.expiredAt === null &&
 				pending.isPastWindow(item, now) &&
 				!chat.lookingUp.has(item.requestId)
@@ -507,6 +520,7 @@
 				chat.conversation.push({
 					role: 'assistant',
 					text: note,
+					requestId: id,
 					expenses: completed.expenses
 				});
 				return 'completed';
@@ -574,7 +588,13 @@
 		}
 	}
 	async function retryFromTray(id: string) {
-		if (chat.processing || chat.converting || chat.lookingUp.has(id) || !attempts.has(id)) {
+		if (
+			chat.readOnly ||
+			chat.processing ||
+			chat.converting ||
+			chat.lookingUp.has(id) ||
+			!attempts.has(id)
+		) {
 			return;
 		}
 		// The retry streams in the chat, so the tray closes to show it.
@@ -594,19 +614,6 @@
 	function retainAttempt() {
 		if (chat.attempt && chat.focusedId) {
 			attempts.set(chat.focusedId, chat.attempt);
-		}
-	}
-	function interruptPending() {
-		if (!chat.processing || !chat.accountId || chat.recovering) {
-			return;
-		}
-		if (chat.seenPersisting && chat.attempt?.action !== 'revise') {
-			retainAttempt();
-		} else {
-			if (!chat.uploading && chat.attempt?.action === 'analyze') {
-				chat.failedAttempt = chat.attempt;
-			}
-			clearPending(chat.accountId);
 		}
 	}
 
@@ -673,6 +680,7 @@
 		}
 	}
 	function newOperation(clear = true) {
+		chat.clearPersisted();
 		chat.refreshToday();
 		const failedReply =
 			!clear && chat.failedAttempt?.action === 'analyze' && chat.failedAttempt.history?.length
@@ -717,38 +725,7 @@
 	function stillCurrent(version: number, owner: string) {
 		return version === chat.revision && get(user)?.id === owner;
 	}
-	function leavePage() {
-		interruptPending();
-		const interruptedUpload = chat.uploading;
-		const interruptedRevision = chat.attempt?.action === 'revise';
-		chat.analysis = '';
-		clearConversation();
-		clearImages();
-		chat.revision++;
-		chat.controller?.abort();
-		if (interruptedUpload) {
-			if (chat.accountId) {
-				clearPending(chat.accountId);
-			}
-			chat.focusedId = null;
-			chat.attempt = null;
-			chat.phase = 'error';
-			chat.message = '圖片上傳失敗，請稍後再試。';
-		} else if (interruptedRevision) {
-			if (chat.accountId) {
-				clearPending(chat.accountId);
-			}
-			chat.focusedId = null;
-			chat.attempt = null;
-			chat.phase = 'input';
-		} else if (chat.processing) {
-			chat.phase = chat.seenPersisting || chat.recovering ? 'uncertain' : 'error';
-			chat.message =
-				chat.seenPersisting || chat.recovering
-					? '結果待確認，請查詢結果。'
-					: '解析服務無法完成，請稍後再試。';
-		}
-	}
+
 	async function accept(
 		result: { expenses: ExpenseRow[]; replayed: boolean },
 		version: number,
@@ -783,6 +760,7 @@
 				role: 'assistant',
 				text: chat.message,
 				analysis: chat.analysis,
+				requestId: chat.lastRequestId ?? undefined,
 				expenses: result.expenses
 			});
 			clearImages();
@@ -860,6 +838,7 @@
 		chat.refreshToday();
 		if (
 			!$user ||
+			chat.readOnly ||
 			(!chat.session && !retry) ||
 			chat.processing ||
 			chat.converting ||
@@ -1054,6 +1033,14 @@
 					chat.seenPersisting ||
 					(error instanceof SemanticEntryError && error.persisting))
 			) {
+				if (chat.restoredRequestId === request.requestId) {
+					retainAttempt();
+					chat.phase = 'uncertain';
+					chat.message = '結果待確認，請查詢結果或重試同一請求。';
+					editingDrafts = false;
+					chat.analysis = '';
+					return;
+				}
 				// Q8: drop the drafts block so the same batch cannot be resent under a new id;
 				// the drafts stay only in the in-memory attempt for retry, and the tray opens.
 				// No chat status is added: the item is handled from the tray, and the composer
@@ -1092,24 +1079,26 @@
 		}
 	}
 	async function retryPending(id: string | null) {
-		if (!id || !attempts.has(id)) {
+		if (chat.readOnly || !id || !attempts.has(id)) {
 			return;
 		}
+		const restoredResend = chat.resendAvailable;
 		chat.attempt = attempts.get(id) ?? null;
 		chat.focusedId = id;
 		if (chat.attempt?.action === 'commit') {
 			await executeDraft('commit', true);
 		} else {
-			await execute(id);
+			await execute(id, restoredResend);
 		}
 	}
-	async function execute(retryId?: string) {
+	async function execute(retryId?: string, restoredResend = false) {
 		chat.refreshToday();
 		if (chat.phase === 'drafts' && !retryId) {
 			await executeDraft('revise');
 			return;
 		}
 		if (
+			chat.readOnly ||
 			chat.processing ||
 			chat.converting ||
 			!$user ||
@@ -1250,11 +1239,13 @@
 				...(chat.phase === 'needs_input'
 					? {
 							answer: outgoingText,
-							options: chat.clarification?.options,
+							...(chat.clarification?.options
+								? { options: chat.clarification.options }
+								: {}),
 							optionId: chat.selectedOption
 						}
 					: {}),
-				analysis: chat.analysis
+				analysis: chat.phase === 'needs_input' ? chat.analysis : ''
 			});
 		}
 		chat.conversation.push({
@@ -1307,6 +1298,11 @@
 						accountId: owner
 					};
 					chat.attempt = operation;
+					const imageTurn = chat.conversation.findLast((entry) => entry.imageIds?.length);
+					if (imageTurn) {
+						imageTurn.imagePaths = operation.images;
+						imageTurn.imageCount = operation.images?.length;
+					}
 					chat.uploading = false;
 				}
 				if (!operation) {
@@ -1341,7 +1337,7 @@
 				}
 				if (result.status === 'created') {
 					await accept(result, version, owner);
-				} else if (hadUncertainty) {
+				} else if (hadUncertainty && !restoredResend) {
 					chat.phase = 'uncertain';
 					chat.message = '本次解析未完成寫入，但先前請求結果仍待確認。';
 				} else {
@@ -1406,7 +1402,6 @@
 </script>
 
 <svelte:window
-	onpagehide={leavePage}
 	onkeydown={(event) => {
 		if (
 			event.key === 'Escape' &&
@@ -1462,7 +1457,7 @@
 						editedIds={chat.session.items
 							.filter((item) => item.edited)
 							.map((item) => item.id)}
-						disabled={chat.processing || chat.phase === 'uncertain'}
+						disabled={chat.readOnly || chat.processing || chat.phase === 'uncertain'}
 						{onEditDrafts}
 						onCommit={() => executeDraft('commit')}
 					/>
@@ -1483,6 +1478,24 @@
 								{entry.analysis}
 							</p>
 						{/if}
+						{#if (entry.imagePaths || entry.imageCount) && !entry.imageIds}<div
+								class="mb-2 flex gap-2"
+							>
+								{#each entry.imagePaths ?? Array.from({ length: entry.imageCount ?? 0 }, () => '') as path, i (i)}
+									{@const url = restoredImageUrl(path)}
+									{#if url}<img
+											src={url}
+											alt="收據圖片"
+											class="h-12 w-12 rounded-lg object-cover"
+										/>{:else}<div
+											role="img"
+											aria-label="收據圖片，圖片暫時無法顯示"
+											class="rounded-lg bg-muted p-3 text-xs text-muted-foreground"
+										>
+											收據圖片<br />圖片暫時無法顯示
+										</div>{/if}
+								{/each}
+							</div>{/if}
 						{#if entry.imageIds}<div class="mb-2 flex gap-2">
 								{#each entry.imageIds as url (url)}<img
 										src={imagePreviews.get(url)}
@@ -1523,7 +1536,7 @@
 				</div>
 			{/if}
 		{/each}
-		{#if !chat.session || chat.processing || chat.analysis || chat.message}
+		{#if !chat.completed && (!chat.session || chat.processing || chat.analysis || chat.message)}
 			<div class="flex justify-start">
 				<div
 					class="max-w-[90%] space-y-2 rounded-2xl rounded-tl-sm border bg-card px-3 py-2"
@@ -1545,6 +1558,7 @@
 						{#if chat.optionQuestion && chat.clarification?.options}
 							<RadioGroup.Root
 								bind:value={chat.selectedOption}
+								disabled={chat.readOnly}
 								aria-label="補充資訊選項"
 							>
 								{#each chat.clarification.options as option, index (option.id)}
@@ -1563,7 +1577,7 @@
 								{/each}
 							</RadioGroup.Root>
 							<Button
-								disabled={!chat.selectedOption || !$user}
+								disabled={chat.readOnly || !chat.selectedOption || !$user}
 								onclick={confirmOption}>確認</Button
 							>
 						{/if}
@@ -1579,7 +1593,11 @@
 											: '處理中…'}
 							</p>
 						{:else if chat.phase === 'persisting'}<p role="status">正在記帳，請稍候…</p>
-						{:else if chat.phase === 'created'}<p class="font-semibold">已新增</p>
+						{:else if chat.phase === 'created' && !chat.completed}<p
+								class="font-semibold"
+							>
+								已新增
+							</p>
 						{:else if chat.phase === 'rejected' || chat.phase === 'error'}<p
 								class="font-semibold"
 							>
@@ -1611,7 +1629,23 @@
 						{#if chat.message}<p class="text-sm">{chat.message}</p>{/if}
 					</div>
 					<div class="flex flex-wrap gap-2">
-						{#if chat.phase === 'created'}
+						{#if chat.phase === 'uncertain' && chat.restoredRequestId}
+							<Button
+								size="sm"
+								variant="outline"
+								class="border-foreground text-foreground"
+								disabled={chat.checking}
+								onclick={() => chat.lookupRestored()}>查詢結果</Button
+							>
+							{#if chat.resendAvailable || (chat.focusedId && attempts.has(chat.focusedId))}<Button
+									size="sm"
+									variant="outline"
+									class="border-foreground text-foreground"
+									disabled={chat.readOnly}
+									onclick={() => retryPending(chat.focusedId)}
+									>{chat.resendAvailable ? '重新送出' : '重試同一請求'}</Button
+								>{/if}
+						{:else if chat.phase === 'created' && !chat.completed && chat.savedExpense}
 							<Button size="sm" onclick={() => newOperation()}>新增另一筆</Button>
 						{:else if chat.phase === 'rejected' || chat.phase === 'error'}
 							<Button size="sm" onclick={() => newOperation(false)}
@@ -1741,12 +1775,12 @@
 
 {#snippet pendingHeader()}
 	<PendingTray
-		items={chat.pendingItems}
+		items={chat.pendingItems.filter((item) => item.requestId !== chat.restoredRequestId)}
 		open={trayOpen}
 		{expandedId}
 		lookingUp={chat.lookingUp}
 		errors={chat.lookupErrors}
-		disabled={chat.processing || chat.converting}
+		disabled={chat.readOnly || chat.processing || chat.converting}
 		canRetry={(id) => attempts.has(id)}
 		bind:badge={badgeElement}
 		bind:tray={trayElement}

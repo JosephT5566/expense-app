@@ -1,6 +1,24 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { user } from '$lib/stores/session.store';
 
+const storage = vi.hoisted(() => {
+	const data = new Map<string, string>();
+	const storage = {
+		getItem: (key: string) => data.get(key) ?? null,
+		setItem: (key: string, value: string) => data.set(key, value),
+		removeItem: (key: string) => data.delete(key),
+		clear: () => data.clear()
+	};
+	vi.stubGlobal('localStorage', storage);
+	vi.stubGlobal('window', new EventTarget());
+	return storage;
+});
+vi.mock('$lib/data/semantic-entry.fetcher', () => ({ getSemanticEntryStatus: vi.fn() }));
+vi.mock('$lib/data/expenses.fetcher', () => ({
+	forceRefetchMonthlyExpenses: vi.fn().mockResolvedValue(true)
+}));
+import { getSemanticEntryStatus } from '$lib/data/semantic-entry.fetcher';
+import { saveConversation, conversationKey, type PersistedConversation } from './persisted';
 vi.mock('$app/environment', () => ({ browser: true }));
 
 import { attempts, chat, imagePreviews } from './conversation.svelte';
@@ -12,6 +30,8 @@ afterEach(() => {
 const first = { id: 'first-account', email: 'first@example.test' };
 beforeEach(() => {
 	user.set(null);
+	storage.clear();
+	vi.mocked(getSemanticEntryStatus).mockReset();
 	user.set(first);
 });
 
@@ -137,4 +157,248 @@ it('retains a background draft editor request until the mounted page consumes it
 	expect(chat.draftEditorRequested).toBe(true);
 	chat.draftEditorRequested = false;
 	expect(chat.draftEditorRequested).toBe(false);
+});
+
+const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+function saved(phase: PersistedConversation['phase'] = 'processing'): PersistedConversation {
+	return {
+		v: 1,
+		conversationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+		revision: 0,
+		startedAt: Date.now(),
+		updatedAt: Date.now(),
+		completed: false,
+		phase,
+		requestId,
+		payload: { action: 'analyze', requestId, text: '午餐100' },
+		conversation: [{ role: 'user', text: '午餐100' }],
+		history: [],
+		clarification: null,
+		session: null,
+		text: '午餐100',
+		question: '',
+		message: '',
+		analysis: '',
+		draftHeading: '',
+		draftAnalysis: '',
+		draftRejected: false,
+		revised: false
+	};
+}
+it('restores and queries in-flight work without a mounted page, retaining the exact retry', async () => {
+	user.set(null);
+	saveConversation(first.id, saved(), storage);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue(null);
+	user.set(first);
+	await vi.waitFor(() => expect(chat.resendAvailable).toBe(true));
+	expect(chat.conversation[0].text).toBe('午餐100');
+	expect(attempts.get(requestId)).toEqual({ ...saved().payload, accountId: first.id });
+	expect(chat.message).toBe('這筆請求沒有完成，可重新送出');
+	expect(chat.completed).toBe(false);
+	user.set({ id: 'other', email: 'other@example.test' });
+	expect(storage.getItem(conversationKey(first.id))).toBeNull();
+	expect(chat.conversation).toEqual([]);
+});
+it('does not trust stored completion and only locks after the status GET completes', async () => {
+	user.set(null);
+	saveConversation(first.id, { ...saved(), completed: true }, storage);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue(null);
+	user.set(first);
+	await vi.waitFor(() => expect(chat.checking).toBe(false));
+	expect(chat.completed).toBe(false);
+	expect(chat.resendAvailable).toBe(true);
+	chat.reply = '我付款';
+	const url = URL.createObjectURL(new Blob(['synthetic']));
+	chat.selectedImages = [{ file: new File(['synthetic'], 'receipt.png'), url }];
+	const revoke = vi.spyOn(URL, 'revokeObjectURL');
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue({ expenses: [], replayed: true });
+	await chat.lookupRestored();
+	expect(chat.text).toBe('');
+	expect(chat.reply).toBe('');
+	expect(chat.selectedImages).toEqual([]);
+	expect(revoke).toHaveBeenCalledWith(url);
+	revoke.mockRestore();
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).text).toBe('');
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).payload).toEqual(
+		saved().payload
+	);
+	expect(chat.completed).toBe(true);
+	expect(chat.readOnly).toBe(true);
+	expect(chat.canCompose).toBe(false);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).completed).toBe(true);
+});
+it('retains a failed lookup and permits manual query', async () => {
+	user.set(null);
+	saveConversation(first.id, saved(), storage);
+	vi.mocked(getSemanticEntryStatus).mockRejectedValue(new Error('offline'));
+	user.set(first);
+	await vi.waitFor(() => expect(chat.checking).toBe(false));
+	expect(chat.phase).toBe('uncertain');
+	expect(chat.message).toContain('查詢結果');
+	expect(storage.getItem(conversationKey(first.id))).not.toBeNull();
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue(null);
+	await chat.lookupRestored();
+	expect(chat.resendAvailable).toBe(true);
+});
+
+it('starts the conversation TTL at image submission before upload finishes', () => {
+	vi.useFakeTimers().setSystemTime(1_800_000_000_000);
+	chat.focusedId = requestId;
+	vi.advanceTimersByTime(5000);
+	chat.attempt = {
+		action: 'analyze',
+		requestId,
+		images: [`uploads/${requestId}/receipt.png`],
+		accountId: first.id
+	};
+	chat.phase = 'processing';
+	chat.flush();
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).startedAt).toBe(
+		1_800_000_000_000
+	);
+});
+
+it('keeps live created results unlocked without querying status', () => {
+	chat.phase = 'created';
+	expect(chat.readOnly).toBe(false);
+	chat.phase = 'input';
+	expect(chat.canCompose).toBe(true);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});
+
+it('persists live image summaries as created so reload verifies completion', async () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.attempt = null;
+	chat.conversation = [{ role: 'assistant', text: '已新增', expenses: [] }];
+	chat.phase = 'input';
+	chat.flush();
+	expect(chat.canCompose).toBe(true);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).phase).toBe('created');
+});
+
+it('restores the full text clarification history and current question', () => {
+	const history = [{ question: '金額？', answer: '100元' }];
+	const clarification = {
+		status: 'needs_input' as const,
+		requestId,
+		question: '日期？',
+		issues: [{ field: 'date' as const, code: 'missing' as const }]
+	};
+	chat.attempt = { action: 'analyze', requestId, text: '午餐100', history, accountId: first.id };
+	chat.history = history;
+	chat.clarification = clarification;
+	chat.question = clarification.question;
+	chat.phase = 'needs_input';
+	chat.conversation = [
+		{ role: 'user', text: '午餐' },
+		{ role: 'assistant', text: '金額？', answer: '100元' },
+		{ role: 'user', text: '100元' }
+	];
+	chat.flush();
+	const raw = storage.getItem(conversationKey(first.id))!;
+	expect(JSON.parse(raw).question).toBe('日期？');
+	user.set(null);
+	storage.setItem(conversationKey(first.id), raw);
+	user.set(first);
+	expect(chat.history).toEqual(history);
+	expect(chat.attempt?.history).toEqual(history);
+	expect(chat.question).toBe('日期？');
+	expect(chat.clarification).toEqual(clarification);
+	expect(chat.canCompose).toBe(true);
+	expect(getSemanticEntryStatus).not.toHaveBeenCalled();
+});
+
+it('keeps earlier completed results when the last request is verified after reload', async () => {
+	user.set(null);
+	const earlierId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+	const earlier = {
+		role: 'assistant' as const,
+		text: '第一筆',
+		requestId: earlierId,
+		expenses: []
+	};
+	saveConversation(
+		first.id,
+		{
+			...saved('created'),
+			conversation: [earlier, { role: 'assistant', text: '第二筆', requestId, expenses: [] }]
+		},
+		storage
+	);
+	vi.mocked(getSemanticEntryStatus).mockResolvedValue({ expenses: [], replayed: true });
+	user.set(first);
+	await vi.waitFor(() => expect(chat.completed).toBe(true));
+	expect(chat.conversation).toHaveLength(2);
+	expect(chat.conversation[0]).toEqual(earlier);
+	expect(chat.conversation[1].requestId).toBe(requestId);
+	expect(JSON.parse(storage.getItem(conversationKey(first.id))!).conversation).toHaveLength(2);
+});
+
+function storageChanged() {
+	window.dispatchEvent(Object.assign(new Event('storage'), { key: conversationKey(first.id) }));
+}
+it('adopts another tab replacement and resets on deletion without resurrecting it', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.phase = 'error';
+	chat.flush();
+	const replacement = {
+		...saved('error'),
+		conversationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+		text: 'other tab'
+	};
+	saveConversation(first.id, replacement, storage);
+	storageChanged();
+	expect(chat.text).toBe('other tab');
+	const raw = storage.getItem(conversationKey(first.id));
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBe(raw);
+	storage.removeItem(conversationKey(first.id));
+	storageChanged();
+	expect(chat.conversation).toEqual([]);
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBeNull();
+});
+it('does not overwrite a deletion while an in-flight tab waits for its response', () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.phase = 'processing';
+	chat.flush();
+	storage.removeItem(conversationKey(first.id));
+	storageChanged();
+	expect(chat.phase).toBe('processing');
+	chat.phase = 'needs_input';
+	chat.question = '金額？';
+	chat.clarification = { status: 'needs_input', requestId, question: '金額？', issues: [] };
+	chat.flush();
+	expect(storage.getItem(conversationKey(first.id))).toBeNull();
+});
+it('flushes before pagehide clears analysis and invalidates interrupted callbacks', async () => {
+	chat.attempt = { ...saved().payload!, accountId: first.id };
+	chat.analysis = '暫時摘要';
+	chat.phase = 'processing';
+	chat.controller = new AbortController();
+	const revision = chat.revision;
+	window.dispatchEvent(new Event('pagehide'));
+	expect(chat.analysis).toBe('');
+	expect(chat.controller.signal.aborted).toBe(true);
+	expect(chat.revision).toBeGreaterThan(revision);
+	expect(storage.getItem(conversationKey(first.id))).not.toContain('暫時摘要');
+});
+
+it('ignores a lookup response delivered after pagehide', async () => {
+	user.set(null);
+	saveConversation(first.id, saved(), storage);
+	let finish: (value: { expenses: []; replayed: true }) => void = () => {};
+	vi.mocked(getSemanticEntryStatus).mockImplementation(
+		() =>
+			new Promise((resolve) => {
+				finish = resolve;
+			})
+	);
+	user.set(first);
+	expect(chat.checking).toBe(true);
+	window.dispatchEvent(new Event('pagehide'));
+	finish({ expenses: [], replayed: true });
+	await Promise.resolve();
+	expect(chat.completed).toBe(false);
+	expect(chat.conversation).toEqual(saved().conversation);
 });
