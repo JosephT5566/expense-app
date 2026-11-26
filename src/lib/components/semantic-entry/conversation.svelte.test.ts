@@ -192,6 +192,7 @@ it('restores and queries in-flight work without a mounted page, retaining the ex
 	user.set(first);
 	await vi.waitFor(() => expect(chat.resendAvailable).toBe(true));
 	expect(chat.conversation[0].text).toBe('午餐100');
+	expect(chat.text).toBe('');
 	expect(attempts.get(requestId)).toEqual({ ...saved().payload, accountId: first.id });
 	expect(chat.message).toBe('這筆請求沒有完成，可重新送出');
 	expect(chat.completed).toBe(false);
