@@ -173,13 +173,7 @@ export const chat = {
 	lookupRestored,
 	flush: persistCurrent,
 	clearPersisted() {
-		if (accountId) {
-			try {
-				removeConversation(accountId);
-			} catch {
-				/* Storage unavailable. */
-			}
-		}
+		persistCurrent();
 		restoredRequestId = null;
 		startedAt = null;
 		conversationId = null;
@@ -459,7 +453,7 @@ export const chat = {
 	}
 };
 
-function resetAccount(next: string | undefined, removePrevious = true) {
+function resetAccount(next: string | undefined, removePrevious = true, restoreId?: string) {
 	revision++;
 	controller?.abort();
 	lookupEpoch++;
@@ -526,7 +520,7 @@ function resetAccount(next: string | undefined, removePrevious = true) {
 	uploading = false;
 	controller = undefined;
 	if (next) {
-		restoreConversation(next);
+		restoreConversation(next, restoreId);
 	}
 }
 
@@ -569,10 +563,25 @@ if (browser) {
 			if (!accountId || (event.key !== conversationKey(accountId) && event.key !== null)) {
 				return;
 			}
+			if (conversationId) {
+				try {
+					const saved = loadConversation(
+						accountId,
+						Date.now(),
+						globalThis.localStorage,
+						conversationId
+					);
+					if (saved?.revision === persistedBase?.revision) {
+						return;
+					}
+				} catch {
+					return;
+				}
+			}
 			if (processing || uploading || converting || checking || lookingUp.size > 0) {
 				persistenceInvalidated = true;
 			} else {
-				resetAccount(accountId, false);
+				resetAccount(accountId, false, conversationId ?? undefined);
 			}
 		});
 	}
@@ -657,10 +666,10 @@ function persistSnapshot(owner: string, snapshot: PersistedConversation) {
 	}
 }
 
-function restoreConversation(owner: string) {
+function restoreConversation(owner: string, id?: string) {
 	let saved;
 	try {
-		saved = loadConversation(owner, Date.now());
+		saved = loadConversation(owner, Date.now(), globalThis.localStorage, id);
 	} catch {
 		return;
 	}
