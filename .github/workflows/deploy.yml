@@ -45,12 +45,6 @@ jobs:
             - name: Add .nojekyll
               run: touch build/.nojekyll
 
-            - name: Report frontend bundle sizes
-              run: node scripts/report-pages-build.mjs
-              continue-on-error: true
-              env:
-                  BASE_PATH: /${{ github.event.repository.name }}
-
             - name: Upload artifact
               uses: actions/upload-pages-artifact@v3
               with:
