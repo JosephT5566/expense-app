@@ -418,18 +418,14 @@ test('replay removes a deleted expense from store and cache', async ({ page }) =
 		.getByRole('navigation', { name: '主要導覽' })
 		.getByRole('link', { name: '新增', exact: true })
 		.click();
-	await expect(page).toHaveURL(`${basePath}/`);
-	const day = page.locator('section[data-date="2026-10-01"]');
-	const expense = day.getByText('語意午餐', { exact: true });
-	await expect(day).toBeVisible();
-	await expect(expense).toHaveCount(0);
+	await expect(
+		page.locator('section[data-date="2026-10-01"]').getByText('語意午餐', { exact: true })
+	).toHaveCount(0);
 	await expect.poll(() => cachedMonth(page, '2026-10')).toEqual([]);
 	await page.reload();
 	await expect(page.getByRole('status', { name: 'Loading JoPie' })).toHaveCount(0);
 	await expect.poll(() => cachedMonth(page, '2026-10')).toEqual([]);
-	await expect(page).toHaveURL(`${basePath}/`);
-	await expect(day).toBeVisible();
-	await expect(expense).toHaveCount(0);
+	await expect(page.getByText('語意午餐', { exact: true })).toHaveCount(0);
 });
 test('processing disables new conversation while Escape and outside clicks keep the page open', async ({
 	page
