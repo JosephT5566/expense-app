@@ -95,6 +95,8 @@ for (const { name, viewport } of [
 			await expectActive(nav, 'AI 記帳');
 			await expect(page.getByRole('region', { name: 'AI 記帳', exact: true })).toBeVisible();
 			if (name === 'mobile') {
+				await expect(nav.locator('#mobile-nav-lens')).toHaveCount(0);
+				await expect(nav.locator('canvas')).toHaveCount(0);
 				const composer = page
 					.getByRole('textbox', { name: '記帳內容', exact: true })
 					.locator('..');
@@ -143,7 +145,10 @@ for (const { name, viewport } of [
 			}
 			await nav.getByRole('link', { name: '新增', exact: true }).click();
 			await expect(page).toHaveURL('/expense-app/');
-			await expectActive(page.getByRole('navigation', { name: '主要導覽' }), '新增');
+			await expectActive(nav, '新增');
+			if (name === 'mobile') {
+				await expect(nav.locator('#mobile-nav-lens')).toHaveCount(1);
+			}
 		});
 
 		test('base path navigation preserves the document and updates the active link', async ({

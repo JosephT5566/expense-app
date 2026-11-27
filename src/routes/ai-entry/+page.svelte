@@ -7,6 +7,7 @@
 <section
 	class="mx-auto flex h-full min-h-0 w-full max-w-xl flex-col gap-4 px-4"
 	aria-label="AI 記帳"
+	data-liquid-ignore
 >
 	<SemanticEntryContent />
 </section>

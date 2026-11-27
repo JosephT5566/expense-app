@@ -112,7 +112,9 @@
 	class:dragging={dragOffset !== null}
 	data-liquid-ignore
 >
-	<div id="mobile-nav-lens" class="lens" aria-hidden="true" use:liquidNav></div>
+	{#if page.route.id !== '/ai-entry'}
+		<div id="mobile-nav-lens" class="lens" aria-hidden="true" use:liquidNav></div>
+	{/if}
 	<ul
 		bind:this={track}
 		class="relative z-10 grid h-full grid-cols-4 items-stretch gap-1 rounded-full p-1"
