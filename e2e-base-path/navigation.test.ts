@@ -95,6 +95,7 @@ for (const { name, viewport } of [
 			await expectActive(nav, 'AI 記帳');
 			await expect(page.getByRole('region', { name: 'AI 記帳', exact: true })).toBeVisible();
 			if (name === 'mobile') {
+				await expect(nav.locator('canvas')).toHaveCount(0);
 				const composer = page
 					.getByRole('textbox', { name: '記帳內容', exact: true })
 					.locator('..');
@@ -143,7 +144,10 @@ for (const { name, viewport } of [
 			}
 			await nav.getByRole('link', { name: '新增', exact: true }).click();
 			await expect(page).toHaveURL('/expense-app/');
-			await expectActive(page.getByRole('navigation', { name: '主要導覽' }), '新增');
+			await expectActive(nav, '新增');
+			if (name === 'mobile') {
+				await expect(nav.locator('canvas')).toHaveCount(0);
+			}
 		});
 
 		test('base path navigation preserves the document and updates the active link', async ({
@@ -221,6 +225,76 @@ for (const { name, viewport } of [
 				expect(documentRequests).toBe(initialDocumentRequests);
 			}
 		});
+
+		if (name === 'mobile') {
+			test('drag the selected pill across tabs and keep the links available in CSS mode', async ({
+				page
+			}) => {
+				const cdp = await page.context().newCDPSession(page);
+				await cdp.send('Emulation.setEmulatedMedia', {
+					features: [
+						{ name: 'prefers-reduced-transparency', value: 'reduce' },
+						{ name: 'prefers-reduced-motion', value: 'reduce' }
+					]
+				});
+				const nav = page.getByRole('navigation', { name: '主要導覽' });
+				await page.goto('/expense-app/');
+				await expectReady(page, nav);
+				await expectActive(nav, '新增');
+				await expect(nav).toHaveCSS('backdrop-filter', 'none');
+				await expect(nav.locator('canvas')).toHaveCount(0);
+
+				const center = async (label: string) => {
+					const box = await nav
+						.getByRole('link', { name: label, exact: true })
+						.boundingBox();
+					if (!box) {
+						throw new Error('Cannot drag to a hidden nav link');
+					}
+					return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+				};
+
+				const add = await center('新增');
+				const setting = await center('更多功能');
+				await page.mouse.move(add.x, add.y);
+				await page.mouse.down();
+				await page.mouse.move(setting.x, setting.y, { steps: 8 });
+				await expect(nav).toHaveClass(/\bdragging\b/);
+				await expectActive(nav, '新增');
+				await expect(page).toHaveURL('/expense-app/');
+				await page.mouse.up();
+				await expect(page).toHaveURL('/expense-app/setting');
+				await expectActive(nav, '更多功能');
+
+				// A release outside the bar restores the active pill.
+				await page.mouse.move(setting.x, setting.y);
+				await page.mouse.down();
+				await page.mouse.move(add.x, add.y, { steps: 8 });
+				await page.mouse.move(add.x, add.y - 90);
+				await page.mouse.up();
+				await expect(nav).not.toHaveClass(/\bdragging\b/);
+				await expectActive(nav, '更多功能');
+				await expect(page).toHaveURL('/expense-app/setting');
+
+				// Vertical motion does not initiate a horizontal drag.
+				await page.mouse.move(setting.x, setting.y);
+				await page.mouse.down();
+				await page.mouse.move(setting.x + 2, setting.y - 18);
+				await expect(nav).not.toHaveClass(/\bdragging\b/);
+				await page.mouse.up();
+				await expectActive(nav, '更多功能');
+				await expect(page).toHaveURL('/expense-app/setting');
+
+				await nav.getByRole('link', { name: '統計', exact: true }).click();
+				await expectActive(nav, '統計');
+				await expect(page).toHaveURL('/expense-app/summary');
+				const aiEntry = nav.getByRole('link', { name: 'AI 記帳', exact: true });
+				await aiEntry.focus();
+				await aiEntry.press('Enter');
+				await expectActive(nav, 'AI 記帳');
+				await expect(page).toHaveURL('/expense-app/ai-entry');
+			});
+		}
 
 		test('tab navigation resets the main scroll container', async ({ page }) => {
 			const nav = page.getByRole('navigation', { name: '主要導覽' });
